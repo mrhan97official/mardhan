@@ -144,6 +144,14 @@ CREATE TABLE IF NOT EXISTS project_thumbnail_objects (
 );
 CREATE INDEX IF NOT EXISTS idx_project_thumbnail_objects_repo ON project_thumbnail_objects (repo);
 
+-- The current application logo is rendered into PWA icon sizes and stored in
+-- private R2. A missing row means the original checked-in icon is displayed.
+CREATE TABLE IF NOT EXISTS app_branding (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  version TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Management metadata. Existing application tables and ZIP archives are never reset.
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version TEXT PRIMARY KEY,

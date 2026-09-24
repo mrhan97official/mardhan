@@ -40,8 +40,7 @@ devcontrol/
 │   ├── migrations/       # Kolom tambahan untuk skema lama
 │   └── seed.sql           # Data contoh sesuai desain referensi
 ├── public/
-│   ├── manifest.json      # PWA manifest
-│   └── icons/               # Ikon PWA (192/512/maskable + favicon)
+│   └── icons/               # Ikon PWA bawaan (192/512/maskable + favicon)
 ├── wrangler.toml          # Opsional, hanya untuk `wrangler d1` CLI manual — app pakai CF_* env vars
 └── vercel.json             # Header cache untuk sw.js/manifest/api
 ```
@@ -160,6 +159,14 @@ Untuk mengaktifkan unggahan gambar besar, buat **R2 S3 API token** khusus bucket
 
 Izin memulai unggahan berlaku untuk satu objek selama 15 menit. Setelah browser mengirim byte asli ke R2, backend memeriksa ukuran, tipe, dan tanda awal berkas sebelum mengaktifkannya di kartu; objek yang tidak selesai disiapkan untuk dibersihkan. Gambar v1.0.17 tetap bisa dibuka tanpa konfigurasi baru; konfigurasi S3 diperlukan untuk unggahan besar dan menampilkan gambar baru. Di tablet (lebar 768–1279 px) susunan kolom mengikuti desktop dengan ukuran huruf dan jarak yang lebih ringkas.
 
+### Logo aplikasi di Pengaturan
+
+Di **Settings → Logo aplikasi**, pilih PNG/JPG lalu klik **Simpan logo**. Browser membuat ikon PNG persegi ukuran 192 dan 512 serta varian maskable; gambar sumber hanya diproses di perangkat dan ikon hasilnya disimpan di bucket R2 privat. Pastikan `CF_R2_BUCKET` dan `CF_API_TOKEN` dengan izin R2 Read/Write sudah dikonfigurasi. Tabel `app_branding` ditambahkan otomatis saat halaman Pengaturan diakses oleh admin, atau melalui **Databases → Siapkan D1 + R2**. Tidak perlu konfigurasi S3/CORS untuk unggah logo karena ikon yang sudah diperkecil dikirim ke backend; batas request ikon hasil 4 MiB.
+
+Perubahan logo ditampilkan pada sidebar, favicon, dan ikon PWA melalui manifest `/manifest.json` yang disajikan dinamis. Tab terbuka pada perangkat lain memeriksa versi logo setiap 30 detik. Ikon untuk pemasangan baru langsung memakai logo terakhir; ikon layar utama yang **sudah dipasang di iOS/iPadOS** dikelola sistem dan tidak bisa diperbarui oleh aplikasi web. Hapus pintasan lama, buka situs di Safari, lalu **Bagikan → Tambahkan ke Layar Utama** untuk memasang ikon baru. Browser desktop juga dapat mempertahankan ikon lama sehingga mungkin perlu pemasangan ulang; Chrome pada Android dapat memperbarui WebAPK kemudian. Tombol **Kembalikan bawaan** mengaktifkan lagi ikon asal.
+
+Pada aplikasi iPad yang terpasang, status bar menggunakan mode gelap yang menempatkan konten di bawah jam dan baterai; navbar menambah ruang untuk safe area jika perangkat memerlukannya.
+
 
 Tombol **Hapus aplikasi** pada setiap kartu meminta pengetikan nama lengkap `owner/repo`. Penghapusan menghapus project Vercel yang terhubung ke repo pada akun/team yang dikonfigurasi, project Vercel bernama stabil buatan DevControl, repo GitHub, arsip ZIP aplikasi dan update diri terkait beserta thumbnail di R2, serta metadata services, thumbnail, API terkelola, dan pipeline di D1. Project Vercel juga menghapus deployment, domain, variabel lingkungan, dan pengaturannya. Jika salah satu provider gagal, dialog menampilkan tahap yang gagal dan tombol dapat dicoba lagi; arsip dan metadata yang belum selesai tetap tersedia untuk pengulangan. Repo yang sedang dideploy atau project Vercel DevControl aktif ditolak. Token GitHub harus memiliki izin menghapus repo (classic `delete_repo` atau fine-grained Administration write); `VERCEL_TOKEN` harus dapat menghapus project pada `VERCEL_TEAM_ID` yang sesuai. Project di akun/team Vercel lain tidak dapat ditemukan oleh token ini.
 
@@ -193,5 +200,5 @@ Batas unggahan ZIP pada alur ini 4 MiB agar permintaan tetap di bawah batas ukur
 - **Kenapa satu file `api/gateway.go` untuk semua endpoint, bukan satu file per endpoint?** Go mewajibkan satu folder = satu package, dan builder Go milik Vercel meng-compile seluruh isi folder `api/` sekaligus — jadi beberapa file yang masing-masing punya fungsi `Handler` sendiri (bahkan di subfolder terpisah) tetap bisa berujung "Handler redeclared". Dengan hanya **satu** fungsi `Handler` di seluruh proyek, konflik ini tidak mungkin terjadi lagi. Endpoint publik (`/api/overview`, `/api/services`, dst) tetap sama karena `vercel.json` me-rewrite tiap path ke `/api/gateway?resource=<nama>`.
 - **Kenapa D1 diakses lewat REST API, bukan driver SQLite langsung?** Vercel Functions berjalan di lingkungan serverless yang tidak punya akses jaringan ke storage internal Cloudflare; REST API resmi Cloudflare adalah cara yang didukung untuk mengakses D1 dari luar Workers/Pages.
 - **Data ditampilkan dulu dari IndexedDB (jika ada), lalu disegarkan dari jaringan** — supaya UI langsung terisi tanpa layar kosong saat baru dibuka, baik online maupun offline.
-- Ikon PWA di `public/icons/` adalah placeholder yang dibuat otomatis mengikuti palet desain (navy + biru). Ganti dengan aset brand asli sebelum rilis jika perlu.
+- Ikon PWA di `public/icons/` adalah pilihan bawaan; logo dapat diganti dari halaman Settings.
 - Semua breakpoint memakai skala Tailwind standar (`sm`, `md`, `lg`, `xl`): sidebar berubah jadi drawer di bawah `lg`, grid statistik menyesuaikan dari 1 → 2 → 4 kolom, dan tabel bisa di-scroll horizontal di layar sempit.

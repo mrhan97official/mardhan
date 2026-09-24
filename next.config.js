@@ -5,14 +5,24 @@ const withPWA = require("next-pwa")({
   disable: process.env.NODE_ENV === "development",
   runtimeCaching: [
     {
-      urlPattern: /^\/api\/.*$/,
+      urlPattern: /\/api\/branding\/icon(?:\?|$)/,
+      handler: "NetworkFirst",
+      options: { cacheName: "branding-icons-v19", expiration: { maxEntries: 12, maxAgeSeconds: 604800 } },
+    },
+    {
+      urlPattern: /\/manifest\.json(?:\?|$)/,
+      handler: "NetworkFirst",
+      options: { cacheName: "branding-manifest-v19" },
+    },
+    {
+      urlPattern: /\/api\/.*$/,
       handler: "NetworkOnly",
       options: {},
     },
     {
       urlPattern: /^(?!.*\/api\/).*/,
       handler: "StaleWhileRevalidate",
-      options: { cacheName: "app-shell-v18" },
+      options: { cacheName: "app-shell-v19" },
     },
   ],
   fallbacks: {

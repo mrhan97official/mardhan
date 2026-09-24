@@ -27,6 +27,7 @@ const expectedTables = {
   api_keys: ["id", "name", "key_prefix", "key_hash", "scopes", "created_at", "revoked_at"],
   api_check_metrics: ["id", "api_id", "status_code", "latency_ms", "checked_at"],
   admin_audit_log: ["id", "action", "target", "created_at"],
+  app_branding: ["id", "version", "updated_at"],
 };
 const expectedIndexes = ["idx_deployment_jobs_running_target"];
 

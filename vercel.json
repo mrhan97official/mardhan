@@ -3,6 +3,9 @@
     "api/gateway.go": { "maxDuration": 60 }
   },
   "rewrites": [
+    { "source": "/manifest.json", "destination": "/api/gateway?resource=branding-manifest" },
+    { "source": "/api/branding/icon", "destination": "/api/gateway?resource=branding-icon" },
+    { "source": "/api/branding", "destination": "/api/gateway?resource=branding" },
     { "source": "/api/session", "destination": "/api/gateway?resource=session" },
     { "source": "/api/databases", "destination": "/api/gateway?resource=databases" },
     { "source": "/api/api-management", "destination": "/api/gateway?resource=api-management" },
@@ -32,7 +35,7 @@
     {
       "source": "/manifest.json",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=3600" },
+        { "key": "Cache-Control", "value": "no-store" },
         { "key": "Content-Type", "value": "application/manifest+json" }
       ]
     },

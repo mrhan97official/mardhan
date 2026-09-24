@@ -44,6 +44,7 @@ import (
 
 	"devcontrol/pkg/apimanagement"
 	"devcontrol/pkg/archive"
+	"devcontrol/pkg/branding"
 	"devcontrol/pkg/projectdelete"
 	"devcontrol/pkg/projectthumbnail"
 	"devcontrol/pkg/auth"
@@ -59,6 +60,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	resource := r.URL.Query().Get("resource")
 	if !auth.SameOrigin(r) { util.Error(w, http.StatusForbidden, fmt.Errorf("permintaan harus berasal dari aplikasi ini")); return }
+	if resource == "branding-icon" || resource == "branding-manifest" {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			util.Error(w, http.StatusMethodNotAllowed, fmt.Errorf("gunakan GET atau HEAD")); return
+		}
+		branding.HandlePublic(w, r, resource)
+		return
+	}
 	if resource == "session" { auth.HandleSession(w, r); return }
 	if resource != "zip-archives" {
 		if !auth.Configured() { util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("isi DEVCONTROL_ADMIN_PASSWORD dan DEVCONTROL_SESSION_SECRET di Vercel untuk mengaktifkan panel admin")); return }
@@ -92,6 +100,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		projectdelete.Handle(w, r, vercelAppProjectName)
 	case "project-thumbnails":
 		projectthumbnail.Handle(w, r)
+	case "branding":
+		branding.Handle(w, r)
 	case "github-branches":
 		handleGithubBranches(w, r)
 	case "zip-archives":

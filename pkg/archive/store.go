@@ -361,3 +361,48 @@ func (s *Store) DeleteThumbnail(key string) error {
 	if !result.Success { return fmt.Errorf("R2 tidak mengonfirmasi penghapusan thumbnail") }
 	return nil
 }
+
+// Branding icons are small, public PNG variants stored in the same private
+// bucket. Only the server-generated version and these three names are valid.
+func validBrandingKey(key string) bool {
+	parts := strings.Split(key, "/")
+	return len(parts) == 3 && parts[0] == "branding" && len(parts[1]) == 32 &&
+		strings.Trim(parts[1], "0123456789abcdef") == "" &&
+		(parts[2] == "192.png" || parts[2] == "512.png" || parts[2] == "maskable.png")
+}
+
+func (s *Store) SaveBranding(key string, data []byte) error {
+	if !validBrandingKey(key) || len(data) == 0 || len(data) > 2<<20 { return fmt.Errorf("ikon aplikasi tidak valid") }
+	return s.put(key, data)
+}
+
+func (s *Store) ReadBranding(key string) ([]byte, error) {
+	if !validBrandingKey(key) { return nil, fmt.Errorf("kunci ikon aplikasi tidak valid") }
+	req, err := http.NewRequest(http.MethodGet, s.objectURL(key), nil)
+	if err != nil { return nil, err }
+	req.Header.Set("Authorization", "Bearer "+s.token)
+	resp, err := s.client.Do(req)
+	if err != nil { return nil, err }
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK { return nil, fmt.Errorf("R2 mengembalikan HTTP %d", resp.StatusCode) }
+	data, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
+	if err != nil { return nil, err }
+	if len(data) == 0 || len(data) > 2<<20 { return nil, fmt.Errorf("ikon aplikasi terlalu besar atau kosong") }
+	return data, nil
+}
+
+func (s *Store) DeleteBranding(key string) error {
+	if !validBrandingKey(key) { return fmt.Errorf("kunci ikon aplikasi tidak valid") }
+	req, err := http.NewRequest(http.MethodDelete, s.objectURL(key), nil)
+	if err != nil { return err }
+	req.Header.Set("Authorization", "Bearer "+s.token)
+	resp, err := s.client.Do(req)
+	if err != nil { return err }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusNoContent { return nil }
+	if resp.StatusCode != http.StatusOK { return fmt.Errorf("R2 gagal menghapus ikon (HTTP %d)", resp.StatusCode) }
+	var result struct { Success bool `json:"success"` }
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result); err != nil { return err }
+	if !result.Success { return fmt.Errorf("R2 tidak mengonfirmasi penghapusan ikon") }
+	return nil
+}

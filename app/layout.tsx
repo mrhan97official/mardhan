@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import DeploymentOverlayProvider from "@/components/deployment/DeploymentOverlayProvider";
 import AuthGate from "@/components/AuthGate";
+import BrandingProvider from "@/components/BrandingProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -8,12 +9,12 @@ export const metadata: Metadata = {
   description: "Offline-first infrastructure and deployment control center.",
   manifest: "/manifest.json",
   icons: {
-    icon: "/icons/icon.svg",
-    apple: "/icons/icon-192.png",
+    icon: "/api/branding/icon?size=favicon",
+    apple: "/api/branding/icon?size=apple",
   },
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
+    statusBarStyle: "black",
     title: "DevControl",
   },
 };
@@ -33,7 +34,7 @@ export default function RootLayout({
   return (
     <html lang="id" className="dark">
       <body className="font-sans antialiased min-h-screen bg-base-950 text-slate-100">
-        <AuthGate><DeploymentOverlayProvider>{children}</DeploymentOverlayProvider></AuthGate>
+        <AuthGate><BrandingProvider><DeploymentOverlayProvider>{children}</DeploymentOverlayProvider></BrandingProvider></AuthGate>
       </body>
     </html>
   );
