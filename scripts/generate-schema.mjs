@@ -13,7 +13,7 @@ for (const match of schema.matchAll(/CREATE TABLE IF NOT EXISTS\s+([a-z_]+)\s*\(
   tables[match[1]] = columns.map((column) => column[1]);
   types[match[1]] = Object.fromEntries(columns.map((column) => [column[1], column[2]]));
 }
-const indexes = [...schema.matchAll(/CREATE INDEX IF NOT EXISTS\s+([a-z_]+)/g)].map((match) => match[1]);
+const indexes = [...schema.matchAll(/CREATE (?:UNIQUE )?INDEX IF NOT EXISTS\s+([a-z_]+)/g)].map((match) => match[1]);
 const migrations = readdirSync("db/migrations").filter((name) => /^\d+_.*\.sql$/.test(name)).sort()
   .flatMap((name) => clean(readFileSync(`db/migrations/${name}`, "utf8"))
     .map((sql) => ({ version: name.slice(0, 3), sql })));

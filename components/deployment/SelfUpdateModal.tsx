@@ -42,7 +42,7 @@ export default function SelfUpdateModal({
   onHide: () => void;
   onClose: () => void;
   onSuccess: () => void;
-  onProgress: (progress: { running: boolean; failed: boolean; message: string }) => void;
+  onProgress: (progress: { running: boolean; failed: boolean; message: string; target?: string }) => void;
 }) {
   const repos = useOfflineData<GithubRepo[]>("github-repos", "/api/github-repos", fallbackGithubRepos);
   const [repo, setRepo] = useState("");
@@ -61,8 +61,9 @@ export default function SelfUpdateModal({
       running: submitting,
       failed: Boolean(error || (result && !result.ok)),
       message: error ?? (submitting && activeStep && result?.step !== activeStep ? `${stage}...` : result?.message) ?? (stage ? `${stage}...` : "Menunggu proses."),
+      target: repo.trim(),
     });
-  }, [submitting, activeStep, result, error, onProgress]);
+  }, [submitting, activeStep, result, error, repo, onProgress]);
 
   // Branches for whichever repo is currently selected, read straight from
   // GitHub — so this field offers the branches that actually exist in that

@@ -106,7 +106,7 @@ export default function Sidebar({
                 {!expanded && (
                   <span
                     aria-hidden="true"
-                    className="pointer-events-none invisible absolute left-full top-1/2 z-[60] ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-semibold text-slate-100 opacity-0 shadow-xl transition-opacity md:block md:group-hover:visible md:group-hover:opacity-100 md:group-focus-visible:visible md:group-focus-visible:opacity-100"
+                    className="pointer-events-none invisible absolute left-full top-1/2 z-[60] ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-semibold text-slate-100 opacity-0 shadow-xl transition-opacity before:absolute before:left-0 before:top-1/2 before:h-2 before:w-2 before:-translate-x-1/2 before:-translate-y-1/2 before:rotate-45 before:border-b before:border-l before:border-base-border before:bg-base-800 md:block md:group-hover:visible md:group-hover:opacity-100 md:group-focus-visible:visible md:group-focus-visible:opacity-100"
                   >
                     {label}
                   </span>
@@ -126,14 +126,14 @@ export default function Sidebar({
             <span className={expanded ? "md:inline" : "md:hidden"}>Panel Admin</span>
           </div>
           <p className={`mt-1 items-center gap-1 text-xs text-slate-500 ${expanded ? "flex" : "flex md:hidden"}`}>
-            <Cpu size={12} /> v1.0.13
+            <Cpu size={12} /> v1.0.15
           </p>
           {!expanded && (
             <span
               aria-hidden="true"
-              className="pointer-events-none invisible absolute left-full top-1/2 z-[60] ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-semibold text-slate-100 opacity-0 shadow-xl transition-opacity md:block md:group-hover:visible md:group-hover:opacity-100"
+              className="pointer-events-none invisible absolute left-full top-1/2 z-[60] ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-semibold text-slate-100 opacity-0 shadow-xl transition-opacity before:absolute before:left-0 before:top-1/2 before:h-2 before:w-2 before:-translate-x-1/2 before:-translate-y-1/2 before:rotate-45 before:border-b before:border-l before:border-base-border before:bg-base-800 md:block md:group-hover:visible md:group-hover:opacity-100"
             >
-              Panel Admin · v1.0.13
+              Panel Admin · v1.0.15
             </span>
           )}
         </div>

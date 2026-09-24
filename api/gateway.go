@@ -121,69 +121,98 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 	util.JSON(w, http.StatusOK, rows[0])
 }
 
-// GET /api/deployments -> deployment pipeline stages.
+type deploymentStage struct {
+	ID int `json:"id"`
+	Stage string `json:"stage"`
+	Duration string `json:"duration"`
+	Status string `json:"status"`
+	Position int `json:"position"`
+}
+
+type deploymentJob struct {
+	ID string `json:"id"`
+	Kind string `json:"kind"`
+	Target string `json:"target"`
+	Status string `json:"status"`
+	Stages []deploymentStage `json:"stages"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// Each deployment owns its pipeline and a lease on its repo. A tab
+// closed mid-deployment eventually releases the lease, without declaring an
+// unknown Vercel outcome successful or failed.
+func expireDeploymentJobs() error {
+	_, err := d1.Query(`UPDATE deployment_jobs SET status = 'Interrupted', updated_at = CURRENT_TIMESTAMP
+		WHERE status = 'Running' AND lease_until <= CURRENT_TIMESTAMP`)
+	return err
+}
+
+// GET /api/deployments -> independent recent pipelines.
 func handleDeployments(w http.ResponseWriter, r *http.Request) {
-	rows, err := d1.Query(`
-		SELECT id, stage, duration, status, position
-		FROM deployment_pipeline
-		WHERE position BETWEEN 1 AND 4
-		  AND id = (SELECT MIN(id) FROM deployment_pipeline AS other WHERE other.position = deployment_pipeline.position)
-		ORDER BY position ASC
-	`)
-	if err != nil {
-		util.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	if len(rows) < 4 {
-		if err := ensureDeploymentPipeline(); err != nil {
-			util.Error(w, http.StatusInternalServerError, fmt.Errorf("gagal menyiapkan pipeline deployment: %w", err))
-			return
+	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	if err := expireDeploymentJobs(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	rows, err := d1.Query(`SELECT id, kind, target, status, stages, created_at, updated_at
+		FROM deployment_jobs ORDER BY created_at DESC, rowid DESC LIMIT 30`)
+	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	jobs := make([]deploymentJob, 0, len(rows))
+	for _, row := range rows {
+		value := func(key string) string { result, _ := row[key].(string); return result }
+		var stages []deploymentStage
+		if err := json.Unmarshal([]byte(value("stages")), &stages); err != nil {
+			util.Error(w, http.StatusBadGateway, fmt.Errorf("status pipeline tidak valid: %w", err)); return
 		}
-		rows, err = d1.Query(`
-			SELECT id, stage, duration, status, position
-			FROM deployment_pipeline
-			WHERE position BETWEEN 1 AND 4
-			  AND id = (SELECT MIN(id) FROM deployment_pipeline AS other WHERE other.position = deployment_pipeline.position)
-			ORDER BY position ASC
-		`)
-		if err != nil {
-			util.Error(w, http.StatusInternalServerError, err)
-			return
-		}
+		jobs = append(jobs, deploymentJob{ID: value("id"), Kind: value("kind"), Target: value("target"),
+			Status: value("status"), Stages: stages, CreatedAt: value("created_at"), UpdatedAt: value("updated_at")})
 	}
-	util.JSON(w, http.StatusOK, rows)
+	util.JSON(w, http.StatusOK, jobs)
 }
 
-// Schema creation does not seed demo data. A deployment must have real rows
-// before UPDATE can report progress. INSERT ... WHERE NOT EXISTS also repairs
-// partially initialized databases without overwriting an in-flight stage.
-func ensureDeploymentPipeline() error {
-	defaults := []string{"Ekstrak ZIP", "Uji Vercel", "GitHub", "Online Vercel"}
-	for index, stage := range defaults {
-		position := index + 1
-		if _, err := d1.Query(`INSERT INTO deployment_pipeline (stage, duration, status, position)
-			SELECT ?, '-', 'Pending', ?
-			WHERE NOT EXISTS (SELECT 1 FROM deployment_pipeline WHERE position = ?)`, stage, position, position); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func startDeploymentPipeline(stages [4]string) error {
-	if err := ensureDeploymentPipeline(); err != nil {
-		return err
-	}
-	for index, stage := range stages {
+func startDeploymentPipeline(id, kind, target, lockKey string, names [4]string) error {
+	if err := expireDeploymentJobs(); err != nil { return err }
+	stages := make([]deploymentStage, 0, 4)
+	for index, name := range names {
 		status := "Pending"
-		if index == 0 {
-			status = "Running"
-		}
-		if _, err := d1.Query(`UPDATE deployment_pipeline SET stage = ?, status = ?, duration = '-' WHERE position = ?`, stage, status, index+1); err != nil {
-			return err
-		}
+		if index == 0 { status = "Running" }
+		stages = append(stages, deploymentStage{ID: index+1, Stage: name, Duration: "-", Status: status, Position: index+1})
+	}
+	encoded, err := json.Marshal(stages)
+	if err != nil { return err }
+	_, err = d1.Query(`INSERT INTO deployment_jobs (id, kind, target, lock_key, status, stages, lease_until)
+		VALUES (?, ?, ?, ?, 'Running', ?, datetime('now', '+10 minutes'))`, id, kind, target, lockKey, string(encoded))
+	if err != nil {
+		rows, queryErr := d1.Query(`SELECT id FROM deployment_jobs WHERE lock_key = ? AND status = 'Running' LIMIT 1`, lockKey)
+		if queryErr == nil && len(rows) > 0 { return fmt.Errorf("repo ini sedang diproses oleh deployment lain; tunggu sampai selesai") }
+		return fmt.Errorf("gagal membuat pipeline deployment: %w", err)
 	}
 	return nil
+}
+
+func requireActiveDeployment(id string) error {
+	rows, err := d1.Query(`UPDATE deployment_jobs SET lease_until = datetime('now', '+10 minutes'),
+		updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'Running'
+		AND lease_until > CURRENT_TIMESTAMP RETURNING id`, id)
+	if err != nil { return err }
+	if len(rows) == 0 {
+		_ = expireDeploymentJobs()
+		return fmt.Errorf("proses deployment tidak aktif atau sudah kedaluwarsa; periksa hasil sebelum mengulang")
+	}
+	return nil
+}
+
+func updateDeploymentStage(id string, position int, status string) {
+	if id == "" || position < 1 || position > 4 { return }
+	duration := "-"
+	if status == "Success" { duration = "Selesai" }
+	if status == "Failed" { duration = "Gagal" }
+	_, _ = d1.Query(`UPDATE deployment_jobs SET
+		stages = json_set(stages, ?, ?, ?, ?),
+		status = CASE WHEN ? = 'Failed' THEN 'Failed'
+			WHEN ? = 4 AND ? = 'Success' THEN 'Success' ELSE status END,
+		lease_until = datetime('now', '+10 minutes'), updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND status = 'Running'`,
+		fmt.Sprintf("$[%d].status", position-1), status, fmt.Sprintf("$[%d].duration", position-1), duration,
+		status, position, status, id)
 }
 
 // GET /api/environments -> environment status table.
@@ -388,6 +417,24 @@ func deployStagePosition(phase string) int {
 	}
 }
 
+func appDeploymentLockKey(token, name string, isUpdate bool) (string, error) {
+	repo := ""
+	if isUpdate {
+		rows, err := d1.Query(`SELECT repo FROM services WHERE name = ? LIMIT 1`, name)
+		if err != nil { return "", err }
+		if len(rows) == 0 { return "", fmt.Errorf("aplikasi %q tidak ditemukan", name) }
+		repo, _ = rows[0]["repo"].(string)
+	}
+	if repo == "" {
+		owner, err := fetchGithubUsername(token)
+		if err != nil { return "", err }
+		repo = owner + "/" + sanitizeGithubRepoName(name)
+	}
+	// Apps on different branches still share one Vercel project and one
+	// current ZIP per app. Hold the repo lock until either rollout ends.
+	return strings.ToLower(repo), nil
+}
+
 // handleTriggerDeployment implements the "Aplikasi Baru" and "Update
 // Aplikasi" options in the New Deployment dropdown: POST multipart/form-data
 // with `type` ("new_app"|"update_app"), `name`, an optional `branch` and
@@ -462,28 +509,30 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("penyiapan D1/R2 gagal: %w", err))
 			return
 		}
-		if err := startDeploymentPipeline([4]string{"Ekstrak ZIP", "Uji Vercel", "GitHub", "Online Vercel"}); err != nil {
-			util.Error(w, http.StatusInternalServerError, fmt.Errorf("pipeline deployment belum siap: %w", err))
-			return
-		}
 	}
 	store, err := archive.New()
 	if err != nil {
-		if phase == "extract" { _, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 1`) }
 		util.Error(w, http.StatusPreconditionFailed, err); return
 	}
 	archiveID := strings.TrimSpace(r.FormValue("archive_id"))
 	if phase == "extract" {
 		record, saveErr := store.Save("app", name, header.Filename, "upload", "pending", zipBytes)
 		if saveErr != nil {
-			_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 1`)
 			util.Error(w, http.StatusBadGateway, fmt.Errorf("ZIP tidak dapat disimpan, update dibatalkan: %w", saveErr)); return
 		}
 		archiveID = record.ID
+		lockKey, lockErr := appDeploymentLockKey(githubToken, name, isUpdate)
+		if lockErr != nil { _ = store.Fail(archiveID); util.Error(w, http.StatusBadGateway, lockErr); return }
+		if err := startDeploymentPipeline(archiveID, deployType, name, lockKey,
+			[4]string{"Ekstrak ZIP", "Uji Vercel", "GitHub", "Online Vercel"}); err != nil {
+			_ = store.Fail(archiveID)
+			util.Error(w, http.StatusConflict, err)
+			return
+		}
 		if isUpdate {
 			if backupErr := ensureAppBaseline(store, githubToken, name); backupErr != nil {
 				_ = store.Fail(archiveID)
-				_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 1`)
+				updateDeploymentStage(archiveID, 1, "Failed")
 				util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, ArchiveID: archiveID,
 					Message: "ZIP baru tersimpan, tetapi versi sebelumnya belum dapat diarsipkan; update dibatalkan: " + backupErr.Error()})
 				return
@@ -491,6 +540,8 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if err := store.Verify(archiveID, "app", name, zipBytes); err != nil {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("arsip ZIP wajib tersimpan sebelum deployment: %w", err)); return
+	} else if err := requireActiveDeployment(archiveID); err != nil {
+		util.Error(w, http.StatusConflict, err); return
 	}
 
 	label := "aplikasi baru"
@@ -506,7 +557,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		_ = store.Fail(archiveID)
 		msg := "[Ekstrak ZIP] Gagal mengekstrak file zip: " + err.Error()
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = ?`, deployStagePosition(phase))
+		updateDeploymentStage(archiveID, deployStagePosition(phase), "Failed")
 		logLiveLog("ERROR", label+": "+msg)
 		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg, ArchiveID: archiveID})
 		return
@@ -514,7 +565,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	if len(files) == 0 {
 		_ = store.Fail(archiveID)
 		msg := "[Ekstrak ZIP] Zip kosong atau tidak berisi file yang valid"
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = ?`, deployStagePosition(phase))
+		updateDeploymentStage(archiveID, deployStagePosition(phase), "Failed")
 		logLiveLog("ERROR", label+": "+msg)
 		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg, ArchiveID: archiveID})
 		return
@@ -522,18 +573,18 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	logLiveLog("INFO", fmt.Sprintf("%s: mengekstrak %d file dari zip untuk %q", label, len(files), name))
 	if phase == "extract" {
 		// A separate request lets the modal show each stage while it runs.
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET stage = 'Ekstrak ZIP', status = 'Success', duration = 'Selesai' WHERE position = 1`)
+		updateDeploymentStage(archiveID, 1, "Success")
 		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: true, Message: fmt.Sprintf("ZIP disimpan; %d file berhasil diekstrak", len(files)), ArchiveID: archiveID})
 		return
 	}
 	if phase == "vercel-test" {
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Running' WHERE position = 2`)
+		updateDeploymentStage(archiveID, 2, "Running")
 		id, previewURL, tempProject, testErr := createVercelTestDeployment(vercelToken, name, files)
 		if testErr != nil {
 			_ = store.Fail(archiveID)
 			cleanupTestProject(vercelToken, tempProject)
 			msg := "[Uji Build Vercel] " + testErr.Error()
-			_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 2`)
+			updateDeploymentStage(archiveID, 2, "Failed")
 			logLiveLog("ERROR", label+": "+msg)
 			util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg})
 			return
@@ -561,7 +612,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		if len(rows) == 0 {
 			_ = store.Fail(archiveID)
 			msg := fmt.Sprintf("[GitHub] Aplikasi %q tidak ditemukan", name)
-			_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = ?`, deployStagePosition(phase))
+			updateDeploymentStage(archiveID, deployStagePosition(phase), "Failed")
 			logLiveLog("ERROR", label+": "+msg)
 			util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg})
 			return
@@ -582,7 +633,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		if uErr != nil {
 			_ = store.Fail(archiveID)
 			msg := "[GitHub] Gagal membaca akun GitHub: " + uErr.Error()
-			_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = ?`, deployStagePosition(phase))
+			updateDeploymentStage(archiveID, deployStagePosition(phase), "Failed")
 			logLiveLog("ERROR", label+": "+msg)
 			util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg})
 			return
@@ -607,14 +658,14 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	if testProjectToCleanup != "" { defer cleanupTestProject(vercelToken, testProjectToCleanup) }
 
 	if phase == "vercel-live" {
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Running' WHERE position = 4`)
+		updateDeploymentStage(archiveID, 4, "Running")
 		// Use a stable, account-scoped Vercel project for every update.
 		project := vercelAppProjectName(owner, repoName)
 		id, deploymentURL, deployErr := createVercelDeployment(vercelToken, project, "production", files)
 		if deployErr != nil {
 			_ = store.Fail(archiveID)
 			msg := "[Onlinekan di Vercel] " + deployErr.Error()
-			_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 4`)
+			updateDeploymentStage(archiveID, 4, "Failed")
 			logLiveLog("ERROR", label+": "+msg)
 			util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg, Repo: repoFullName})
 			return
@@ -632,13 +683,13 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Running' WHERE position = 3`)
+	updateDeploymentStage(archiveID, 3, "Running")
 	if !isUpdate {
 		if err := ensureGithubRepo(githubToken, repoName); err != nil {
 			_ = store.Fail(archiveID)
 			msg := "[GitHub] Gagal membuat repo: " + err.Error()
 			logLiveLog("ERROR", label+": "+msg)
-			_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 3`)
+			updateDeploymentStage(archiveID, 3, "Failed")
 			util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg})
 			return
 		}
@@ -648,12 +699,12 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		_ = store.Fail(archiveID)
 		msg := "[GitHub] Gagal mendorong file: " + err.Error()
 		logLiveLog("ERROR", label+": "+msg)
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 3`)
+		updateDeploymentStage(archiveID, 3, "Failed")
 		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg, Repo: repoFullName})
 		return
 	}
 
-	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Success', duration = 'Selesai' WHERE position = 3`)
+	updateDeploymentStage(archiveID, 3, "Success")
 	logLiveLog("INFO", fmt.Sprintf("%s: %q didorong ke %s@%s", label, name, repoFullName, branch))
 	nextTicket, ticketErr := signBuildTicket(vercelToken, buildTicket{
 		Stage: "app-live-start", Mode: deployType, Name: name, ZipSHA: zipDigest(zipBytes),
@@ -696,6 +747,7 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		return
 	}
 	if record.Status != "pending" { util.Error(w, http.StatusBadRequest, fmt.Errorf("arsip sesi deployment tidak lagi menunggu proses")); return }
+	if err := requireActiveDeployment(ticket.ArchiveID); err != nil { util.Error(w, http.StatusConflict, err); return }
 	state, liveURL, detail, checkErr := getVercelBuildStatus(token, ticket.DeploymentID)
 	if checkErr != nil {
 		util.Error(w, http.StatusBadGateway, fmt.Errorf("gagal memeriksa status Vercel: %w", checkErr))
@@ -711,7 +763,7 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		if step == "vercel-test" { cleanupTestProject(token, ticket.Project) }
 		msg := fmt.Sprintf("[%s] Build Vercel %s", map[string]string{"vercel-test": "Uji Build Vercel", "vercel-live": "Onlinekan di Vercel"}[step], state)
 		if detail != "" { msg += ": " + detail }
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = ?`, position)
+		updateDeploymentStage(ticket.ArchiveID, position, "Failed")
 		logLiveLog("ERROR", msg)
 		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: msg, Repo: ticket.Repo})
 		return
@@ -721,7 +773,7 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 			Stage: "app-push", Mode: mode, Name: name, ZipSHA: ticket.ZipSHA, Project: ticket.Project, ArchiveID: ticket.ArchiveID,
 		})
 		if signErr != nil { util.Error(w, http.StatusInternalServerError, signErr); return }
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Success', duration = 'Selesai' WHERE position = 2`)
+		updateDeploymentStage(ticket.ArchiveID, 2, "Success")
 		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: true, Status: "ready", Ticket: next, Message: "Build uji Vercel berhasil"})
 		return
 	}
@@ -742,7 +794,7 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: "Aplikasi online, tetapi gagal mencatat versi ZIP aktif: " + err.Error(), Repo: ticket.Repo, AppURL: liveURL})
 		return
 	}
-	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Success', duration = 'Selesai' WHERE position = 4`)
+	updateDeploymentStage(ticket.ArchiveID, 4, "Success")
 	label, icon := "aplikasi baru", "box"
 	if mode == "update_app" { label, icon = "update aplikasi", "check" }
 	logActivity(fmt.Sprintf("Deployment %s berhasil", label), fmt.Sprintf("%s (%s@%s) → %s", name, ticket.Repo, ticket.Branch, ticket.Environment), icon)
@@ -1229,14 +1281,9 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("penyiapan D1/R2 gagal: %w", err))
 			return
 		}
-		if err := startDeploymentPipeline([4]string{"Ekstrak ZIP", "Uji Vercel", "Perbarui GitHub", "Production Vercel"}); err != nil {
-			util.Error(w, http.StatusInternalServerError, fmt.Errorf("pipeline update diri belum siap: %w", err))
-			return
-		}
 	}
 	store, err := archive.New()
 	if err != nil {
-		if phase == "start" { _, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 1`) }
 		util.Error(w, http.StatusPreconditionFailed, err); return
 	}
 	target := repo + "@" + branch
@@ -1244,13 +1291,18 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	if phase == "start" {
 		record, saveErr := store.Save("self", target, header.Filename, "upload", "pending", zipBytes)
 		if saveErr != nil {
-			_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 1`)
 			util.Error(w, http.StatusBadGateway, fmt.Errorf("ZIP tidak dapat disimpan, update dibatalkan: %w", saveErr)); return
 		}
 		archiveID = record.ID
+		if err := startDeploymentPipeline(archiveID, "self_update", target, strings.ToLower(repo),
+			[4]string{"Ekstrak ZIP", "Uji Vercel", "Perbarui GitHub", "Production Vercel"}); err != nil {
+			_ = store.Fail(archiveID)
+			util.Error(w, http.StatusConflict, err)
+			return
+		}
 		if backupErr := ensureGithubBaseline(store, githubToken, "self", target, repo, branch); backupErr != nil {
 			_ = store.Fail(archiveID)
-			_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 1`)
+			updateDeploymentStage(archiveID, 1, "Failed")
 			util.JSON(w, http.StatusOK, selfUpdateResult{Step: "extract", OK: false, ArchiveID: archiveID,
 				Message: "ZIP baru tersimpan, tetapi versi sebelumnya belum dapat diarsipkan; update dibatalkan: " + backupErr.Error()})
 			return
@@ -1259,10 +1311,10 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		record, checkErr := store.Get(archiveID)
 		if checkErr != nil || record.Scope != "self" || record.Target != target || record.SizeBytes != int64(len(zipBytes)) || record.SHA256 != archive.Digest(zipBytes) ||
 			(record.Status != "pending" && record.Status != "current") {
-			_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 3`)
 			util.Error(w, http.StatusBadRequest, fmt.Errorf("arsip ZIP sesi update diri tidak cocok")); return
 		}
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Running' WHERE position = 3`)
+		if err := requireActiveDeployment(archiveID); err != nil { util.Error(w, http.StatusConflict, err); return }
+		updateDeploymentStage(archiveID, 3, "Running")
 	} else if err := store.Verify(archiveID, "self", target, zipBytes); err != nil {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("arsip ZIP wajib tersimpan sebelum update diri: %w", err)); return
 	}
@@ -1275,7 +1327,7 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		_ = store.Fail(archiveID)
 		position := 1
 		if phase == "commit" { position = 3 }
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = ?`, position)
+		updateDeploymentStage(archiveID, position, "Failed")
 		msg := "[Ekstrak ZIP] Gagal mengekstrak file zip: " + err.Error()
 		logLiveLog("ERROR", "Self-update: "+msg)
 		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "extract", OK: false, Message: msg, ArchiveID: archiveID})
@@ -1285,7 +1337,7 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		_ = store.Fail(archiveID)
 		position := 1
 		if phase == "commit" { position = 3 }
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = ?`, position)
+		updateDeploymentStage(archiveID, position, "Failed")
 		msg := "[Ekstrak ZIP] Zip kosong atau tidak berisi file yang valid"
 		logLiveLog("ERROR", "Self-update: "+msg)
 		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "extract", OK: false, Message: msg, ArchiveID: archiveID})
@@ -1294,20 +1346,20 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	if phase == "commit" {
 		ticket, ticketErr := verifyBuildTicket(vercelToken, r.FormValue("ticket"))
 		if ticketErr != nil || ticket.Stage != "self-push" || ticket.Repo != repo || ticket.Branch != branch || ticket.Project == "" || ticket.ZipSHA != zipDigest(zipBytes) || ticket.ArchiveID != archiveID {
-			_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 3`)
+			updateDeploymentStage(archiveID, 3, "Failed")
 			util.Error(w, http.StatusBadRequest, fmt.Errorf("sesi uji build tidak valid; unggah ZIP yang sama dan mulai ulang"))
 			return
 		}
 		record, checkErr := store.Get(archiveID)
 		if checkErr != nil {
-			_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 3`)
+			updateDeploymentStage(archiveID, 3, "Failed")
 			util.Error(w, http.StatusBadGateway, checkErr); return
 		}
 		if record.Status == "current" {
 			cleanupTestProject(vercelToken, ticket.Project)
 			commitSHA, headErr := currentGithubBranchSHA(githubToken, owner, repoName, branch)
 			if headErr != nil {
-				_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 4`)
+				updateDeploymentStage(archiveID, 4, "Failed")
 				util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-production", OK: false, ArchiveID: archiveID,
 					Message: "GitHub sudah diperbarui, tetapi commit untuk verifikasi Vercel tidak dapat dibaca: " + headErr.Error()})
 				return
@@ -1318,14 +1370,14 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		finishSelfUpdate(w, githubToken, vercelToken, owner, repoName, branch, files, ticket.URL, ticket.Project, store, archiveID)
 		return
 	}
-	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Success', duration = 'Selesai' WHERE position = 1`)
-	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Running' WHERE position = 2`)
+	updateDeploymentStage(archiveID, 1, "Success")
+	updateDeploymentStage(archiveID, 2, "Running")
 	logLiveLog("INFO", fmt.Sprintf("Self-update: mengekstrak %d file dari zip untuk %s/%s", len(files), owner, repoName))
 
 	deploymentID, previewURL, tempProject, err := createVercelTestDeployment(vercelToken, repoName, files)
 	if err != nil {
 		_ = store.Fail(archiveID)
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 2`)
+		updateDeploymentStage(archiveID, 2, "Failed")
 		// A rejected deployment can still have created its temporary project.
 		// Removing this unique name is safe even when Vercel returned 404.
 		if cleanupErr := deleteVercelProject(vercelToken, tempProject); cleanupErr != nil {
@@ -1342,7 +1394,7 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	})
 	if ticketErr != nil {
 		cleanupTestProject(vercelToken, tempProject)
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 2`)
+		updateDeploymentStage(archiveID, 2, "Failed")
 		util.Error(w, http.StatusInternalServerError, ticketErr)
 		return
 	}
@@ -1364,6 +1416,7 @@ func handleSelfUpdateStatus(w http.ResponseWriter, r *http.Request, token, repo,
 	if record, recordErr := store.Get(ticket.ArchiveID); recordErr != nil || record.Scope != "self" || record.Target != repo+"@"+branch || record.SHA256 != ticket.ZipSHA || record.Status != "pending" {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("arsip sesi update diri tidak valid")); return
 	}
+	if err := requireActiveDeployment(ticket.ArchiveID); err != nil { util.Error(w, http.StatusConflict, err); return }
 	state, _, detail, checkErr := getVercelBuildStatus(token, ticket.DeploymentID)
 	if checkErr != nil {
 		util.Error(w, http.StatusBadGateway, fmt.Errorf("gagal memeriksa status Vercel: %w", checkErr))
@@ -1376,7 +1429,7 @@ func handleSelfUpdateStatus(w http.ResponseWriter, r *http.Request, token, repo,
 	}
 	if state != "READY" {
 		_ = store.Fail(ticket.ArchiveID)
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 2`)
+		updateDeploymentStage(ticket.ArchiveID, 2, "Failed")
 		msg := "[Uji Build Vercel] Build gagal (status: " + state + ")"
 		buildLog, logErr := getVercelBuildLog(token, ticket.DeploymentID)
 		if detail != "" {
@@ -1397,10 +1450,10 @@ func handleSelfUpdateStatus(w http.ResponseWriter, r *http.Request, token, repo,
 	}
 	next, signErr := signBuildTicket(token, buildTicket{Stage: "self-push", Repo: repo, Branch: branch, ZipSHA: ticket.ZipSHA, URL: ticket.URL, Project: ticket.Project, ArchiveID: ticket.ArchiveID})
 	if signErr != nil {
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 2`)
+		updateDeploymentStage(ticket.ArchiveID, 2, "Failed")
 		util.Error(w, http.StatusInternalServerError, signErr); return
 	}
-	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Success', duration = 'Selesai' WHERE position = 2`)
+	updateDeploymentStage(ticket.ArchiveID, 2, "Success")
 	util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-test", OK: true, Status: "ready", Ticket: next, ArchiveID: ticket.ArchiveID,
 		Message: "Build uji Vercel berhasil; memperbarui GitHub...", PreviewURL: ticket.URL})
 }
@@ -1412,7 +1465,7 @@ func finishSelfUpdate(w http.ResponseWriter, githubToken, vercelToken, owner, re
 	commitSHA, err := pushFilesToGitHub(githubToken, owner, repoName, branch, files)
 	if err != nil {
 		_ = store.Fail(archiveID)
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 3`)
+		updateDeploymentStage(archiveID, 3, "Failed")
 		msg := "[Perbarui GitHub] Build lulus tapi gagal memperbarui GitHub: " + err.Error()
 		logLiveLog("ERROR", "Self-update: "+msg)
 		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "github-push", OK: false, Message: msg, PreviewURL: previewURL, ArchiveID: archiveID})
@@ -1420,7 +1473,7 @@ func finishSelfUpdate(w http.ResponseWriter, githubToken, vercelToken, owner, re
 	}
 
 	if err := store.Promote(archiveID, "self", owner+"/"+repoName+"@"+branch); err != nil {
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 3`)
+		updateDeploymentStage(archiveID, 3, "Failed")
 		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "github-push", OK: false, Message: "GitHub diperbarui, tetapi arsip ZIP aktif gagal dicatat: " + err.Error(), ArchiveID: archiveID})
 		return
 	}
@@ -1430,7 +1483,7 @@ func finishSelfUpdate(w http.ResponseWriter, githubToken, vercelToken, owner, re
 
 func startSelfUpdateProductionWatch(w http.ResponseWriter, signingSecret, repo, branch, commitSHA, archiveID string) {
 	if commitSHA == "" {
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 4`)
+		updateDeploymentStage(archiveID, 4, "Failed")
 		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-production", OK: false, ArchiveID: archiveID,
 			Message: "GitHub diperbarui, tetapi SHA commit untuk verifikasi Vercel kosong"})
 		return
@@ -1439,13 +1492,13 @@ func startSelfUpdateProductionWatch(w http.ResponseWriter, signingSecret, repo, 
 		Stage: "self-production", Repo: repo, Branch: branch, CommitSHA: commitSHA, ArchiveID: archiveID,
 	})
 	if err != nil {
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 4`)
+		updateDeploymentStage(archiveID, 4, "Failed")
 		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-production", OK: false, ArchiveID: archiveID,
 			Message: "GitHub diperbarui, tetapi sesi verifikasi Vercel gagal dibuat: " + err.Error()})
 		return
 	}
-	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Success', duration = 'Selesai' WHERE position = 3`)
-	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Running', duration = '-' WHERE position = 4`)
+	updateDeploymentStage(archiveID, 3, "Success")
+	updateDeploymentStage(archiveID, 4, "Running")
 	util.JSON(w, http.StatusOK, selfUpdateResult{
 		Step: "vercel-production", OK: true, Status: "pending", Ticket: ticket, ArchiveID: archiveID,
 		Message: "GitHub berhasil diperbarui; menunggu hasil deployment production Vercel...",
@@ -1470,6 +1523,15 @@ func handleSelfUpdateProductionStatus(w http.ResponseWriter, r *http.Request, gi
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("arsip update tidak cocok dengan commit production"))
 		return
 	}
+	if err := requireActiveDeployment(ticket.ArchiveID); err != nil {
+		rows, queryErr := d1.Query(`SELECT status FROM deployment_jobs WHERE id = ? LIMIT 1`, ticket.ArchiveID)
+		if queryErr == nil && len(rows) > 0 && rows[0]["status"] == "Success" {
+			util.JSON(w, http.StatusOK, selfUpdateResult{Step: "done", OK: true, Status: "ready", ArchiveID: ticket.ArchiveID,
+				Message: "GitHub berhasil diperbarui dan deployment production Vercel sudah siap"})
+			return
+		}
+		util.Error(w, http.StatusConflict, err); return
+	}
 
 	state, detail, detailsURL, checkErr := githubVercelCheckStatus(githubToken, owner, repoName, ticket.CommitSHA)
 	if checkErr != nil {
@@ -1490,7 +1552,7 @@ func handleSelfUpdateProductionStatus(w http.ResponseWriter, r *http.Request, gi
 		if detail == "" {
 			detail = "Check Vercel tidak muncul dalam 5 menit. Pastikan integrasi GitHub–Vercel aktif untuk repo dan branch ini."
 		}
-		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed', duration = 'Gagal' WHERE position = 4`)
+		updateDeploymentStage(ticket.ArchiveID, 4, "Failed")
 		msg := "[Production Vercel] GitHub sudah diperbarui, tetapi deployment production gagal: " + detail
 		logLiveLog("ERROR", "Self-update: "+msg)
 		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-production", OK: false, Message: msg, BuildLog: detail,
@@ -1498,7 +1560,7 @@ func handleSelfUpdateProductionStatus(w http.ResponseWriter, r *http.Request, gi
 		return
 	}
 
-	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Success', duration = 'Selesai' WHERE position = 4`)
+	updateDeploymentStage(ticket.ArchiveID, 4, "Success")
 	logActivity("Self-update berhasil", fmt.Sprintf("%s@%s berhasil dideploy oleh Vercel", repo, branch), "check")
 	logLiveLog("INFO", fmt.Sprintf("Self-update selesai: %s@%s berhasil online melalui Vercel", repo, branch))
 	util.JSON(w, http.StatusOK, selfUpdateResult{Step: "done", OK: true, Status: "ready", ArchiveID: ticket.ArchiveID,

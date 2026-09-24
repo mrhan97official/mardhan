@@ -46,7 +46,7 @@ export default function DeployFormModal({
   onHide: () => void;
   onClose: () => void;
   onSuccess: () => void;
-  onProgress: (progress: { running: boolean; failed: boolean; message: string }) => void;
+  onProgress: (progress: { running: boolean; failed: boolean; message: string; target?: string }) => void;
 }) {
   const services = useOfflineData<Service[]>("services", "/api/services", fallbackServices, 30000);
   const isUpdate = mode === "update_app";
@@ -69,8 +69,9 @@ export default function DeployFormModal({
       running: submitting,
       failed: Boolean(error || (result && !result.ok)),
       message: error ?? (submitting && activeStep && result?.step !== activeStep ? `${stage}...` : result?.message) ?? (stage ? `${stage}...` : "Menunggu proses."),
+      target: name.trim(),
     });
-  }, [submitting, activeStep, result, error, onProgress]);
+  }, [submitting, activeStep, result, error, name, onProgress]);
 
   function stepState(step: StepKey): StepState {
     if (completedSteps.includes(step)) return "done";

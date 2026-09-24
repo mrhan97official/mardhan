@@ -17,7 +17,6 @@ import {
   fallbackInfra,
   fallbackLogs,
   fallbackOverview,
-  fallbackPipeline,
   fallbackServices,
 } from "@/lib/fallbackData";
 import type {
@@ -27,13 +26,13 @@ import type {
   InfraMetric,
   LiveLog,
   OverviewStats,
-  PipelineStage,
+  DeploymentJob,
   Service,
 } from "@/lib/types";
 
 export default function OverviewPage() {
   const overview = useOfflineData<OverviewStats>("overview", "/api/overview", fallbackOverview, 30000);
-  const pipeline = useOfflineData<PipelineStage[]>("pipeline", "/api/deployments", fallbackPipeline, 5000);
+  const pipeline = useOfflineData<DeploymentJob[]>("deployment-jobs-v15", "/api/deployments", [], 5000);
   const environments = useOfflineData<Environment[]>("environments", "/api/environments", fallbackEnvironments, 30000);
   const infra = useOfflineData<InfraMetric[]>("infra", "/api/health", fallbackInfra, 15000);
   const perf = useOfflineData<ApiPerformance>("api-checks-v12", "/api/performance", fallbackApiPerformance, 30000);
@@ -50,7 +49,7 @@ export default function OverviewPage() {
       <StatCards stats={overview.data} />
 
       <div className="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-[1.6fr_1fr]">
-        <DeploymentPipeline stages={pipeline.data} onDeployed={pipeline.reload} loading={pipeline.loading} error={pipeline.error} isOffline={pipeline.isOffline} />
+        <DeploymentPipeline jobs={pipeline.data} limit={3} onDeployed={pipeline.reload} loading={pipeline.loading} error={pipeline.error} isOffline={pipeline.isOffline} />
         <EnvironmentStatus environments={environments.data} />
       </div>
 

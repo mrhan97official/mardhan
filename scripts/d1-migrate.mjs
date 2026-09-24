@@ -15,6 +15,7 @@ const expectedTables = {
   overview_stats: ["id", "active_projects", "active_projects_change", "deployments_today", "deployments_change", "uptime", "uptime_change", "open_incidents", "incidents_change", "updated_at"],
   environments: ["id", "name", "region", "version", "status"],
   deployment_pipeline: ["id", "stage", "duration", "status", "position"],
+  deployment_jobs: ["id", "kind", "target", "lock_key", "status", "stages", "lease_until", "created_at", "updated_at"],
   services: ["id", "name", "status", "uptime", "version", "repo", "branch", "app_url"],
   activity_log: ["id", "title", "description", "icon", "created_at"],
   live_logs: ["id", "level", "message", "created_at"],
@@ -27,6 +28,7 @@ const expectedTables = {
   api_check_metrics: ["id", "api_id", "status_code", "latency_ms", "checked_at"],
   admin_audit_log: ["id", "action", "target", "created_at"],
 };
+const expectedIndexes = ["idx_deployment_jobs_running_target"];
 
 function loadDotEnv(file) {
   if (!existsSync(file)) return;
@@ -91,15 +93,19 @@ async function verifySchema(endpoint, token) {
       if (!present.has(column)) missingColumns.push(`${table}.${column}`);
     }
   }
-  if (missingTables.length || missingColumns.length) {
+  const indexRows = await query(endpoint, token, "SELECT name FROM sqlite_schema WHERE type = 'index'");
+  const foundIndexes = new Set(indexRows.map((row) => row.name));
+  const missingIndexes = expectedIndexes.filter((name) => !foundIndexes.has(name));
+  if (missingTables.length || missingColumns.length || missingIndexes.length) {
     throw new Error(
       `D1 schema incomplete. Missing tables: ${missingTables.join(", ") || "none"}. ` +
       `Missing columns: ${missingColumns.join(", ") || "none"}. ` +
+      `Missing indexes: ${missingIndexes.join(", ") || "none"}. ` +
       "Apply db/schema.sql again for missing tables; for existing services tables, " +
       "apply the relevant db/migrations/*.sql for missing columns."
     );
   }
-  console.log(`Verified ${Object.keys(expectedTables).length} application tables and their columns in D1.`);
+  console.log(`Verified ${Object.keys(expectedTables).length} application tables, their columns, and deployment lock index in D1.`);
 }
 
 async function main() {

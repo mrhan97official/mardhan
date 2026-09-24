@@ -7,6 +7,9 @@ var schemaStatements = []string{
   "CREATE TABLE IF NOT EXISTS overview_stats (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  active_projects INTEGER NOT NULL,\n  active_projects_change REAL NOT NULL,\n  deployments_today INTEGER NOT NULL,\n  deployments_change REAL NOT NULL,\n  uptime REAL NOT NULL,\n  uptime_change REAL NOT NULL,\n  open_incidents INTEGER NOT NULL,\n  incidents_change REAL NOT NULL,\n  updated_at TEXT DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE TABLE IF NOT EXISTS environments (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  name TEXT NOT NULL,\n  region TEXT NOT NULL,\n  version TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('Healthy', 'Online', 'Degraded', 'Down'))\n)",
   "CREATE TABLE IF NOT EXISTS deployment_pipeline (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  stage TEXT NOT NULL,\n  duration TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('Success', 'Running', 'Pending', 'Failed')),\n  position INTEGER NOT NULL\n)",
+  "CREATE TABLE IF NOT EXISTS deployment_jobs (\n  id TEXT PRIMARY KEY,\n  kind TEXT NOT NULL CHECK (kind IN ('new_app', 'update_app', 'self_update')),\n  target TEXT NOT NULL,\n  lock_key TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('Running', 'Success', 'Failed', 'Interrupted')),\n  stages TEXT NOT NULL,\n  lease_until TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_deployment_jobs_running_target ON deployment_jobs (lock_key) WHERE status = 'Running'",
+  "CREATE INDEX IF NOT EXISTS idx_deployment_jobs_updated ON deployment_jobs (updated_at DESC)",
   "CREATE TABLE IF NOT EXISTS services (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  name TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('Healthy', 'Degraded', 'Down')),\n  uptime REAL NOT NULL,\n  version TEXT NOT NULL,\n  repo TEXT,\n  branch TEXT DEFAULT 'main',\n  app_url TEXT\n)",
   "CREATE TABLE IF NOT EXISTS activity_log (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  title TEXT NOT NULL,\n  description TEXT NOT NULL,\n  icon TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE TABLE IF NOT EXISTS live_logs (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  level TEXT NOT NULL CHECK (level IN ('INFO', 'WARN', 'ERROR')),\n  message TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
@@ -40,6 +43,7 @@ var expectedColumns = map[string][]string{
   "overview_stats": {"id", "active_projects", "active_projects_change", "deployments_today", "deployments_change", "uptime", "uptime_change", "open_incidents", "incidents_change", "updated_at"},
   "environments": {"id", "name", "region", "version", "status"},
   "deployment_pipeline": {"id", "stage", "duration", "status", "position"},
+  "deployment_jobs": {"id", "kind", "target", "lock_key", "status", "stages", "lease_until", "created_at", "updated_at"},
   "services": {"id", "name", "status", "uptime", "version", "repo", "branch", "app_url"},
   "activity_log": {"id", "title", "description", "icon", "created_at"},
   "live_logs": {"id", "level", "message", "created_at"},
@@ -57,6 +61,7 @@ var expectedTypes = map[string]map[string]string{
   "overview_stats": {"id": "INTEGER", "active_projects": "INTEGER", "active_projects_change": "REAL", "deployments_today": "INTEGER", "deployments_change": "REAL", "uptime": "REAL", "uptime_change": "REAL", "open_incidents": "INTEGER", "incidents_change": "REAL", "updated_at": "TEXT"},
   "environments": {"id": "INTEGER", "name": "TEXT", "region": "TEXT", "version": "TEXT", "status": "TEXT"},
   "deployment_pipeline": {"id": "INTEGER", "stage": "TEXT", "duration": "TEXT", "status": "TEXT", "position": "INTEGER"},
+  "deployment_jobs": {"id": "TEXT", "kind": "TEXT", "target": "TEXT", "lock_key": "TEXT", "status": "TEXT", "stages": "TEXT", "lease_until": "TEXT", "created_at": "TEXT", "updated_at": "TEXT"},
   "services": {"id": "INTEGER", "name": "TEXT", "status": "TEXT", "uptime": "REAL", "version": "TEXT", "repo": "TEXT", "branch": "TEXT", "app_url": "TEXT"},
   "activity_log": {"id": "INTEGER", "title": "TEXT", "description": "TEXT", "icon": "TEXT", "created_at": "TEXT"},
   "live_logs": {"id": "INTEGER", "level": "TEXT", "message": "TEXT", "created_at": "TEXT"},
@@ -70,4 +75,4 @@ var expectedTypes = map[string]map[string]string{
   "admin_audit_log": {"id": "INTEGER", "action": "TEXT", "target": "TEXT", "created_at": "TEXT"},
 }
 
-var expectedIndexes = []string{"idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time"}
+var expectedIndexes = []string{"idx_deployment_jobs_running_target", "idx_deployment_jobs_updated", "idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time"}

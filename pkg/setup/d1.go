@@ -26,7 +26,7 @@ type Status struct {
   Migrations []string `json:"migrations"`
 }
 
-const appSchemaVersion = "app-1.0.12"
+const appSchemaVersion = "app-1.0.15"
 
 // Prepare avoids replaying the full schema before every new deployment.
 // The Databases page always performs a fresh inspection and can repair drift.
@@ -127,7 +127,7 @@ func Ensure() (Status, error) {
     }
   }
   for _, sql := range schemaStatements {
-    if !strings.HasPrefix(sql, "CREATE INDEX") { continue }
+    if !strings.HasPrefix(sql, "CREATE INDEX") && !strings.HasPrefix(sql, "CREATE UNIQUE INDEX") { continue }
     if _, err := d1.Query(sql); err != nil { return Status{}, fmt.Errorf("membuat indeks: %w", err) }
   }
   status, err := Inspect()

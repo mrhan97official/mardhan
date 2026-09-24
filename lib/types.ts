@@ -27,6 +27,16 @@ export interface PipelineStage {
   updated_at?: string;
 }
 
+export interface DeploymentJob {
+  id: string;
+  kind: "new_app" | "update_app" | "self_update";
+  target: string;
+  status: "Running" | "Success" | "Failed" | "Interrupted";
+  stages: PipelineStage[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Service {
   id: number;
   name: string;

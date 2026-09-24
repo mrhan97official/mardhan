@@ -1,5 +1,5 @@
 -- DevControl schema for Cloudflare D1 (SQLite dialect)
--- Fourteen application and management tables. Safe to re-run to create tables missing from a
+-- Application and management tables. Safe to re-run to create tables missing from a
 -- partial setup; IF NOT EXISTS does not upgrade columns in existing tables.
 -- Do not run db/seed.sql repeatedly: it inserts demo rows each time.
 
@@ -31,6 +31,22 @@ CREATE TABLE IF NOT EXISTS deployment_pipeline (
   status TEXT NOT NULL CHECK (status IN ('Success', 'Running', 'Pending', 'Failed')),
   position INTEGER NOT NULL
 );
+
+-- Each ZIP deployment has its own stages. The partial index permits different
+-- targets to run together while preventing two writers to one repo.
+CREATE TABLE IF NOT EXISTS deployment_jobs (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('new_app', 'update_app', 'self_update')),
+  target TEXT NOT NULL,
+  lock_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('Running', 'Success', 'Failed', 'Interrupted')),
+  stages TEXT NOT NULL,
+  lease_until TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_deployment_jobs_running_target ON deployment_jobs (lock_key) WHERE status = 'Running';
+CREATE INDEX IF NOT EXISTS idx_deployment_jobs_updated ON deployment_jobs (updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS services (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
