@@ -20,6 +20,12 @@ var schemaStatements = []string{
   "CREATE INDEX IF NOT EXISTS idx_activity_created_at ON activity_log (created_at)",
   "CREATE TABLE IF NOT EXISTS zip_archives (\n  id TEXT PRIMARY KEY,\n  scope TEXT NOT NULL CHECK (scope IN ('app', 'self')),\n  target TEXT NOT NULL,\n  filename TEXT NOT NULL,\n  object_key TEXT NOT NULL,\n  size_bytes INTEGER NOT NULL,\n  sha256 TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('pending', 'current', 'previous', 'failed')),\n  source TEXT NOT NULL CHECK (source IN ('upload', 'github_snapshot')),\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE INDEX IF NOT EXISTS idx_zip_archives_target ON zip_archives (scope, target, created_at DESC)",
+  "CREATE TABLE IF NOT EXISTS project_thumbnails (\n  repo TEXT PRIMARY KEY COLLATE NOCASE,\n  version TEXT NOT NULL,\n  object_key TEXT,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+  "CREATE TABLE IF NOT EXISTS project_thumbnail_uploads (\n  id TEXT PRIMARY KEY,\n  repo TEXT NOT NULL COLLATE NOCASE,\n  object_key TEXT NOT NULL,\n  content_type TEXT NOT NULL,\n  size_bytes INTEGER NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+  "CREATE INDEX IF NOT EXISTS idx_project_thumbnail_uploads_repo ON project_thumbnail_uploads (repo)",
+  "CREATE INDEX IF NOT EXISTS idx_project_thumbnail_uploads_time ON project_thumbnail_uploads (created_at)",
+  "CREATE TABLE IF NOT EXISTS project_thumbnail_objects (\n  object_key TEXT PRIMARY KEY,\n  repo TEXT NOT NULL COLLATE NOCASE,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+  "CREATE INDEX IF NOT EXISTS idx_project_thumbnail_objects_repo ON project_thumbnail_objects (repo)",
   "CREATE TABLE IF NOT EXISTS schema_migrations (\n  version TEXT PRIMARY KEY,\n  applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE TABLE IF NOT EXISTS managed_apis (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  project TEXT NOT NULL,\n  path TEXT NOT NULL,\n  method TEXT NOT NULL CHECK (method IN ('GET', 'HEAD')),\n  environment TEXT NOT NULL,\n  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE INDEX IF NOT EXISTS idx_managed_apis_project ON managed_apis (project)",
@@ -37,6 +43,7 @@ var migrationStatements = []migrationStatement{
   {"002", "ALTER TABLE services ADD COLUMN branch TEXT DEFAULT 'main'"},
   {"003", "CREATE TABLE IF NOT EXISTS zip_archives (\n  id TEXT PRIMARY KEY,\n  scope TEXT NOT NULL CHECK (scope IN ('app', 'self')),\n  target TEXT NOT NULL,\n  filename TEXT NOT NULL,\n  object_key TEXT NOT NULL,\n  size_bytes INTEGER NOT NULL,\n  sha256 TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('pending', 'current', 'previous', 'failed')),\n  source TEXT NOT NULL CHECK (source IN ('upload', 'github_snapshot')),\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)"},
   {"003", "CREATE INDEX IF NOT EXISTS idx_zip_archives_target ON zip_archives (scope, target, created_at DESC)"},
+  {"004", "ALTER TABLE project_thumbnails ADD COLUMN object_key TEXT"},
 }
 
 var expectedColumns = map[string][]string{
@@ -50,6 +57,9 @@ var expectedColumns = map[string][]string{
   "api_performance": {"id", "response_time_ms", "response_time_change", "request_volume", "request_volume_change", "error_rate", "error_rate_change", "updated_at"},
   "infra_metrics": {"id", "metric", "value", "recorded_at"},
   "zip_archives": {"id", "scope", "target", "filename", "object_key", "size_bytes", "sha256", "status", "source", "created_at"},
+  "project_thumbnails": {"repo", "version", "object_key", "updated_at"},
+  "project_thumbnail_uploads": {"id", "repo", "object_key", "content_type", "size_bytes", "created_at"},
+  "project_thumbnail_objects": {"object_key", "repo", "created_at"},
   "schema_migrations": {"version", "applied_at"},
   "managed_apis": {"id", "name", "project", "path", "method", "environment", "enabled", "created_at"},
   "api_keys": {"id", "name", "key_prefix", "key_hash", "scopes", "created_at", "revoked_at"},
@@ -68,6 +78,9 @@ var expectedTypes = map[string]map[string]string{
   "api_performance": {"id": "INTEGER", "response_time_ms": "INTEGER", "response_time_change": "REAL", "request_volume": "INTEGER", "request_volume_change": "REAL", "error_rate": "REAL", "error_rate_change": "REAL", "updated_at": "TEXT"},
   "infra_metrics": {"id": "INTEGER", "metric": "TEXT", "value": "REAL", "recorded_at": "TEXT"},
   "zip_archives": {"id": "TEXT", "scope": "TEXT", "target": "TEXT", "filename": "TEXT", "object_key": "TEXT", "size_bytes": "INTEGER", "sha256": "TEXT", "status": "TEXT", "source": "TEXT", "created_at": "TEXT"},
+  "project_thumbnails": {"repo": "TEXT", "version": "TEXT", "object_key": "TEXT", "updated_at": "TEXT"},
+  "project_thumbnail_uploads": {"id": "TEXT", "repo": "TEXT", "object_key": "TEXT", "content_type": "TEXT", "size_bytes": "INTEGER", "created_at": "TEXT"},
+  "project_thumbnail_objects": {"object_key": "TEXT", "repo": "TEXT", "created_at": "TEXT"},
   "schema_migrations": {"version": "TEXT", "applied_at": "TEXT"},
   "managed_apis": {"id": "TEXT", "name": "TEXT", "project": "TEXT", "path": "TEXT", "method": "TEXT", "environment": "TEXT", "enabled": "INTEGER", "created_at": "TEXT"},
   "api_keys": {"id": "TEXT", "name": "TEXT", "key_prefix": "TEXT", "key_hash": "TEXT", "scopes": "TEXT", "created_at": "TEXT", "revoked_at": "TEXT"},
@@ -75,4 +88,4 @@ var expectedTypes = map[string]map[string]string{
   "admin_audit_log": {"id": "INTEGER", "action": "TEXT", "target": "TEXT", "created_at": "TEXT"},
 }
 
-var expectedIndexes = []string{"idx_deployment_jobs_running_target", "idx_deployment_jobs_updated", "idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time"}
+var expectedIndexes = []string{"idx_deployment_jobs_running_target", "idx_deployment_jobs_updated", "idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_project_thumbnail_uploads_repo", "idx_project_thumbnail_uploads_time", "idx_project_thumbnail_objects_repo", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time"}

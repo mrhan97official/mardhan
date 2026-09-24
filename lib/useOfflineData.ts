@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cacheGet, cacheSet } from "./db";
+import { subscribeDataChanges } from "./liveUpdates";
 
 interface OfflineDataState<T> {
   data: T;
@@ -31,16 +32,23 @@ export function useOfflineData<T>(
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const mounted = useRef(true);
+  const cacheLoaded = useRef(false);
+  const requestID = useRef(0);
 
   const load = useCallback(async () => {
-    // IndexedDB can be disabled by the browser. It must never prevent the
-    // request to GitHub (or any other live endpoint) from running.
-    const cached = await cacheGet<T>(key).catch(() => undefined);
-    if (cached && mounted.current) {
-      setData(cached.data);
-      setUpdatedAt(cached.updatedAt);
-      setLoading(false);
+    const id = ++requestID.current;
+    if (!cacheLoaded.current) {
+      cacheLoaded.current = true;
+      // Read the offline snapshot only on the first load. Polls and change
+      // notifications must not repaint deleted items from an old snapshot.
+      const cached = await cacheGet<T>(key).catch(() => undefined);
+      if (cached && mounted.current && id === requestID.current) {
+        setData(cached.data);
+        setUpdatedAt(cached.updatedAt);
+        setLoading(false);
+      }
     }
+    if (!mounted.current || id !== requestID.current) return;
 
     let httpFailure = false;
     try {
@@ -51,33 +59,39 @@ export function useOfflineData<T>(
         throw new Error((body && typeof body.error === "string" && body.error) || `HTTP ${res.status}`);
       }
       const json = (await res.json()) as T;
-      if (!mounted.current) return;
+      if (!mounted.current || id !== requestID.current) return;
       setData(json);
       setIsOffline(false);
       setError(null);
       setUpdatedAt(Date.now());
       await cacheSet(key, json).catch(() => {});
     } catch (err) {
-      if (!mounted.current) return;
+      if (!mounted.current || id !== requestID.current) return;
       setIsOffline(!httpFailure);
       setError(err instanceof Error ? err.message : "Gagal memuat data.");
-      if (!cached) setData(fallback);
     } finally {
-      if (mounted.current) setLoading(false);
+      if (mounted.current && id === requestID.current) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, endpoint]);
 
   useEffect(() => {
     mounted.current = true;
-    load();
-    const onOnline = () => load();
+    void load();
+    const onOnline = () => { void load(); };
+    const onVisible = () => { if (document.visibilityState === "visible") void load(); };
     window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onVisible);
+    const unsubscribe = subscribeDataChanges(onOnline);
     let interval: ReturnType<typeof setInterval> | undefined;
-    if (pollMs) interval = setInterval(load, pollMs);
+    if (pollMs) interval = setInterval(onVisible, pollMs);
     return () => {
       mounted.current = false;
+      requestID.current++;
+      cacheLoaded.current = false;
       window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisible);
+      unsubscribe();
       if (interval) clearInterval(interval);
     };
   }, [load, pollMs]);

@@ -86,7 +86,7 @@ export default function DatabasesPage() {
       {status && <section className="card p-4 sm:p-6">
         <h2 className="flex items-center gap-2 text-base font-semibold"><ShieldCheck size={18} /> Tabel aplikasi</h2>
         <p className="mt-1 text-xs text-slate-400">Kolom tambahan pada database lama ditampilkan, tidak dihapus. Perubahan akan ditinjau sebelum tombol penyiapan dijalankan.</p>
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
           {status.d1.tables.map((table) => <div key={table.name} className="min-w-0 rounded-xl border border-base-border bg-base-850 p-4">
             <div className="flex items-center justify-between gap-2"><span className="truncate font-mono text-xs text-slate-200">{table.name}</span>
               <span className={`text-xs ${table.exists && !table.missing.length && !table.mismatched.length ? "text-emerald-400" : "text-amber-400"}`}>

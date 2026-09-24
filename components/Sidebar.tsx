@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -43,6 +44,16 @@ export default function Sidebar({
   expanded: boolean;
 }) {
   const pathname = usePathname();
+  const [touchLabel, setTouchLabel] = useState<string | null>(null);
+  const labelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => { if (labelTimer.current) clearTimeout(labelTimer.current); }, []);
+
+  function showTouchLabel(label: string) {
+    if (labelTimer.current) clearTimeout(labelTimer.current);
+    setTouchLabel(label);
+    labelTimer.current = setTimeout(() => { setTouchLabel(null); labelTimer.current = null; }, 1500);
+  }
 
   return (
     <>
@@ -89,8 +100,9 @@ export default function Sidebar({
                 key={label}
                 href={href}
                 onClick={onClose}
+                onPointerDown={(event) => { if (event.pointerType === "touch" || event.pointerType === "pen") showTouchLabel(label); }}
                 aria-label={label}
-                className={`group relative flex items-center gap-3 rounded-xl py-2.5 text-sm font-medium transition-colors ${
+                className={`nav-tooltip-parent group relative flex items-center gap-3 rounded-xl py-2.5 text-sm font-medium transition-colors ${
                   expanded ? "px-3 md:justify-start" : "px-3 md:justify-center md:px-0"
                 }
                   ${
@@ -106,7 +118,7 @@ export default function Sidebar({
                 {!expanded && (
                   <span
                     aria-hidden="true"
-                    className="pointer-events-none invisible absolute left-full top-1/2 z-[60] ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-semibold text-slate-100 opacity-0 shadow-xl transition-opacity before:absolute before:left-0 before:top-1/2 before:h-2 before:w-2 before:-translate-x-1/2 before:-translate-y-1/2 before:rotate-45 before:border-b before:border-l before:border-base-border before:bg-base-800 md:block md:group-hover:visible md:group-hover:opacity-100 md:group-focus-visible:visible md:group-focus-visible:opacity-100"
+                    className={`nav-tooltip pointer-events-none invisible absolute left-full top-1/2 z-[60] ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-semibold text-slate-100 opacity-0 shadow-xl transition-opacity before:absolute before:left-0 before:top-1/2 before:h-2 before:w-2 before:-translate-x-1/2 before:-translate-y-1/2 before:rotate-45 before:border-b before:border-l before:border-base-border before:bg-base-800 md:block md:group-focus-visible:visible md:group-focus-visible:opacity-100 ${touchLabel === label ? "md:visible md:opacity-100" : ""}`}
                   >
                     {label}
                   </span>
@@ -117,7 +129,7 @@ export default function Sidebar({
         </nav>
 
         <div
-          className={`group relative m-3 rounded-xl border border-base-border bg-base-800/70 p-3 ${
+          className={`nav-tooltip-parent group relative m-3 rounded-xl border border-base-border bg-base-800/70 p-3 ${
             expanded ? "" : "md:flex md:justify-center"
           }`}
         >
@@ -126,14 +138,14 @@ export default function Sidebar({
             <span className={expanded ? "md:inline" : "md:hidden"}>Panel Admin</span>
           </div>
           <p className={`mt-1 items-center gap-1 text-xs text-slate-500 ${expanded ? "flex" : "flex md:hidden"}`}>
-            <Cpu size={12} /> v1.0.15
+            <Cpu size={12} /> v1.0.18
           </p>
           {!expanded && (
             <span
               aria-hidden="true"
-              className="pointer-events-none invisible absolute left-full top-1/2 z-[60] ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-semibold text-slate-100 opacity-0 shadow-xl transition-opacity before:absolute before:left-0 before:top-1/2 before:h-2 before:w-2 before:-translate-x-1/2 before:-translate-y-1/2 before:rotate-45 before:border-b before:border-l before:border-base-border before:bg-base-800 md:block md:group-hover:visible md:group-hover:opacity-100"
+              className="nav-tooltip pointer-events-none invisible absolute left-full top-1/2 z-[60] ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-semibold text-slate-100 opacity-0 shadow-xl transition-opacity before:absolute before:left-0 before:top-1/2 before:h-2 before:w-2 before:-translate-x-1/2 before:-translate-y-1/2 before:rotate-45 before:border-b before:border-l before:border-base-border before:bg-base-800 md:block"
             >
-              Panel Admin · v1.0.15
+              Panel Admin · v1.0.18
             </span>
           )}
         </div>

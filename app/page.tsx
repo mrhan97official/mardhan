@@ -31,12 +31,12 @@ import type {
 } from "@/lib/types";
 
 export default function OverviewPage() {
-  const overview = useOfflineData<OverviewStats>("overview", "/api/overview", fallbackOverview, 30000);
-  const pipeline = useOfflineData<DeploymentJob[]>("deployment-jobs-v15", "/api/deployments", [], 5000);
+  const overview = useOfflineData<OverviewStats>("overview", "/api/overview", fallbackOverview, 10000);
+  const pipeline = useOfflineData<DeploymentJob[]>("deployment-jobs-v16", "/api/deployments", [], 5000);
   const environments = useOfflineData<Environment[]>("environments", "/api/environments", fallbackEnvironments, 30000);
   const infra = useOfflineData<InfraMetric[]>("infra", "/api/health", fallbackInfra, 15000);
   const perf = useOfflineData<ApiPerformance>("api-checks-v12", "/api/performance", fallbackApiPerformance, 30000);
-  const services = useOfflineData<Service[]>("services", "/api/services", fallbackServices, 30000);
+  const services = useOfflineData<Service[]>("services", "/api/services", fallbackServices, 10000);
   const activity = useOfflineData<ActivityItem[]>("activity", "/api/activity", fallbackActivity, 30000);
   const logs = useOfflineData<LiveLog[]>("logs", "/api/logs", fallbackLogs, 10000);
 
@@ -48,20 +48,20 @@ export default function OverviewPage() {
     <AppShell title="Overview" subtitle="Infrastructure & deployment workspace" isOffline={anyOffline}>
       <StatCards stats={overview.data} />
 
-      <div className="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-[1.6fr_1fr]">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] md:gap-3 xl:gap-6">
         <DeploymentPipeline jobs={pipeline.data} limit={3} onDeployed={pipeline.reload} loading={pipeline.loading} error={pipeline.error} isOffline={pipeline.isOffline} />
         <EnvironmentStatus environments={environments.data} />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-[1.6fr_1fr]">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] md:gap-3 xl:gap-6">
         <InfraHealth metrics={infra.data} />
         <ApiPerformancePanel perf={perf.data} />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-3 xl:gap-6">
         <ServicesTable services={services.data} />
         <RecentActivity items={activity.data} />
-        <div className="lg:col-span-2 xl:col-span-1">
+        <div className="min-w-0">
           <LiveLogs logs={logs.data} />
         </div>
       </div>

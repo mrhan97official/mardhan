@@ -7,7 +7,7 @@ import { fallbackServices } from "@/lib/fallbackData";
 import type { Service } from "@/lib/types";
 
 export default function ContainersPage() {
-  const services = useOfflineData<Service[]>("services", "/api/services", fallbackServices, 30000);
+  const services = useOfflineData<Service[]>("services", "/api/services", fallbackServices, 10000);
 
   return (
     <AppShell title="Containers" subtitle="Running services and their status" isOffline={services.isOffline}>

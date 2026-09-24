@@ -44,6 +44,8 @@ import (
 
 	"devcontrol/pkg/apimanagement"
 	"devcontrol/pkg/archive"
+	"devcontrol/pkg/projectdelete"
+	"devcontrol/pkg/projectthumbnail"
 	"devcontrol/pkg/auth"
 	"devcontrol/pkg/d1"
 	"devcontrol/pkg/setup"
@@ -86,6 +88,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		handleSelfUpdate(w, r)
 	case "github-repos":
 		handleGithubRepos(w, r)
+	case "project":
+		projectdelete.Handle(w, r, vercelAppProjectName)
+	case "project-thumbnails":
+		projectthumbnail.Handle(w, r)
 	case "github-branches":
 		handleGithubBranches(w, r)
 	case "zip-archives":
@@ -148,10 +154,19 @@ func expireDeploymentJobs() error {
 	return err
 }
 
+// Terminal pipelines remain readable for five minutes, then are removed
+// from D1 on the next read or deployment. Active jobs are never pruned.
+func pruneDeploymentJobs() error {
+    if err := expireDeploymentJobs(); err != nil { return err }
+    _, err := d1.Query(`DELETE FROM deployment_jobs WHERE status IN ('Success', 'Failed', 'Interrupted')
+        AND updated_at <= datetime('now', '-5 minutes')`)
+    return err
+}
+
 // GET /api/deployments -> independent recent pipelines.
 func handleDeployments(w http.ResponseWriter, r *http.Request) {
 	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
-	if err := expireDeploymentJobs(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	if err := pruneDeploymentJobs(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	rows, err := d1.Query(`SELECT id, kind, target, status, stages, created_at, updated_at
 		FROM deployment_jobs ORDER BY created_at DESC, rowid DESC LIMIT 30`)
 	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
@@ -169,7 +184,7 @@ func handleDeployments(w http.ResponseWriter, r *http.Request) {
 }
 
 func startDeploymentPipeline(id, kind, target, lockKey string, names [4]string) error {
-	if err := expireDeploymentJobs(); err != nil { return err }
+	if err := pruneDeploymentJobs(); err != nil { return err }
 	stages := make([]deploymentStage, 0, 4)
 	for index, name := range names {
 		status := "Pending"

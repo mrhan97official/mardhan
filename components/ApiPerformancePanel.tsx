@@ -50,7 +50,7 @@ export default function ApiPerformancePanel({ perf, onRangeChange, range }: { pe
   ];
 
   return (
-    <div className="card p-4 sm:p-6">
+    <div className="card min-w-0 p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-white sm:text-lg">Hasil Pemeriksaan API</h2>
         {onRangeChange ? <select aria-label="Rentang pemeriksaan" value={range || perf.range || "24h"} onChange={(event) => onRangeChange(event.target.value as "24h" | "7d" | "30d")}

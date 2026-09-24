@@ -47,7 +47,7 @@ type Store struct {
 func New() (*Store, error) {
 	account, bucket, token := os.Getenv("CF_ACCOUNT_ID"), os.Getenv("CF_R2_BUCKET"), os.Getenv("CF_API_TOKEN")
 	if account == "" || bucket == "" || token == "" {
-		return nil, fmt.Errorf("arsip ZIP belum dikonfigurasi: isi CF_R2_BUCKET dan kredensial Cloudflare dengan izin R2 Read & Write")
+		return nil, fmt.Errorf("penyimpanan R2 belum dikonfigurasi: isi CF_R2_BUCKET dan kredensial Cloudflare dengan izin R2 Read & Write")
 	}
 	return &Store{query: d1.Query, client: &http.Client{Timeout: 25 * time.Second},
 		endpoint: "https://api.cloudflare.com/client/v4", account: account, bucket: bucket, token: token}, nil
@@ -150,7 +150,7 @@ func (s *Store) put(key string, data []byte) error {
 		(result.Result.Size != "" && result.Result.Size != strconv.Itoa(len(data))) {
 		message := fmt.Sprintf("HTTP %d", resp.StatusCode)
 		if len(result.Errors) > 0 { message = result.Errors[0].Message }
-		return fmt.Errorf("R2 tidak mengonfirmasi penyimpanan ZIP: %s", message)
+		return fmt.Errorf("R2 tidak mengonfirmasi penyimpanan objek: %s", message)
 	}
 	return nil
 }
@@ -268,6 +268,38 @@ func (s *Store) List(offset int) ([]Record, bool, error) {
 	return list, more, nil
 }
 
+// DeleteTarget removes only the ZIP objects belonging to one application or
+// self-update target. Each D1 row is removed after its R2 object is gone, so
+// a failed request can safely resume on the next attempt.
+func (s *Store) DeleteTarget(scope, target string) error {
+	rows, err := s.query(`SELECT id, object_key FROM zip_archives WHERE scope = ? AND target = ?`, scope, target)
+	if err != nil { return err }
+	for _, row := range rows {
+		id, _ := row["id"].(string)
+		key, _ := row["object_key"].(string)
+		if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" || key != "archives/"+id+".zip" {
+			return fmt.Errorf("kunci arsip tidak valid untuk %s", target)
+		}
+		req, err := http.NewRequest(http.MethodDelete, s.objectURL(key), nil)
+		if err != nil { return err }
+		req.Header.Set("Authorization", "Bearer "+s.token)
+		resp, err := s.client.Do(req)
+		if err != nil { return err }
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+			resp.Body.Close()
+			return fmt.Errorf("gagal menghapus ZIP %s di R2 (HTTP %d)", id, resp.StatusCode)
+		}
+		if resp.StatusCode == http.StatusOK {
+			var result struct { Success bool `json:"success"` }
+			decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result)
+			resp.Body.Close()
+			if decodeErr != nil || !result.Success { return fmt.Errorf("R2 tidak mengonfirmasi penghapusan ZIP %s: %v", id, decodeErr) }
+		} else { resp.Body.Close() }
+		if _, err := s.query(`DELETE FROM zip_archives WHERE id = ? AND scope = ? AND target = ?`, id, scope, target); err != nil { return err }
+	}
+	return nil
+}
+
 func (s *Store) Download(rec Record) ([]byte, error) {
 	if !strings.HasPrefix(rec.ObjectKey, "archives/") || !strings.HasSuffix(rec.ObjectKey, ".zip") { return nil, fmt.Errorf("kunci objek tidak valid") }
 	req, err := http.NewRequest(http.MethodGet, s.objectURL(rec.ObjectKey), nil)
@@ -281,4 +313,51 @@ func (s *Store) Download(rec Record) ([]byte, error) {
 	if err != nil { return nil, err }
 	if int64(len(data)) != rec.SizeBytes || Digest(data) != rec.SHA256 { return nil, fmt.Errorf("ZIP arsip tidak lengkap atau berubah") }
 	return data, nil
+}
+
+// Thumbnails share the private bucket with ZIP archives. Legacy images use a
+// deterministic key; direct uploads use an immutable key under that prefix.
+func validThumbnailKey(key string) bool {
+	if !strings.HasPrefix(key, "thumbnails/") || !strings.HasSuffix(key, ".img") { return false }
+	part := strings.TrimSuffix(strings.TrimPrefix(key, "thumbnails/"), ".img")
+	parts := strings.Split(part, "/")
+	if len(parts) == 1 { return len(parts[0]) == 64 && strings.Trim(parts[0], "0123456789abcdef") == "" }
+	return len(parts) == 2 && len(parts[0]) == 64 && len(parts[1]) == 32 &&
+		strings.Trim(parts[0], "0123456789abcdef") == "" && strings.Trim(parts[1], "0123456789abcdef") == ""
+}
+
+func (s *Store) SaveThumbnail(key string, data []byte) error {
+	if !validThumbnailKey(key) || len(data) == 0 || len(data) > 1<<20 { return fmt.Errorf("gambar thumbnail tidak valid") }
+	return s.put(key, data)
+}
+
+func (s *Store) ReadThumbnail(key string) ([]byte, error) {
+	if !validThumbnailKey(key) { return nil, fmt.Errorf("kunci thumbnail tidak valid") }
+	req, err := http.NewRequest(http.MethodGet, s.objectURL(key), nil)
+	if err != nil { return nil, err }
+	req.Header.Set("Authorization", "Bearer "+s.token)
+	resp, err := s.client.Do(req)
+	if err != nil { return nil, err }
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK { return nil, fmt.Errorf("R2 mengembalikan HTTP %d", resp.StatusCode) }
+	data, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	if err != nil { return nil, err }
+	if len(data) == 0 || len(data) > 1<<20 { return nil, fmt.Errorf("gambar thumbnail terlalu besar atau kosong") }
+	return data, nil
+}
+
+func (s *Store) DeleteThumbnail(key string) error {
+	if !validThumbnailKey(key) { return fmt.Errorf("kunci thumbnail tidak valid") }
+	req, err := http.NewRequest(http.MethodDelete, s.objectURL(key), nil)
+	if err != nil { return err }
+	req.Header.Set("Authorization", "Bearer "+s.token)
+	resp, err := s.client.Do(req)
+	if err != nil { return err }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusNoContent { return nil }
+	if resp.StatusCode != http.StatusOK { return fmt.Errorf("gagal menghapus thumbnail di R2 (HTTP %d)", resp.StatusCode) }
+	var result struct { Success bool `json:"success"` }
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result); err != nil { return err }
+	if !result.Success { return fmt.Errorf("R2 tidak mengonfirmasi penghapusan thumbnail") }
+	return nil
 }

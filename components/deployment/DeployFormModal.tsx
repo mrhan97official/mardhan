@@ -48,7 +48,7 @@ export default function DeployFormModal({
   onSuccess: () => void;
   onProgress: (progress: { running: boolean; failed: boolean; message: string; target?: string }) => void;
 }) {
-  const services = useOfflineData<Service[]>("services", "/api/services", fallbackServices, 30000);
+  const services = useOfflineData<Service[]>("services", "/api/services", fallbackServices, 10000);
   const isUpdate = mode === "update_app";
 
   const [name, setName] = useState("");

@@ -6,7 +6,7 @@ import { useOfflineData } from "@/lib/useOfflineData";
 import type { DeploymentJob } from "@/lib/types";
 
 export default function DeploymentsPage() {
-  const pipeline = useOfflineData<DeploymentJob[]>("deployment-jobs-v15", "/api/deployments", [], 5000);
+  const pipeline = useOfflineData<DeploymentJob[]>("deployment-jobs-v16", "/api/deployments", [], 5000);
 
   return (
     <AppShell title="Deployments" subtitle="Pipeline stages and rollout status" isOffline={pipeline.isOffline}>

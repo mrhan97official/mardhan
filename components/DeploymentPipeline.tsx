@@ -84,7 +84,7 @@ export default function DeploymentPipeline({
   const statusLabel = error ? "Status terganggu" : loading ? "Memuat" : isOffline ? "Offline" : jobs.length === 0 ? "Belum ada" : "Live";
 
   return (
-    <div className="card p-4 sm:p-6">
+    <div className="card min-w-0 p-4 sm:p-6">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-bold text-white sm:text-lg">Deployment Pipeline</h2>

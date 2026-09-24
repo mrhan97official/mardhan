@@ -95,7 +95,7 @@ export default function ApiManagementPage() {
           <div className="flex items-center justify-between"><h2 className="text-base font-bold">API aplikasi yang didaftarkan</h2>
             <button type="button" onClick={() => void load()} className="rounded-lg border border-base-border p-2" title="Segarkan"><RefreshCw size={15} /></button></div>
           <p className="text-sm text-slate-400">Tombol aktif/jeda mengatur pemeriksaan DevControl. Aplikasi eksternal tetap berjalan di platformnya. Hanya path GET/HEAD pada proyek yang sudah memiliki URL deployment yang dapat diuji.</p>
-          <form onSubmit={submitAPI} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <form onSubmit={submitAPI} className="grid gap-3 sm:grid-cols-2 md:grid-cols-5 md:gap-2 xl:gap-3">
             <label className="text-xs text-slate-400">Nama API<input required minLength={2} maxLength={80} value={name} onChange={(e) => setName(e.target.value)} className={`mt-1 ${field}`} placeholder="Status aplikasi" /></label>
             <label className="text-xs text-slate-400">Proyek<select required value={project} onChange={(e) => setProject(e.target.value)} className={`mt-1 ${field}`}><option value="">Pilih proyek</option>{snapshot.projects.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
             <label className="text-xs text-slate-400">Path<input required value={path} onChange={(e) => setPath(e.target.value)} className={`mt-1 ${field}`} placeholder="/health" /></label>
@@ -105,7 +105,7 @@ export default function ApiManagementPage() {
           </form>
           {!snapshot.projects.length && <p className="text-sm text-amber-300">Belum ada proyek dengan URL deployment di D1. Deploy aplikasi dahulu agar endpoint dapat didaftarkan.</p>}
           {!snapshot.apis.length && <p className="text-sm text-slate-400">Belum ada endpoint aplikasi yang didaftarkan.</p>}
-          <div className="grid gap-3 lg:grid-cols-2">{snapshot.apis.map((api) => {
+          <div className="grid gap-3 md:grid-cols-2">{snapshot.apis.map((api) => {
             const check = snapshot.checks.find((item) => item.api_id === api.id);
             return <div key={api.id} className="rounded-xl border border-base-border bg-base-850 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold">{api.name}</h3><p className="mt-1 break-all text-xs text-slate-400">{api.project} · {api.environment} · {api.method} {api.path}</p></div>
@@ -119,7 +119,7 @@ export default function ApiManagementPage() {
         <section className="card space-y-4 p-4 sm:p-6">
           <div><h2 className="flex items-center gap-2 text-base font-bold"><ShieldCheck size={18} /> Endpoint DevControl</h2>
             <p className="mt-1 text-xs text-slate-400">Endpoint baca yang nyata. API key hanya berlaku untuk hak baca yang dipilih; deployment dan pengaturan tetap memerlukan sesi admin.</p></div>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{snapshot.scopes.map((scope) => <div key={scope} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-base-border bg-base-850 px-3 py-2 text-xs">
+          <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">{snapshot.scopes.map((scope) => <div key={scope} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-base-border bg-base-850 px-3 py-2 text-xs">
             <span className="font-mono">GET /api/{scope.slice(5)}</span>
             <button type="button" onClick={() => void testInternal(scope)} className="text-accent-blue hover:underline">Uji</button>
             {internalChecks[scope] && <span className="w-full text-slate-400">{internalChecks[scope]}</span>}

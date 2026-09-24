@@ -16,7 +16,7 @@ const META: Record<
 
 export default function InfraHealth({ metrics }: { metrics: InfraMetric[] }) {
   return (
-    <div className="card p-4 sm:p-6">
+    <div className="card min-w-0 p-4 md:p-3 xl:p-6">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-white sm:text-lg">Infrastructure Health</h2>
         <button className="flex items-center gap-1 rounded-lg border border-base-border bg-base-850 px-2.5 py-1.5 text-xs font-medium text-slate-300">
@@ -24,18 +24,18 @@ export default function InfraHealth({ metrics }: { metrics: InfraMetric[] }) {
         </button>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4 md:gap-1 xl:gap-4">
         {metrics.map((m) => {
           const meta = META[m.metric];
           const displayValue = m.metric === "requests" ? `${(m.current / 10).toFixed(1)}K` : m.current;
           return (
-            <div key={m.metric} className="rounded-xl border border-base-border/70 p-3">
+            <div key={m.metric} className="min-w-0 rounded-xl border border-base-border/70 p-3 md:p-1 xl:p-3">
               <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-sm font-medium text-slate-300">
+                <span className="flex min-w-0 items-center gap-1 text-sm font-medium text-slate-300 md:text-[10px] xl:text-sm">
                   <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
                   {meta.label}
                 </span>
-                <span className="text-sm font-bold text-white">
+                <span className="text-sm font-bold text-white md:text-[10px] xl:text-sm">
                   {displayValue}
                   {m.metric !== "requests" && meta.suffix}
                 </span>
@@ -43,10 +43,10 @@ export default function InfraHealth({ metrics }: { metrics: InfraMetric[] }) {
               <div className="mt-3 h-14">
                 <Sparkline values={m.values} color={meta.color} height={56} width={220} />
               </div>
-              <div className="mt-1 flex justify-between text-[10px] text-slate-600">
+              <div className="mt-1 flex justify-between text-[10px] text-slate-600 md:text-[8px] xl:text-[10px]">
                 <span>00:00</span>
-                <span>06:00</span>
-                <span>12:00</span>
+                <span className="md:hidden xl:inline">06:00</span>
+                <span className="md:hidden xl:inline">12:00</span>
                 <span>18:00</span>
               </div>
             </div>

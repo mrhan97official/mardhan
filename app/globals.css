@@ -14,6 +14,11 @@ body {
   color: #e6ebf3;
 }
 
+/* Keep the desktop composition on tablets while scaling its type and spacing. */
+@media (min-width: 768px) and (max-width: 1279px) {
+  html { font-size: clamp(12px, 1.25vw, 15px); }
+}
+
 * {
   scrollbar-width: thin;
   scrollbar-color: #243450 transparent;
@@ -34,6 +39,15 @@ body {
 
 .scroll-x {
   @apply overflow-x-auto;
+}
+
+/* Touch browsers can keep :hover after a tap; the sidebar uses a short
+   JavaScript timer for touch tooltips instead. */
+@media (min-width: 768px) and (hover: hover) and (pointer: fine) {
+  .nav-tooltip-parent:hover .nav-tooltip {
+    visibility: visible;
+    opacity: 1;
+  }
 }
 
 :focus-visible {

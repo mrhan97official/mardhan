@@ -12,7 +12,7 @@ const withPWA = require("next-pwa")({
     {
       urlPattern: /^(?!.*\/api\/).*/,
       handler: "StaleWhileRevalidate",
-      options: { cacheName: "app-shell-v15" },
+      options: { cacheName: "app-shell-v18" },
     },
   ],
   fallbacks: {

@@ -12,7 +12,7 @@ const DOT_COLOR: Record<string, string> = {
 
 export default function EnvironmentStatus({ environments }: { environments: Environment[] }) {
   return (
-    <div className="card p-4 sm:p-6">
+    <div className="card min-w-0 p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-white sm:text-lg">Environment Status</h2>
         <button className="flex items-center gap-1 text-sm font-medium text-accent-blue hover:text-blue-400">

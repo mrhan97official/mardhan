@@ -21,7 +21,7 @@ const COLOR_BY_TYPE: Record<string, string> = {
 
 export default function RecentActivity({ items }: { items: ActivityItem[] }) {
   return (
-    <div className="card p-4 sm:p-6">
+    <div className="card min-w-0 p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-white sm:text-lg">Recent Activity</h2>
         <button className="flex items-center gap-1 text-sm font-medium text-accent-blue hover:text-blue-400">

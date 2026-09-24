@@ -1,6 +1,6 @@
 {
   "name": "devcontrol",
-  "version": "1.0.15",
+  "version": "1.0.18",
   "private": true,
   "scripts": {
     "dev": "next dev",

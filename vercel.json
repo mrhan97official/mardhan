@@ -17,6 +17,8 @@
     { "source": "/api/deploy", "destination": "/api/gateway?resource=trigger-deployment" },
     { "source": "/api/self-update", "destination": "/api/gateway?resource=self-update" },
     { "source": "/api/github-repos", "destination": "/api/gateway?resource=github-repos" },
+    { "source": "/api/project", "destination": "/api/gateway?resource=project" },
+    { "source": "/api/project-thumbnails", "destination": "/api/gateway?resource=project-thumbnails" },
     { "source": "/api/github-branches", "destination": "/api/gateway?resource=github-branches" },
     { "source": "/api/zip-archives", "destination": "/api/gateway?resource=zip-archives" }
   ],

@@ -48,12 +48,12 @@ export default function Header({
         </button>
 
         <div className="hidden sm:block">
-          <h1 className="text-xl font-bold text-white">{title}</h1>
-          <p className="text-xs text-slate-500">{subtitle}</p>
+          <h1 className="text-xl font-bold text-white md:text-base xl:text-xl">{title}</h1>
+          <p className="text-xs text-slate-500 md:hidden xl:block">{subtitle}</p>
         </div>
 
         <div className="ml-auto flex flex-1 items-center justify-end gap-2 sm:gap-3">
-          <div className="relative hidden w-full max-w-xs xl:block">
+          <div className="relative hidden w-full max-w-xs md:block md:min-w-0 md:max-w-[9rem] lg:max-w-[12rem] xl:max-w-xs">
             <Search
               size={16}
               className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
@@ -65,12 +65,12 @@ export default function Header({
             />
           </div>
 
-          <button className="hidden items-center gap-2 rounded-xl border border-base-border bg-base-850 px-3 py-2 text-sm text-slate-300 hover:bg-base-800 xl:flex">
-            Production Workspace
+          <button className="hidden items-center gap-2 rounded-xl border border-base-border bg-base-850 px-3 py-2 text-sm text-slate-300 hover:bg-base-800 md:flex md:px-2 md:text-xs xl:px-3 xl:text-sm">
+            <span className="xl:hidden">Prod</span><span className="hidden xl:inline">Production Workspace</span>
             <ChevronDown size={14} />
           </button>
 
-          <div className="hidden items-center gap-1.5 rounded-xl border border-base-border bg-base-850 px-3 py-2 text-sm lg:flex">
+          <div className="hidden items-center gap-1.5 rounded-xl border border-base-border bg-base-850 px-3 py-2 text-sm md:flex md:px-2 md:text-xs xl:px-3 xl:text-sm">
             {isOffline ? (
               <>
                 <WifiOff size={14} className="text-amber-400" />
@@ -96,7 +96,7 @@ export default function Header({
             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-blue/20 text-xs font-semibold text-accent-blue">
               A
             </div>
-            <span className="hidden text-sm font-medium text-slate-200 sm:inline">
+            <span className="hidden text-sm font-medium text-slate-200 sm:inline md:hidden xl:inline">
               Admin
             </span>
           </div>

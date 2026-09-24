@@ -114,6 +114,36 @@ CREATE TABLE IF NOT EXISTS zip_archives (
 );
 CREATE INDEX IF NOT EXISTS idx_zip_archives_target ON zip_archives (scope, target, created_at DESC);
 
+-- A single image per repository lives in the private R2 bucket. The version
+-- changes on upload so every open Projects page can reload the new image.
+CREATE TABLE IF NOT EXISTS project_thumbnails (
+  repo TEXT PRIMARY KEY COLLATE NOCASE,
+  version TEXT NOT NULL,
+  object_key TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Pending direct-to-R2 uploads are tracked until verified and committed.
+CREATE TABLE IF NOT EXISTS project_thumbnail_uploads (
+  id TEXT PRIMARY KEY,
+  repo TEXT NOT NULL COLLATE NOCASE,
+  object_key TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_project_thumbnail_uploads_repo ON project_thumbnail_uploads (repo);
+CREATE INDEX IF NOT EXISTS idx_project_thumbnail_uploads_time ON project_thumbnail_uploads (created_at);
+
+-- Track uploaded object keys until they are removed, including older images
+-- whose deletion failed during replacement. Project deletion drains this list.
+CREATE TABLE IF NOT EXISTS project_thumbnail_objects (
+  object_key TEXT PRIMARY KEY,
+  repo TEXT NOT NULL COLLATE NOCASE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_project_thumbnail_objects_repo ON project_thumbnail_objects (repo);
+
 -- Management metadata. Existing application tables and ZIP archives are never reset.
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version TEXT PRIMARY KEY,
