@@ -7,12 +7,12 @@ const withPWA = require("next-pwa")({
     {
       urlPattern: /\/api\/branding\/icon(?:\?|$)/,
       handler: "NetworkFirst",
-      options: { cacheName: "branding-icons-v19", expiration: { maxEntries: 12, maxAgeSeconds: 604800 } },
+      options: { cacheName: "branding-icons-v20", expiration: { maxEntries: 12, maxAgeSeconds: 604800 } },
     },
     {
       urlPattern: /\/manifest\.json(?:\?|$)/,
       handler: "NetworkFirst",
-      options: { cacheName: "branding-manifest-v19" },
+      options: { cacheName: "branding-manifest-v20" },
     },
     {
       urlPattern: /\/api\/.*$/,
@@ -22,7 +22,7 @@ const withPWA = require("next-pwa")({
     {
       urlPattern: /^(?!.*\/api\/).*/,
       handler: "StaleWhileRevalidate",
-      options: { cacheName: "app-shell-v19" },
+      options: { cacheName: "app-shell-v20" },
     },
   ],
   fallbacks: {
