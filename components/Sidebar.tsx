@@ -36,9 +36,11 @@ const NAV_ITEMS = [
 export default function Sidebar({
   open,
   onClose,
+  expanded,
 }: {
   open: boolean;
   onClose: () => void;
+  expanded: boolean;
 }) {
   const pathname = usePathname();
 
@@ -48,20 +50,24 @@ export default function Sidebar({
         <button
           aria-label="Tutup menu"
           onClick={onClose}
-          className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+          className="fixed inset-0 z-40 bg-black/60 md:hidden"
         />
       )}
       <aside
-        className={`fixed z-50 inset-y-0 left-0 w-64 shrink-0 border-r border-base-border bg-base-900 flex flex-col transition-transform duration-200
-        lg:sticky lg:top-0 lg:h-screen lg:translate-x-0
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 shrink-0 flex-col border-r border-base-border bg-base-900 transition-[transform,width] duration-200
+        md:sticky md:top-0 md:h-screen md:translate-x-0 ${expanded ? "md:w-64" : "md:w-20"}
         ${open ? "translate-x-0" : "-translate-x-full"}`}
       >
-        <div className="flex items-center justify-between gap-2 px-5 py-5">
+        <div
+          className={`flex items-center justify-between gap-2 px-5 py-5 ${
+            expanded ? "md:px-5" : "md:justify-center md:px-3"
+          }`}
+        >
           <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-blue/15 text-accent-blue">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent-blue/15 text-accent-blue">
               <Cloud size={20} />
             </div>
-            <div className="leading-tight">
+            <div className={`leading-tight ${expanded ? "md:block" : "md:hidden"}`}>
               <p className="text-[13px] font-semibold tracking-wide text-slate-400">DEV</p>
               <p className="text-sm font-bold text-white -mt-0.5">CONTROL</p>
             </div>
@@ -69,13 +75,13 @@ export default function Sidebar({
           <button
             aria-label="Tutup menu"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-base-800 lg:hidden"
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-base-800 md:hidden"
           >
             <X size={18} />
           </button>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
+        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2 md:overflow-visible">
           {NAV_ITEMS.map(({ label, icon: Icon, href }) => {
             const active = href === "/" ? pathname === "/" : pathname === href || pathname?.startsWith(`${href}/`);
             return (
@@ -83,28 +89,53 @@ export default function Sidebar({
                 key={label}
                 href={href}
                 onClick={onClose}
-                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors
+                aria-label={label}
+                className={`group relative flex items-center gap-3 rounded-xl py-2.5 text-sm font-medium transition-colors ${
+                  expanded ? "px-3 md:justify-start" : "px-3 md:justify-center md:px-0"
+                }
                   ${
                     active
                       ? "bg-accent-blue/15 text-accent-blue"
                       : "text-slate-400 hover:bg-base-800 hover:text-slate-200"
                   }`}
               >
-                <Icon size={18} />
-                {label}
+                <Icon size={18} className="shrink-0" />
+                <span className={`whitespace-nowrap ${expanded ? "md:inline" : "md:hidden"}`}>
+                  {label}
+                </span>
+                {!expanded && (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none invisible absolute left-full top-1/2 z-[60] ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-semibold text-slate-100 opacity-0 shadow-xl transition-opacity md:block md:group-hover:visible md:group-hover:opacity-100 md:group-focus-visible:visible md:group-focus-visible:opacity-100"
+                  >
+                    {label}
+                  </span>
+                )}
               </Link>
             );
           })}
         </nav>
 
-        <div className="m-3 rounded-xl border border-base-border bg-base-800/70 p-3">
+        <div
+          className={`group relative m-3 rounded-xl border border-base-border bg-base-800/70 p-3 ${
+            expanded ? "" : "md:flex md:justify-center"
+          }`}
+        >
           <div className="flex items-center gap-2 text-sm font-medium text-emerald-400">
-            <ShieldCheck size={16} />
-            Panel Admin
+            <ShieldCheck size={16} className="shrink-0" />
+            <span className={expanded ? "md:inline" : "md:hidden"}>Panel Admin</span>
           </div>
-          <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+          <p className={`mt-1 items-center gap-1 text-xs text-slate-500 ${expanded ? "flex" : "flex md:hidden"}`}>
             <Cpu size={12} /> v1.0.13
           </p>
+          {!expanded && (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none invisible absolute left-full top-1/2 z-[60] ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-semibold text-slate-100 opacity-0 shadow-xl transition-opacity md:block md:group-hover:visible md:group-hover:opacity-100"
+            >
+              Panel Admin · v1.0.13
+            </span>
+          )}
         </div>
       </aside>
     </>

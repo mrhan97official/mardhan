@@ -10,7 +10,7 @@ import { pollVercelBuild } from "@/lib/pollVercelBuild";
 import Link from "next/link";
 
 interface SelfUpdateResponse {
-  step: "extract" | "vercel-test" | "github-push" | "done";
+  step: "extract" | "vercel-test" | "github-push" | "vercel-production" | "done";
   ok: boolean;
   message: string;
   build_log?: string;
@@ -20,7 +20,7 @@ interface SelfUpdateResponse {
   archive_id?: string;
 }
 
-const STEP_ORDER = ["extract", "vercel-test", "github-push"] as const;
+const STEP_ORDER = ["extract", "vercel-test", "github-push", "vercel-production"] as const;
 type StepKey = (typeof STEP_ORDER)[number];
 type StepState = "pending" | "active" | "done" | "failed";
 
@@ -28,6 +28,7 @@ const STEPS: { key: StepKey; label: string }[] = [
   { key: "extract", label: "Ekstrak file zip" },
   { key: "vercel-test", label: "Uji coba build di Vercel" },
   { key: "github-push", label: "Perbarui repo GitHub" },
+  { key: "vercel-production", label: "Verifikasi production Vercel" },
 ];
 
 export default function SelfUpdateModal({
@@ -187,6 +188,18 @@ export default function SelfUpdateModal({
       if (!commitRes.ok) throw new Error((commitBody && commitBody.error) || `Gagal memperbarui GitHub (HTTP ${commitRes.status})`);
       parsed = commitBody as SelfUpdateResponse;
       setResult(parsed);
+      if (!parsed.ok) return;
+      if (parsed.step !== "vercel-production" || parsed.status !== "pending" || !parsed.ticket) {
+        throw new Error("Sesi verifikasi deployment production Vercel tidak tersedia.");
+      }
+      setActiveStep("vercel-production");
+      parsed = await pollVercelBuild<SelfUpdateResponse>("/api/self-update", {
+        phase: "production-status", repo: repo.trim(), branch: branch.trim() || "main",
+      }, parsed, (progress, elapsed) => {
+        setResult(progress);
+        setElapsedSeconds(elapsed);
+      });
+      setResult(parsed);
       if (parsed.ok && parsed.step === "done") onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Terjadi kesalahan tak terduga.");
@@ -203,7 +216,7 @@ export default function SelfUpdateModal({
       <form onSubmit={handleSubmit} className="space-y-4">
         <p className="text-xs text-slate-500">
           ZIP disimpan sebelum build diuji di Vercel. Versi sebelumnya tetap bisa diunduh jika update gagal;
-          perubahan dikirim ke GitHub hanya setelah uji build lulus.
+          perubahan dikirim ke GitHub hanya setelah uji build lulus, lalu dinyatakan berhasil setelah deployment production Vercel siap.
         </p>
 
         <div>
@@ -357,7 +370,7 @@ export default function SelfUpdateModal({
             </p>
             {result.build_log && (
               <div className="rounded-lg border border-red-500/30 bg-base-950 p-3">
-                <p className="mb-2 text-xs font-semibold text-red-300">Log build Vercel</p>
+                <p className="mb-2 text-xs font-semibold text-red-300">Detail deployment Vercel</p>
                 <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-300">{result.build_log}</pre>
               </div>
             )}

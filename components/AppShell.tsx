@@ -16,14 +16,21 @@ export default function AppShell({
   children: React.ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
 
   return (
     <div className="flex h-screen overflow-hidden bg-base-950">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        expanded={sidebarExpanded}
+      />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header
           onMenuClick={() => setSidebarOpen(true)}
+          onSidebarToggle={() => setSidebarExpanded((current) => !current)}
+          sidebarExpanded={sidebarExpanded}
           isOffline={isOffline}
           title={title}
           subtitle={subtitle}

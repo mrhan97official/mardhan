@@ -1,14 +1,27 @@
 "use client";
 
-import { Bell, ChevronDown, LogOut, Menu, Search, WifiOff } from "lucide-react";
+import {
+  Bell,
+  ChevronDown,
+  LogOut,
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  WifiOff,
+} from "lucide-react";
 
 export default function Header({
   onMenuClick,
+  onSidebarToggle,
+  sidebarExpanded,
   isOffline,
   title = "Overview",
   subtitle = "Infrastructure & deployment workspace",
 }: {
   onMenuClick: () => void;
+  onSidebarToggle: () => void;
+  sidebarExpanded: boolean;
   isOffline: boolean;
   title?: string;
   subtitle?: string;
@@ -19,9 +32,19 @@ export default function Header({
         <button
           aria-label="Buka menu"
           onClick={onMenuClick}
-          className="rounded-lg p-2 text-slate-300 hover:bg-base-800 lg:hidden"
+          className="rounded-lg p-2 text-slate-300 hover:bg-base-800 md:hidden"
         >
           <Menu size={20} />
+        </button>
+
+        <button
+          type="button"
+          aria-label={sidebarExpanded ? "Ciutkan sidebar" : "Tampilkan sidebar"}
+          title={sidebarExpanded ? "Ciutkan sidebar" : "Tampilkan sidebar"}
+          onClick={onSidebarToggle}
+          className="hidden rounded-lg p-2 text-slate-300 hover:bg-base-800 md:inline-flex"
+        >
+          {sidebarExpanded ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
         </button>
 
         <div className="hidden sm:block">
@@ -30,7 +53,7 @@ export default function Header({
         </div>
 
         <div className="ml-auto flex flex-1 items-center justify-end gap-2 sm:gap-3">
-          <div className="relative hidden md:block w-full max-w-xs">
+          <div className="relative hidden w-full max-w-xs xl:block">
             <Search
               size={16}
               className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
@@ -42,12 +65,12 @@ export default function Header({
             />
           </div>
 
-          <button className="hidden md:flex items-center gap-2 rounded-xl border border-base-border bg-base-850 px-3 py-2 text-sm text-slate-300 hover:bg-base-800">
+          <button className="hidden items-center gap-2 rounded-xl border border-base-border bg-base-850 px-3 py-2 text-sm text-slate-300 hover:bg-base-800 xl:flex">
             Production Workspace
             <ChevronDown size={14} />
           </button>
 
-          <div className="hidden sm:flex items-center gap-1.5 rounded-xl border border-base-border bg-base-850 px-3 py-2 text-sm">
+          <div className="hidden items-center gap-1.5 rounded-xl border border-base-border bg-base-850 px-3 py-2 text-sm lg:flex">
             {isOffline ? (
               <>
                 <WifiOff size={14} className="text-amber-400" />

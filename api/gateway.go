@@ -644,7 +644,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := pushFilesToGitHub(githubToken, owner, repoName, branch, files); err != nil {
+	if _, err := pushFilesToGitHub(githubToken, owner, repoName, branch, files); err != nil {
 		_ = store.Fail(archiveID)
 		msg := "[GitHub] Gagal mendorong file: " + err.Error()
 		logLiveLog("ERROR", label+": "+msg)
@@ -1135,7 +1135,7 @@ type selfUpdateFile struct {
 // ...", "[Perbarui GitHub] ...") so the error is never just a bare Vercel/
 // GitHub API message with no context about where it happened.
 type selfUpdateResult struct {
-	Step       string `json:"step"` // "extract" | "vercel-test" | "github-push" | "done"
+	Step       string `json:"step"` // "extract" | "vercel-test" | "github-push" | "vercel-production" | "done"
 	OK         bool   `json:"ok"`
 	Message    string `json:"message"`
 	BuildLog   string `json:"build_log,omitempty"`
@@ -1156,9 +1156,10 @@ type selfUpdateResult struct {
 //  3. Only if that test build reaches READY does it push the extracted
 //     files to the target GitHub repo/branch. A broken zip never reaches
 //     the real codebase.
-//  4. The browser checks build status with short requests. A failed test is
-//     cleaned up immediately; a passing test is cleaned up after GitHub sync
-//     so a lost READY response can be polled again.
+//  4. After GitHub is updated, the browser polls the Vercel check attached to
+//     that exact commit. The update is only reported as successful when the
+//     production check succeeds; rate limits and production build failures are
+//     surfaced as failures instead of false success.
 //
 // ZIP bytes are uploaded again for the GitHub stage; a signed ticket checks
 // that they are exactly the bytes whose build was approved.
@@ -1190,8 +1191,12 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	phase := orDefault(strings.TrimSpace(r.FormValue("phase")), "start")
-	if phase != "start" && phase != "status" && phase != "commit" {
+	if phase != "start" && phase != "status" && phase != "commit" && phase != "production-status" {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("tahap update tidak valid"))
+		return
+	}
+	if phase == "production-status" {
+		handleSelfUpdateProductionStatus(w, r, githubToken, vercelToken, owner, repoName, branch)
 		return
 	}
 	if phase == "status" {
@@ -1224,7 +1229,7 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("penyiapan D1/R2 gagal: %w", err))
 			return
 		}
-		if err := startDeploymentPipeline([4]string{"Ekstrak ZIP", "Uji Vercel", "Perbarui GitHub", "Hasil Update Diri"}); err != nil {
+		if err := startDeploymentPipeline([4]string{"Ekstrak ZIP", "Uji Vercel", "Perbarui GitHub", "Production Vercel"}); err != nil {
 			util.Error(w, http.StatusInternalServerError, fmt.Errorf("pipeline update diri belum siap: %w", err))
 			return
 		}
@@ -1299,9 +1304,15 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusBadGateway, checkErr); return
 		}
 		if record.Status == "current" {
-			_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Success', duration = 'Selesai' WHERE position IN (3, 4)`)
-			util.JSON(w, http.StatusOK, selfUpdateResult{Step: "done", OK: true, ArchiveID: archiveID,
-				Message: "ZIP sudah tersimpan dan repo GitHub telah diperbarui"})
+			cleanupTestProject(vercelToken, ticket.Project)
+			commitSHA, headErr := currentGithubBranchSHA(githubToken, owner, repoName, branch)
+			if headErr != nil {
+				_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 4`)
+				util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-production", OK: false, ArchiveID: archiveID,
+					Message: "GitHub sudah diperbarui, tetapi commit untuk verifikasi Vercel tidak dapat dibaca: " + headErr.Error()})
+				return
+			}
+			startSelfUpdateProductionWatch(w, vercelToken, repo, branch, commitSHA, archiveID)
 			return
 		}
 		finishSelfUpdate(w, githubToken, vercelToken, owner, repoName, branch, files, ticket.URL, ticket.Project, store, archiveID)
@@ -1398,7 +1409,8 @@ func finishSelfUpdate(w http.ResponseWriter, githubToken, vercelToken, owner, re
 	defer cleanupTestProject(vercelToken, tempProject)
 
 	logLiveLog("INFO", "Self-update: build Vercel lulus, memperbarui GitHub...")
-	if err := pushFilesToGitHub(githubToken, owner, repoName, branch, files); err != nil {
+	commitSHA, err := pushFilesToGitHub(githubToken, owner, repoName, branch, files)
+	if err != nil {
 		_ = store.Fail(archiveID)
 		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 3`)
 		msg := "[Perbarui GitHub] Build lulus tapi gagal memperbarui GitHub: " + err.Error()
@@ -1412,15 +1424,85 @@ func finishSelfUpdate(w http.ResponseWriter, githubToken, vercelToken, owner, re
 		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "github-push", OK: false, Message: "GitHub diperbarui, tetapi arsip ZIP aktif gagal dicatat: " + err.Error(), ArchiveID: archiveID})
 		return
 	}
-	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Success', duration = 'Selesai' WHERE position IN (3, 4)`)
-	logActivity("Self-update berhasil", fmt.Sprintf("%s/%s diperbarui dari zip yang diunggah", owner, repoName), "check")
-	logLiveLog("INFO", fmt.Sprintf("Self-update selesai: %s/%s@%s diperbarui", owner, repoName, branch))
+	logLiveLog("INFO", fmt.Sprintf("Self-update: GitHub %s/%s@%s diperbarui; menunggu check production Vercel", owner, repoName, branch))
+	startSelfUpdateProductionWatch(w, vercelToken, owner+"/"+repoName, branch, commitSHA, archiveID)
+}
 
-	util.JSON(w, http.StatusOK, selfUpdateResult{
-		Step: "done", OK: true, ArchiveID: archiveID,
-		Message:    fmt.Sprintf("Berhasil diuji di Vercel dan didorong ke %s/%s@%s", owner, repoName, branch),
-		PreviewURL: previewURL,
+func startSelfUpdateProductionWatch(w http.ResponseWriter, signingSecret, repo, branch, commitSHA, archiveID string) {
+	if commitSHA == "" {
+		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 4`)
+		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-production", OK: false, ArchiveID: archiveID,
+			Message: "GitHub diperbarui, tetapi SHA commit untuk verifikasi Vercel kosong"})
+		return
+	}
+	ticket, err := signBuildTicket(signingSecret, buildTicket{
+		Stage: "self-production", Repo: repo, Branch: branch, CommitSHA: commitSHA, ArchiveID: archiveID,
 	})
+	if err != nil {
+		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 4`)
+		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-production", OK: false, ArchiveID: archiveID,
+			Message: "GitHub diperbarui, tetapi sesi verifikasi Vercel gagal dibuat: " + err.Error()})
+		return
+	}
+	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Success', duration = 'Selesai' WHERE position = 3`)
+	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Running', duration = '-' WHERE position = 4`)
+	util.JSON(w, http.StatusOK, selfUpdateResult{
+		Step: "vercel-production", OK: true, Status: "pending", Ticket: ticket, ArchiveID: archiveID,
+		Message: "GitHub berhasil diperbarui; menunggu hasil deployment production Vercel...",
+	})
+}
+
+func handleSelfUpdateProductionStatus(w http.ResponseWriter, r *http.Request, githubToken, signingSecret, owner, repoName, branch string) {
+	ticket, err := verifyBuildTicket(signingSecret, r.FormValue("ticket"))
+	repo := owner + "/" + repoName
+	if err != nil || ticket.Stage != "self-production" || ticket.Repo != repo || ticket.Branch != branch ||
+		ticket.CommitSHA == "" || ticket.ArchiveID == "" || ticket.CreatedAt == 0 {
+		util.Error(w, http.StatusBadRequest, fmt.Errorf("sesi verifikasi deployment production tidak valid atau kedaluwarsa"))
+		return
+	}
+	store, storeErr := archive.New()
+	if storeErr != nil {
+		util.Error(w, http.StatusPreconditionFailed, storeErr)
+		return
+	}
+	record, recordErr := store.Get(ticket.ArchiveID)
+	if recordErr != nil || record.Scope != "self" || record.Target != repo+"@"+branch || record.Status != "current" {
+		util.Error(w, http.StatusBadRequest, fmt.Errorf("arsip update tidak cocok dengan commit production"))
+		return
+	}
+
+	state, detail, detailsURL, checkErr := githubVercelCheckStatus(githubToken, owner, repoName, ticket.CommitSHA)
+	if checkErr != nil {
+		util.Error(w, http.StatusBadGateway, fmt.Errorf("gagal membaca check production Vercel dari GitHub: %w", checkErr))
+		return
+	}
+	if state == "missing" && time.Since(time.Unix(ticket.CreatedAt, 0)) < 5*time.Minute {
+		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-production", OK: true, Status: "pending", Ticket: r.FormValue("ticket"), ArchiveID: ticket.ArchiveID,
+			Message: "GitHub sudah diperbarui; menunggu Vercel membuat check deployment production..."})
+		return
+	}
+	if state == "pending" {
+		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-production", OK: true, Status: "pending", Ticket: r.FormValue("ticket"), ArchiveID: ticket.ArchiveID,
+			Message: "Deployment production Vercel masih berjalan; status akan diperiksa lagi...", PreviewURL: detailsURL})
+		return
+	}
+	if state != "success" {
+		if detail == "" {
+			detail = "Check Vercel tidak muncul dalam 5 menit. Pastikan integrasi GitHub–Vercel aktif untuk repo dan branch ini."
+		}
+		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed', duration = 'Gagal' WHERE position = 4`)
+		msg := "[Production Vercel] GitHub sudah diperbarui, tetapi deployment production gagal: " + detail
+		logLiveLog("ERROR", "Self-update: "+msg)
+		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-production", OK: false, Message: msg, BuildLog: detail,
+			PreviewURL: detailsURL, ArchiveID: ticket.ArchiveID})
+		return
+	}
+
+	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Success', duration = 'Selesai' WHERE position = 4`)
+	logActivity("Self-update berhasil", fmt.Sprintf("%s@%s berhasil dideploy oleh Vercel", repo, branch), "check")
+	logLiveLog("INFO", fmt.Sprintf("Self-update selesai: %s@%s berhasil online melalui Vercel", repo, branch))
+	util.JSON(w, http.StatusOK, selfUpdateResult{Step: "done", OK: true, Status: "ready", ArchiveID: ticket.ArchiveID,
+		Message: "GitHub berhasil diperbarui dan deployment production Vercel sudah siap", PreviewURL: detailsURL})
 }
 
 func splitRepo(repo string) (owner, name string, ok bool) {
@@ -1798,18 +1880,21 @@ type buildTicket struct {
 	Name string `json:"name,omitempty"`
 	Repo string `json:"repo,omitempty"`
 	Branch string `json:"branch,omitempty"`
+	CommitSHA string `json:"commit_sha,omitempty"`
 	ZipSHA string `json:"zip_sha,omitempty"`
 	ArchiveID string `json:"archive_id,omitempty"`
 	DeploymentID string `json:"deployment_id,omitempty"`
 	Project string `json:"project,omitempty"`
 	URL string `json:"url,omitempty"`
 	Environment string `json:"environment,omitempty"`
+	CreatedAt int64 `json:"created_at,omitempty"`
 	Expires int64 `json:"expires"`
 }
 
 func zipDigest(data []byte) string { return fmt.Sprintf("%x", sha256.Sum256(data)) }
 
 func signBuildTicket(secret string, ticket buildTicket) (string, error) {
+	if ticket.CreatedAt == 0 { ticket.CreatedAt = time.Now().Unix() }
 	ticket.Expires = time.Now().Add(3 * time.Hour).Unix()
 	data, err := json.Marshal(ticket)
 	if err != nil { return "", err }
@@ -1860,38 +1945,75 @@ type githubTreeEntry struct {
 	Content *string `json:"content,omitempty"`
 }
 
+type githubCheckRun struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	DetailsURL string `json:"details_url"`
+	Output struct {
+		Title   string `json:"title"`
+		Summary string `json:"summary"`
+		Text    string `json:"text"`
+	} `json:"output"`
+	App struct {
+		Slug string `json:"slug"`
+		Name string `json:"name"`
+	} `json:"app"`
+}
+
+type githubCheckRunsResponse struct {
+	CheckRuns []githubCheckRun `json:"check_runs"`
+}
+
+type githubCommitStatus struct {
+	State       string `json:"state"`
+	Description string `json:"description"`
+	TargetURL   string `json:"target_url"`
+	Context     string `json:"context"`
+	Creator struct {
+		Login string `json:"login"`
+	} `json:"creator"`
+}
+
+type githubCombinedStatusResponse struct {
+	Statuses []githubCommitStatus `json:"statuses"`
+}
+
 // pushFilesToGitHub publishes the whole ZIP as one atomic Git commit. The old
 // Contents API loop made one commit per file, so one update could emit dozens
 // of push events and make Vercel rate-limit the resulting deployments. A tree
 // created without base_tree is also a full replacement: paths absent from the
 // ZIP are deleted by the same commit instead of by more per-file commits.
-func pushFilesToGitHub(token, owner, repo, branch string, files []selfUpdateFile) error {
+func pushFilesToGitHub(token, owner, repo, branch string, files []selfUpdateFile) (string, error) {
 	if len(files) == 0 {
-		return fmt.Errorf("tidak ada file untuk didorong ke GitHub")
+		return "", fmt.Errorf("tidak ada file untuk didorong ke GitHub")
 	}
 
 	client := &http.Client{Timeout: 25 * time.Second}
 	baseURL := fmt.Sprintf("https://api.github.com/repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo))
 	parentSHA, exists, err := githubBranchHead(client, token, baseURL, branch)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !exists {
 		// GitHub's Git Database API cannot create the first ref in an empty
 		// repository. Bootstrap it with one Contents API commit, then perform
 		// the normal atomic tree replacement below.
 		if err := initializeGithubBranch(client, token, baseURL, branch, files[0]); err != nil {
-			return fmt.Errorf("gagal menyiapkan branch %s: %w", branch, err)
+			return "", fmt.Errorf("gagal menyiapkan branch %s: %w", branch, err)
 		}
 		if len(files) == 1 {
-			return nil
+			sha, found, headErr := githubBranchHead(client, token, baseURL, branch)
+			if headErr != nil { return "", headErr }
+			if !found { return "", fmt.Errorf("GitHub belum membuat branch %s setelah inisialisasi", branch) }
+			return sha, nil
 		}
 		parentSHA, exists, err = githubBranchHead(client, token, baseURL, branch)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if !exists {
-			return fmt.Errorf("GitHub belum membuat branch %s setelah inisialisasi", branch)
+			return "", fmt.Errorf("GitHub belum membuat branch %s setelah inisialisasi", branch)
 		}
 	}
 
@@ -1904,7 +2026,7 @@ func pushFilesToGitHub(token, owner, repo, branch string, files []selfUpdateFile
 		} else {
 			blobSHA, err := createGithubBlob(client, token, baseURL, file.data)
 			if err != nil {
-				return fmt.Errorf("gagal mengunggah blob %s: %w", file.path, err)
+				return "", fmt.Errorf("gagal mengunggah blob %s: %w", file.path, err)
 			}
 			entry.SHA = blobSHA
 		}
@@ -1915,10 +2037,10 @@ func pushFilesToGitHub(token, owner, repo, branch string, files []selfUpdateFile
 	if _, err := githubJSONRequest(client, token, http.MethodPost, baseURL+"/git/trees", map[string]interface{}{
 		"tree": entries,
 	}, &tree); err != nil {
-		return fmt.Errorf("gagal membuat tree GitHub: %w", err)
+		return "", fmt.Errorf("gagal membuat tree GitHub: %w", err)
 	}
 	if tree.SHA == "" {
-		return fmt.Errorf("GitHub tidak mengembalikan SHA tree")
+		return "", fmt.Errorf("GitHub tidak mengembalikan SHA tree")
 	}
 
 	var commit githubSHAResponse
@@ -1927,19 +2049,19 @@ func pushFilesToGitHub(token, owner, repo, branch string, files []selfUpdateFile
 		"tree":    tree.SHA,
 		"parents": []string{parentSHA},
 	}, &commit); err != nil {
-		return fmt.Errorf("gagal membuat commit GitHub: %w", err)
+		return "", fmt.Errorf("gagal membuat commit GitHub: %w", err)
 	}
 	if commit.SHA == "" {
-		return fmt.Errorf("GitHub tidak mengembalikan SHA commit")
+		return "", fmt.Errorf("GitHub tidak mengembalikan SHA commit")
 	}
 
 	refURL := baseURL + "/git/refs/heads/" + url.PathEscape(branch)
 	if _, err := githubJSONRequest(client, token, http.MethodPatch, refURL, map[string]interface{}{
 		"sha": commit.SHA, "force": false,
 	}, &githubRefResponse{}); err != nil {
-		return fmt.Errorf("gagal memperbarui branch %s: %w", branch, err)
+		return "", fmt.Errorf("gagal memperbarui branch %s: %w", branch, err)
 	}
-	return nil
+	return commit.SHA, nil
 }
 
 func githubBranchHead(client *http.Client, token, baseURL, branch string) (string, bool, error) {
@@ -1955,6 +2077,111 @@ func githubBranchHead(client *http.Client, token, baseURL, branch string) (strin
 		return "", false, fmt.Errorf("GitHub tidak mengembalikan SHA branch %s", branch)
 	}
 	return ref.Object.SHA, true, nil
+}
+
+func currentGithubBranchSHA(token, owner, repo, branch string) (string, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	baseURL := fmt.Sprintf("https://api.github.com/repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo))
+	sha, exists, err := githubBranchHead(client, token, baseURL, branch)
+	if err != nil { return "", err }
+	if !exists { return "", fmt.Errorf("branch %s tidak ditemukan", branch) }
+	return sha, nil
+}
+
+// githubVercelCheckStatus reads the checks for the exact commit just pushed by
+// self-update. Vercel reports both successful deployments and pre-build
+// rejections (including daily deployment rate limits) through this check.
+func githubVercelCheckStatus(token, owner, repo, commitSHA string) (string, string, string, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	baseURL := fmt.Sprintf("https://api.github.com/repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo))
+	endpoint := baseURL + "/commits/" + url.PathEscape(commitSHA) + "/check-runs?filter=latest&per_page=100"
+	var response githubCheckRunsResponse
+	_, checkRunsErr := githubJSONRequest(client, token, http.MethodGet, endpoint, nil, &response)
+	if checkRunsErr != nil {
+		return "", "", "", checkRunsErr
+	}
+
+	var found, pending, succeeded bool
+	detailsURL := ""
+	for _, run := range response.CheckRuns {
+		slug := strings.ToLower(strings.TrimSpace(run.App.Slug))
+		appName := strings.ToLower(strings.TrimSpace(run.App.Name))
+		checkName := strings.ToLower(strings.TrimSpace(run.Name))
+		checkURL := strings.ToLower(strings.TrimSpace(run.DetailsURL))
+		isVercel := slug == "vercel" || strings.Contains(slug, "vercel") || appName == "vercel" ||
+			checkName == "vercel" || strings.HasPrefix(checkName, "vercel ") || strings.Contains(checkURL, "vercel.com")
+		if !isVercel { continue }
+
+		found = true
+		if detailsURL == "" { detailsURL = run.DetailsURL }
+		if run.Status != "completed" {
+			pending = true
+			continue
+		}
+		if run.Conclusion != "success" {
+			return "failure", githubCheckRunDetail(run), run.DetailsURL, nil
+		}
+		succeeded = true
+	}
+	if found {
+		if pending { return "pending", "", detailsURL, nil }
+		if succeeded { return "success", "", detailsURL, nil }
+		return "failure", "Vercel menyelesaikan check tanpa status sukses", detailsURL, nil
+	}
+
+	// Some Vercel Git integrations publish a classic commit status instead of
+	// a Check Run. Read that API as a fallback so both GitHub representations
+	// are covered.
+	var combined githubCombinedStatusResponse
+	statusEndpoint := baseURL + "/commits/" + url.PathEscape(commitSHA) + "/status"
+	_, statusErr := githubJSONRequest(client, token, http.MethodGet, statusEndpoint, nil, &combined)
+	if statusErr != nil {
+		return "", "", "", statusErr
+	}
+	var statusFound, statusPending, statusSucceeded bool
+	for _, status := range combined.Statuses {
+		context := strings.ToLower(strings.TrimSpace(status.Context))
+		targetURL := strings.ToLower(strings.TrimSpace(status.TargetURL))
+		creator := strings.ToLower(strings.TrimSpace(status.Creator.Login))
+		isVercel := context == "vercel" || strings.HasPrefix(context, "vercel ") || strings.Contains(targetURL, "vercel.com") || strings.Contains(creator, "vercel")
+		if !isVercel { continue }
+		statusFound = true
+		if detailsURL == "" { detailsURL = status.TargetURL }
+		switch strings.ToLower(status.State) {
+		case "success":
+			statusSucceeded = true
+		case "pending":
+			statusPending = true
+		default:
+			detail := strings.TrimSpace(status.Description)
+			if detail == "" { detail = "Status Vercel selesai dengan hasil " + orDefault(status.State, "tidak diketahui") }
+			return "failure", detail, status.TargetURL, nil
+		}
+	}
+	if !statusFound { return "missing", "", "", nil }
+	if statusPending { return "pending", "", detailsURL, nil }
+	if statusSucceeded { return "success", "", detailsURL, nil }
+	return "failure", "Vercel menyelesaikan status tanpa hasil sukses", detailsURL, nil
+}
+
+func githubCheckRunDetail(run githubCheckRun) string {
+	parts := make([]string, 0, 4)
+	for _, value := range []string{run.Output.Title, run.Output.Summary, run.Output.Text} {
+		value = strings.TrimSpace(strings.ReplaceAll(value, "\x00", ""))
+		if value == "" { continue }
+		duplicate := false
+		for _, existing := range parts {
+			if existing == value { duplicate = true; break }
+		}
+		if !duplicate { parts = append(parts, value) }
+	}
+	detail := strings.Join(parts, "\n")
+	if detail == "" {
+		detail = fmt.Sprintf("Check %s selesai dengan status %s", orDefault(run.Name, "Vercel"), orDefault(run.Conclusion, "tidak diketahui"))
+	}
+	runes := []rune(detail)
+	if len(runes) > 4000 { detail = string(runes[:4000]) + "…" }
+	return detail
 }
 
 func initializeGithubBranch(client *http.Client, token, baseURL, branch string, file selfUpdateFile) error {
