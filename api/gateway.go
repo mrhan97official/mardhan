@@ -40,6 +40,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"devcontrol/pkg/apimanagement"
 	"devcontrol/pkg/archive"
@@ -652,23 +653,6 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sync: anything already on the branch that isn't part of this upload
-	// gets removed too, same as self-update, so stale files never linger.
-	if existingPaths, treeErr := listGithubRepoFiles(githubToken, owner, repoName, branch); treeErr == nil {
-		wanted := make(map[string]bool, len(files))
-		for _, f := range files {
-			wanted[f.path] = true
-		}
-		for _, p := range existingPaths {
-			if wanted[p] {
-				continue
-			}
-			if delErr := deleteFileFromGitHub(githubToken, owner, repoName, branch, p); delErr != nil {
-				logLiveLog("WARN", fmt.Sprintf("%s: gagal menghapus file lama %s: %s", label, p, delErr.Error()))
-			}
-		}
-	}
-
 	_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Success', duration = 'Selesai' WHERE position = 3`)
 	logLiveLog("INFO", fmt.Sprintf("%s: %q didorong ke %s@%s", label, name, repoFullName, branch))
 	nextTicket, ticketErr := signBuildTicket(vercelToken, buildTicket{
@@ -914,7 +898,7 @@ type createRepoResponse struct {
 // repo with that name already exists it's treated as success (re-running a
 // failed "Aplikasi Baru" submission, or deploying a second app with a name
 // that collides, should never hard-fail here) — pushFilesToGitHub right
-// after this will just add/update files in whatever's already there.
+// after this will replace the selected branch with the uploaded package.
 func ensureGithubRepo(token, repoName string) error {
 	payload := map[string]interface{}{
 		"name":      repoName,
@@ -1423,33 +1407,6 @@ func finishSelfUpdate(w http.ResponseWriter, githubToken, vercelToken, owner, re
 		return
 	}
 
-	// pushFilesToGitHub above only PUTs what's in the zip — it never deletes.
-	// So a file removed or merged away in the new package (like the old
-	// api/deploy.go and api/selfupdate.go being folded into api/gateway.go)
-	// would otherwise stay behind in the repo forever, still there next to
-	// its replacement and breaking the build (duplicate declarations). Sync
-	// it properly: anything that exists in the repo at this branch but isn't
-	// part of the uploaded zip gets removed too.
-	existingPaths, treeErr := listGithubRepoFiles(githubToken, owner, repoName, branch)
-	if treeErr != nil {
-		logLiveLog("WARN", "Self-update: tidak bisa memeriksa file lama di repo untuk dibersihkan: "+treeErr.Error())
-	} else {
-		wanted := make(map[string]bool, len(files))
-		for _, f := range files {
-			wanted[f.path] = true
-		}
-		for _, p := range existingPaths {
-			if wanted[p] {
-				continue
-			}
-			if err := deleteFileFromGitHub(githubToken, owner, repoName, branch, p); err != nil {
-				logLiveLog("WARN", fmt.Sprintf("Self-update: gagal menghapus file lama %s: %s", p, err.Error()))
-				continue
-			}
-			logLiveLog("INFO", "Self-update: menghapus file lama yang sudah tidak dipakai: "+p)
-		}
-	}
-
 	if err := store.Promote(archiveID, "self", owner+"/"+repoName+"@"+branch); err != nil {
 		_, _ = d1.Query(`UPDATE deployment_pipeline SET status = 'Failed' WHERE position = 3`)
 		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "github-push", OK: false, Message: "GitHub diperbarui, tetapi arsip ZIP aktif gagal dicatat: " + err.Error(), ArchiveID: archiveID})
@@ -1885,176 +1842,189 @@ func cleanupTestProject(token, project string) {
 	}
 }
 
-type githubContentResponse struct {
+type githubRefResponse struct {
+	Object struct {
+		SHA string `json:"sha"`
+	} `json:"object"`
+}
+
+type githubSHAResponse struct {
 	SHA string `json:"sha"`
 }
 
-// pushFilesToGitHub writes each extracted file to the target repo/branch
-// via the Contents API — creating it if it's new, updating it (using its
-// current sha) if it already exists. This only ever adds/updates; it never
-// deletes. handleSelfUpdate pairs it with listGithubRepoFiles +
-// deleteFileFromGitHub right after to remove anything the new zip dropped,
-// so the two together behave as a full sync rather than a purely additive
-// push.
+type githubTreeEntry struct {
+	Path    string  `json:"path"`
+	Mode    string  `json:"mode"`
+	Type    string  `json:"type"`
+	SHA     string  `json:"sha,omitempty"`
+	Content *string `json:"content,omitempty"`
+}
+
+// pushFilesToGitHub publishes the whole ZIP as one atomic Git commit. The old
+// Contents API loop made one commit per file, so one update could emit dozens
+// of push events and make Vercel rate-limit the resulting deployments. A tree
+// created without base_tree is also a full replacement: paths absent from the
+// ZIP are deleted by the same commit instead of by more per-file commits.
 func pushFilesToGitHub(token, owner, repo, branch string, files []selfUpdateFile) error {
-	client := &http.Client{Timeout: 15 * time.Second}
+	if len(files) == 0 {
+		return fmt.Errorf("tidak ada file untuk didorong ke GitHub")
+	}
 
-	for _, f := range files {
-		apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s", owner, repo, f.path)
+	client := &http.Client{Timeout: 25 * time.Second}
+	baseURL := fmt.Sprintf("https://api.github.com/repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo))
+	parentSHA, exists, err := githubBranchHead(client, token, baseURL, branch)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		// GitHub's Git Database API cannot create the first ref in an empty
+		// repository. Bootstrap it with one Contents API commit, then perform
+		// the normal atomic tree replacement below.
+		if err := initializeGithubBranch(client, token, baseURL, branch, files[0]); err != nil {
+			return fmt.Errorf("gagal menyiapkan branch %s: %w", branch, err)
+		}
+		if len(files) == 1 {
+			return nil
+		}
+		parentSHA, exists, err = githubBranchHead(client, token, baseURL, branch)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("GitHub belum membuat branch %s setelah inisialisasi", branch)
+		}
+	}
 
-		var existingSHA string
-		getReq, err := http.NewRequest(http.MethodGet, apiURL+"?ref="+branch, nil)
-		if err == nil {
-			getReq.Header.Set("Authorization", "Bearer "+token)
-			getReq.Header.Set("Accept", "application/vnd.github+json")
-			if getResp, getErr := client.Do(getReq); getErr == nil {
-				if getResp.StatusCode == http.StatusOK {
-					var existing githubContentResponse
-					_ = json.NewDecoder(getResp.Body).Decode(&existing)
-					existingSHA = existing.SHA
-				}
-				getResp.Body.Close()
+	entries := make([]githubTreeEntry, 0, len(files))
+	for _, file := range files {
+		entry := githubTreeEntry{Path: file.path, Mode: "100644", Type: "blob"}
+		if utf8.Valid(file.data) {
+			entry.Content = new(string)
+			*entry.Content = string(file.data)
+		} else {
+			blobSHA, err := createGithubBlob(client, token, baseURL, file.data)
+			if err != nil {
+				return fmt.Errorf("gagal mengunggah blob %s: %w", file.path, err)
 			}
+			entry.SHA = blobSHA
 		}
+		entries = append(entries, entry)
+	}
 
-		payload := map[string]interface{}{
-			"message": "self-update: perbarui " + f.path,
-			"content": base64.StdEncoding.EncodeToString(f.data),
-			"branch":  branch,
-		}
-		if existingSHA != "" {
-			payload["sha"] = existingSHA
-		}
-		body, err := json.Marshal(payload)
-		if err != nil {
-			return err
-		}
+	var tree githubSHAResponse
+	if _, err := githubJSONRequest(client, token, http.MethodPost, baseURL+"/git/trees", map[string]interface{}{
+		"tree": entries,
+	}, &tree); err != nil {
+		return fmt.Errorf("gagal membuat tree GitHub: %w", err)
+	}
+	if tree.SHA == "" {
+		return fmt.Errorf("GitHub tidak mengembalikan SHA tree")
+	}
 
-		putReq, err := http.NewRequest(http.MethodPut, apiURL, bytes.NewReader(body))
-		if err != nil {
-			return err
-		}
-		putReq.Header.Set("Authorization", "Bearer "+token)
-		putReq.Header.Set("Accept", "application/vnd.github+json")
-		putReq.Header.Set("Content-Type", "application/json")
+	var commit githubSHAResponse
+	if _, err := githubJSONRequest(client, token, http.MethodPost, baseURL+"/git/commits", map[string]interface{}{
+		"message": "devcontrol: sinkronkan paket ZIP",
+		"tree":    tree.SHA,
+		"parents": []string{parentSHA},
+	}, &commit); err != nil {
+		return fmt.Errorf("gagal membuat commit GitHub: %w", err)
+	}
+	if commit.SHA == "" {
+		return fmt.Errorf("GitHub tidak mengembalikan SHA commit")
+	}
 
-		putResp, err := client.Do(putReq)
-		if err != nil {
-			return err
-		}
-		status := putResp.StatusCode
-		putResp.Body.Close()
-		if status >= 300 {
-			return fmt.Errorf("gagal memperbarui %s (HTTP %d)", f.path, status)
-		}
+	refURL := baseURL + "/git/refs/heads/" + url.PathEscape(branch)
+	if _, err := githubJSONRequest(client, token, http.MethodPatch, refURL, map[string]interface{}{
+		"sha": commit.SHA, "force": false,
+	}, &githubRefResponse{}); err != nil {
+		return fmt.Errorf("gagal memperbarui branch %s: %w", branch, err)
 	}
 	return nil
 }
 
-type githubTreeResponse struct {
-	Tree []struct {
-		Path string `json:"path"`
-		Type string `json:"type"` // "blob" | "tree"
-	} `json:"tree"`
-	Truncated bool `json:"truncated"`
+func githubBranchHead(client *http.Client, token, baseURL, branch string) (string, bool, error) {
+	var ref githubRefResponse
+	status, err := githubJSONRequest(client, token, http.MethodGet, baseURL+"/git/ref/heads/"+url.PathEscape(branch), nil, &ref)
+	if status == http.StatusNotFound || status == http.StatusConflict {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("gagal membaca branch %s: %w", branch, err)
+	}
+	if ref.Object.SHA == "" {
+		return "", false, fmt.Errorf("GitHub tidak mengembalikan SHA branch %s", branch)
+	}
+	return ref.Object.SHA, true, nil
 }
 
-// listGithubRepoFiles returns every regular file path currently on
-// branch's tip, via the Git Trees API (recursive) — used to work out which
-// files the new zip no longer has, so they can be deleted from the repo too.
-func listGithubRepoFiles(token, owner, repo, branch string) ([]string, error) {
-	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/trees/%s?recursive=1", owner, repo, branch)
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+func initializeGithubBranch(client *http.Client, token, baseURL, branch string, file selfUpdateFile) error {
+	parts := strings.Split(file.path, "/")
+	for i := range parts {
+		parts[i] = url.PathEscape(parts[i])
+	}
+	endpoint := baseURL + "/contents/" + strings.Join(parts, "/")
+	_, err := githubJSONRequest(client, token, http.MethodPut, endpoint, map[string]interface{}{
+		"message": "devcontrol: inisialisasi paket ZIP",
+		"content": base64.StdEncoding.EncodeToString(file.data),
+		"branch":  branch,
+	}, nil)
+	return err
+}
+
+func createGithubBlob(client *http.Client, token, baseURL string, data []byte) (string, error) {
+	var blob githubSHAResponse
+	_, err := githubJSONRequest(client, token, http.MethodPost, baseURL+"/git/blobs", map[string]interface{}{
+		"content": base64.StdEncoding.EncodeToString(data),
+		"encoding": "base64",
+	}, &blob)
 	if err != nil {
-		return nil, err
+		return "", err
+	}
+	if blob.SHA == "" {
+		return "", fmt.Errorf("GitHub tidak mengembalikan SHA blob")
+	}
+	return blob.SHA, nil
+}
+
+func githubJSONRequest(client *http.Client, token, method, endpoint string, payload, out interface{}) (int, error) {
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return 0, err
+		}
+		body = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequest(method, endpoint, body)
+	if err != nil {
+		return 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		// New/empty branch — nothing committed yet, nothing to clean up.
-		return nil, nil
-	}
-
-	var out githubTreeResponse
-	decodeErr := json.NewDecoder(resp.Body).Decode(&out)
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d dari GitHub saat membaca isi repo", resp.StatusCode)
+		var detail struct {
+			Message string `json:"message"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&detail)
+		if detail.Message == "" {
+			detail.Message = http.StatusText(resp.StatusCode)
+		}
+		return resp.StatusCode, fmt.Errorf("GitHub HTTP %d: %s", resp.StatusCode, detail.Message)
 	}
-	if decodeErr != nil {
-		return nil, decodeErr
-	}
-	if out.Truncated {
-		return nil, fmt.Errorf("daftar file repo terlalu besar untuk dibaca sekaligus (truncated)")
-	}
-
-	paths := make([]string, 0, len(out.Tree))
-	for _, entry := range out.Tree {
-		if entry.Type == "blob" {
-			paths = append(paths, entry.Path)
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			return resp.StatusCode, err
 		}
 	}
-	return paths, nil
-}
-
-// deleteFileFromGitHub removes one file via the Contents API. Deleting
-// (like updating) requires the file's current sha, fetched the same way
-// pushFilesToGitHub does before a PUT.
-func deleteFileFromGitHub(token, owner, repo, branch, filePath string) error {
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s", owner, repo, filePath)
-	client := &http.Client{Timeout: 15 * time.Second}
-
-	getReq, err := http.NewRequest(http.MethodGet, apiURL+"?ref="+branch, nil)
-	if err != nil {
-		return err
-	}
-	getReq.Header.Set("Authorization", "Bearer "+token)
-	getReq.Header.Set("Accept", "application/vnd.github+json")
-
-	getResp, err := client.Do(getReq)
-	if err != nil {
-		return err
-	}
-	var existing githubContentResponse
-	decodeErr := json.NewDecoder(getResp.Body).Decode(&existing)
-	getStatus := getResp.StatusCode
-	getResp.Body.Close()
-	if getStatus != http.StatusOK || decodeErr != nil || existing.SHA == "" {
-		return fmt.Errorf("tidak bisa membaca sha saat ini (HTTP %d)", getStatus)
-	}
-
-	payload := map[string]interface{}{
-		"message": "self-update: hapus " + filePath + " (tidak ada lagi di paket update)",
-		"sha":     existing.SHA,
-		"branch":  branch,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	delReq, err := http.NewRequest(http.MethodDelete, apiURL, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	delReq.Header.Set("Authorization", "Bearer "+token)
-	delReq.Header.Set("Accept", "application/vnd.github+json")
-	delReq.Header.Set("Content-Type", "application/json")
-
-	delResp, err := client.Do(delReq)
-	if err != nil {
-		return err
-	}
-	status := delResp.StatusCode
-	delResp.Body.Close()
-	if status >= 300 {
-		return fmt.Errorf("HTTP %d", status)
-	}
-	return nil
+	return resp.StatusCode, nil
 }
