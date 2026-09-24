@@ -1,0 +1,33 @@
+{
+  "name": "devcontrol",
+  "version": "1.0.13",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:migrate": "node scripts/d1-migrate.mjs ./db/schema.sql",
+    "db:generate": "node scripts/generate-schema.mjs",
+    "db:verify": "node scripts/d1-migrate.mjs --verify",
+    "db:seed": "node scripts/d1-migrate.mjs ./db/seed.sql"
+  },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "idb": "8.0.0",
+    "lucide-react": "0.400.0"
+  },
+  "devDependencies": {
+    "typescript": "5.5.4",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "@types/node": "20.14.11",
+    "tailwindcss": "3.4.6",
+    "postcss": "8.4.39",
+    "autoprefixer": "10.4.19",
+    "next-pwa": "5.6.0",
+    "wrangler": "3.65.0"
+  }
+}

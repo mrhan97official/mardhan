@@ -1,0 +1,9 @@
+# This file only exists for people who prefer running the raw `wrangler d1`
+# CLI directly. DevControl itself does NOT read this file and does NOT need
+# database_id filled in here: both the deployed app (via the D1 REST API,
+# see pkg/d1/client.go) and the db:migrate / db:seed scripts (see
+# scripts/d1-migrate.mjs) read CF_ACCOUNT_ID / CF_D1_DATABASE_ID /
+# CF_API_TOKEN from environment variables instead — the same ones you
+# already set in Vercel (see .env.example). Nothing here needs editing.
+name = "devcontrol-db"
+compatibility_date = "2024-09-01"

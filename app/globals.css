@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: #080d17;
+  color: #e6ebf3;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #243450 transparent;
+}
+
+*::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #243450;
+  border-radius: 8px;
+}
+
+.card {
+  @apply rounded-2xl border border-base-border bg-base-850 shadow-glow;
+}
+
+.scroll-x {
+  @apply overflow-x-auto;
+}
+
+:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

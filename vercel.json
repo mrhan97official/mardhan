@@ -1,0 +1,44 @@
+{
+  "functions": {
+    "api/gateway.go": { "maxDuration": 60 }
+  },
+  "rewrites": [
+    { "source": "/api/session", "destination": "/api/gateway?resource=session" },
+    { "source": "/api/databases", "destination": "/api/gateway?resource=databases" },
+    { "source": "/api/api-management", "destination": "/api/gateway?resource=api-management" },
+    { "source": "/api/overview", "destination": "/api/gateway?resource=overview" },
+    { "source": "/api/deployments", "destination": "/api/gateway?resource=deployments" },
+    { "source": "/api/environments", "destination": "/api/gateway?resource=environments" },
+    { "source": "/api/health", "destination": "/api/gateway?resource=health" },
+    { "source": "/api/performance", "destination": "/api/gateway?resource=performance" },
+    { "source": "/api/services", "destination": "/api/gateway?resource=services" },
+    { "source": "/api/activity", "destination": "/api/gateway?resource=activity" },
+    { "source": "/api/logs", "destination": "/api/gateway?resource=logs" },
+    { "source": "/api/deploy", "destination": "/api/gateway?resource=trigger-deployment" },
+    { "source": "/api/self-update", "destination": "/api/gateway?resource=self-update" },
+    { "source": "/api/github-repos", "destination": "/api/gateway?resource=github-repos" },
+    { "source": "/api/github-branches", "destination": "/api/gateway?resource=github-branches" },
+    { "source": "/api/zip-archives", "destination": "/api/gateway?resource=zip-archives" }
+  ],
+  "headers": [
+    {
+      "source": "/sw.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/manifest.json",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600" },
+        { "key": "Content-Type", "value": "application/manifest+json" }
+      ]
+    },
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    }
+  ]
+}
