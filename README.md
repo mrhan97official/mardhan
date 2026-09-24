@@ -144,7 +144,9 @@ Halaman **Projects** membaca `/api/github-repos` sebagai sumber daftar repo dari
 
 Setiap kartu memiliki area gambar 4:3 dengan ilustrasi bawaan. Pilih **Tambah thumbnail** untuk mengunggah JPG/PNG asli langsung dari browser ke bucket R2 privat: gambar tidak dikompresi atau diubah resolusinya oleh aplikasi, sementara kartu menampilkannya dengan pemotongan visual 4:3. Tidak ada batas MB buatan aplikasi; R2 membatasi satu unggahan langsung hingga 5 GiB. **Ganti thumbnail** dan **Hapus gambar** tersedia pada kartu yang sudah bergambar. Daftar Projects memeriksa repo tiap 15 detik serta layanan dan thumbnail tiap 10 detik ketika tab terlihat; perubahan di tab lain pada perangkat yang sama dikirim langsung dan tab yang kembali aktif langsung menyegarkan data. Perangkat lain menerima perubahan pada pemeriksaan berikutnya tanpa perlu memuat ulang halaman.
 
-Untuk mengaktifkan unggahan gambar besar, buat **R2 S3 API token** khusus bucket dengan hak baca/tulis. Isi `R2_ACCESS_KEY_ID` dan `R2_SECRET_ACCESS_KEY` di Environment Variables Vercel (keduanya berbeda dari `CF_API_TOKEN`), lalu deploy ulang. Atur CORS bucket R2 untuk origin domain DevControl yang dipakai. Contoh kebijakan di Cloudflare R2 → bucket → Settings → CORS Policy (ganti domain sesuai situs Anda):
+Unggahan gambar besar kini dapat memakai `CF_API_TOKEN` yang sudah terpasang, bila token itu memiliki izin R2 Object Read & Write untuk bucket ini. Server memeriksa ID token dan menurunkan kredensial S3 di memori; nilai rahasianya tidak dikirim ke browser. Jika token tersebut tidak memiliki izin R2 yang sesuai, buat **R2 S3 API token** khusus bucket dengan hak baca/tulis, isi `R2_ACCESS_KEY_ID` dan `R2_SECRET_ACCESS_KEY` di Environment Variables Vercel, lalu deploy ulang. Kedua variabel ini opsional jika token awal dapat dipakai.
+
+Saat unggah dimulai, aplikasi mencoba menambahkan aturan CORS `PUT` untuk domain DevControl pada bucket R2 tanpa menghapus aturan yang sudah ada. Jika token Cloudflare tidak boleh mengatur CORS bucket, atur manual melalui Cloudflare R2 → bucket → Settings → CORS Policy (ganti domain sesuai situs Anda):
 
 ```json
 [
@@ -157,7 +159,7 @@ Untuk mengaktifkan unggahan gambar besar, buat **R2 S3 API token** khusus bucket
 ]
 ```
 
-Izin memulai unggahan berlaku untuk satu objek selama 15 menit. Setelah browser mengirim byte asli ke R2, backend memeriksa ukuran, tipe, dan tanda awal berkas sebelum mengaktifkannya di kartu; objek yang tidak selesai disiapkan untuk dibersihkan. Gambar v1.0.17 tetap bisa dibuka tanpa konfigurasi baru; konfigurasi S3 diperlukan untuk unggahan besar dan menampilkan gambar baru. Di tablet (lebar 768–1279 px) susunan kolom mengikuti desktop dengan ukuran huruf dan jarak yang lebih ringkas.
+Izin memulai unggahan berlaku untuk satu objek selama 15 menit. Setelah browser mengirim byte asli ke R2, backend memeriksa ukuran, tipe, dan tanda awal berkas sebelum mengaktifkannya di kartu; objek yang tidak selesai disiapkan untuk dibersihkan. Gambar v1.0.17 tetap bisa dibuka tanpa konfigurasi baru. Di tablet (lebar 768–1279 px) susunan kolom mengikuti desktop dengan ukuran huruf dan jarak yang lebih ringkas.
 
 ### Logo aplikasi di Pengaturan
 

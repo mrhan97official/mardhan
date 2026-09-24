@@ -202,6 +202,9 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 			if err != nil { util.Error(w, http.StatusPreconditionFailed, err); return }
 			storage, err := newSignedStorage()
 			if err != nil { util.Error(w, http.StatusPreconditionFailed, err); return }
+			if err := storage.ensureUploadCORS(r.Header.Get("Origin")); err != nil {
+				util.Error(w, http.StatusPreconditionFailed, err); return
+			}
 			if err := pruneExpired(store); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 			idBytes := make([]byte, 16)
 			if _, err := rand.Read(idBytes); err != nil { util.Error(w, http.StatusInternalServerError, err); return }

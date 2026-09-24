@@ -25,7 +25,9 @@ function uploadOriginal(file: File, url: string, contentType: string, progress: 
     };
     request.onload = () => request.status >= 200 && request.status < 300
       ? resolve()
-      : reject(new Error(`R2 menolak gambar asli (HTTP ${request.status}).`));
+      : reject(new Error(request.status === 403
+        ? "R2 menolak unggahan (403). Pastikan CF_API_TOKEN memiliki izin R2 Object Read & Write pada bucket ini, atau gunakan kredensial R2 S3 khusus bucket di Vercel."
+        : `R2 menolak gambar asli (HTTP ${request.status}).`));
     request.onerror = () => reject(new Error("Gagal mengunggah langsung ke R2. Periksa koneksi dan aturan CORS bucket untuk domain aplikasi ini."));
     request.onabort = () => reject(new Error("Unggahan dibatalkan."));
     request.send(file);
