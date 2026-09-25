@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import { Check, Loader2, X, Clock3, Activity } from "lucide-react";
+import { Check, Loader2, X, Clock3 } from "lucide-react";
 import type { DeploymentJob, PipelineStage } from "@/lib/types";
+import { fallbackPipeline } from "@/lib/fallbackData";
 import NewDeploymentMenu from "@/components/deployment/NewDeploymentMenu";
 
 type StageStatus = PipelineStage["status"] | "Interrupted";
@@ -36,11 +37,15 @@ const KIND_TEXT: Record<DeploymentJob["kind"], string> = {
   self_update: "Update Diri",
 };
 
-function JobStages({ job }: { job: DeploymentJob }) {
+function JobStages({ stages, interrupted = false, inactive = false }: {
+  stages: PipelineStage[];
+  interrupted?: boolean;
+  inactive?: boolean;
+}) {
   return (
-    <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-      {job.stages.map((stage) => {
-        const status: StageStatus = job.status === "Interrupted" && stage.status === "Running" ? "Interrupted" : stage.status;
+    <div className={`mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4 ${inactive ? "opacity-60" : ""}`}>
+      {stages.map((stage) => {
+        const status: StageStatus = interrupted && stage.status === "Running" ? "Interrupted" : stage.status;
         return (
           <div key={stage.id} className="flex items-start gap-2 sm:flex-col sm:items-center sm:text-center">
             <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 bg-base-850 ${RING_BY_STATUS[status]}`}>
@@ -49,7 +54,7 @@ function JobStages({ job }: { job: DeploymentJob }) {
             <div className="min-w-0 sm:mt-2">
               <p className="text-xs font-semibold text-slate-100">{stage.stage}</p>
               <p className={`mt-1 text-xs ${status === "Failed" ? "text-red-400" : status === "Interrupted" ? "text-amber-400" : status === "Running" ? "text-purple-400" : "text-slate-500"}`}>
-                {status === "Running" ? "Berjalan..." : status === "Interrupted" ? "Terputus" : status === "Pending" ? "Menunggu" : stage.duration}
+                {inactive ? "Tidak aktif" : status === "Running" ? "Berjalan..." : status === "Interrupted" ? "Terputus" : status === "Pending" ? "Menunggu" : stage.duration}
               </p>
             </div>
           </div>
@@ -81,21 +86,11 @@ export default function DeploymentPipeline({
   }, [onDeployed]);
 
   const visibleJobs = limit ? jobs.slice(0, limit) : jobs;
-  const statusLabel = error ? "Status terganggu" : loading ? "Memuat" : isOffline ? "Offline" : jobs.length === 0 ? "Belum ada" : "Live";
-
   return (
     <div className="card min-w-0 p-4 sm:p-6">
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-base font-bold text-white sm:text-lg">Deployment Pipeline</h2>
-          <p className="mt-1 text-xs text-slate-500">Status setiap deployment secara terpisah</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1 rounded-full border border-base-border px-2 py-1 text-xs text-slate-400">
-            <Activity size={12} /> {statusLabel}
-          </span>
-          <NewDeploymentMenu />
-        </div>
+        <h2 className="text-base font-bold text-white sm:text-lg">Deployment Pipeline</h2>
+        <NewDeploymentMenu />
       </div>
 
       {error && (
@@ -104,9 +99,21 @@ export default function DeploymentPipeline({
           {onDeployed && <button type="button" onClick={onDeployed} className="ml-2 font-semibold text-accent-blue hover:underline">Coba lagi</button>}
         </div>
       )}
-      {!loading && !error && jobs.length === 0 && <p className="mt-5 text-sm text-slate-400">Belum ada deployment. Pilih New Deployment untuk memulai.</p>}
-
       <div className="mt-4 space-y-4">
+        {visibleJobs.length === 0 && (
+          <section className="rounded-xl border border-base-border bg-base-900 p-4" aria-label="Pipeline belum aktif">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-100">
+                  {loading ? "Memuat deployment..." : error || isOffline ? "Status belum tersedia" : "Belum ada deployment"}
+                </p>
+                <p className="mt-1 text-[11px] text-slate-500">Tahapan deployment siap digunakan</p>
+              </div>
+              <span className="rounded-full border border-slate-700 px-2 py-1 text-xs font-medium text-slate-500">Tidak aktif</span>
+            </div>
+            <JobStages stages={fallbackPipeline} inactive />
+          </section>
+        )}
         {visibleJobs.map((job) => (
           <section key={job.id} className="rounded-xl border border-base-border bg-base-900 p-4" aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -118,7 +125,7 @@ export default function DeploymentPipeline({
                 {job.status === "Running" && <Loader2 size={12} className="mr-1 inline animate-spin" />}{STATUS_TEXT[job.status]}
               </span>
             </div>
-            <JobStages job={job} />
+            <JobStages stages={job.stages} interrupted={job.status === "Interrupted"} />
           </section>
         ))}
       </div>
