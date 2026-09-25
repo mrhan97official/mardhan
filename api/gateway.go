@@ -168,6 +168,8 @@ type deploymentStage struct {
 	Duration string `json:"duration"`
 	Status string `json:"status"`
 	Position int `json:"position"`
+	StartedAt int64 `json:"started_at,omitempty"`
+	FinishedAt int64 `json:"finished_at,omitempty"`
 }
 
 type deploymentJob struct {
@@ -221,10 +223,13 @@ func handleDeployments(w http.ResponseWriter, r *http.Request) {
 func startDeploymentPipeline(id, kind, target, lockKey string, names [4]string) error {
 	if err := pruneDeploymentJobs(); err != nil { return err }
 	stages := make([]deploymentStage, 0, 4)
+	startedAt := time.Now().Unix()
 	for index, name := range names {
 		status := "Pending"
 		if index == 0 { status = "Running" }
-		stages = append(stages, deploymentStage{ID: index+1, Stage: name, Duration: "-", Status: status, Position: index+1})
+		stage := deploymentStage{ID: index+1, Stage: name, Duration: "-", Status: status, Position: index+1}
+		if index == 0 { stage.StartedAt = startedAt }
+		stages = append(stages, stage)
 	}
 	encoded, err := json.Marshal(stages)
 	if err != nil { return err }
@@ -255,13 +260,18 @@ func updateDeploymentStage(id string, position int, status string) {
 	duration := "-"
 	if status == "Success" { duration = "Selesai" }
 	if status == "Failed" { duration = "Gagal" }
+	timestampKey := "started_at"
+	if status != "Running" { timestampKey = "finished_at" }
+	statusPath := fmt.Sprintf("$[%d].status", position-1)
+	durationPath := fmt.Sprintf("$[%d].duration", position-1)
+	timestampPath := fmt.Sprintf("$[%d].%s", position-1, timestampKey)
 	_, _ = d1.Query(`UPDATE deployment_jobs SET
-		stages = json_set(stages, ?, ?, ?, ?),
+		stages = json_set(stages, ?, ?, ?, ?, ?, COALESCE(json_extract(stages, ?), ?)),
 		status = CASE WHEN ? = 'Failed' THEN 'Failed'
 			WHEN ? = 4 AND ? = 'Success' THEN 'Success' ELSE status END,
 		lease_until = datetime('now', '+10 minutes'), updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status = 'Running'`,
-		fmt.Sprintf("$[%d].status", position-1), status, fmt.Sprintf("$[%d].duration", position-1), duration,
+		statusPath, status, durationPath, duration, timestampPath, timestampPath, time.Now().Unix(),
 		status, position, status, id)
 }
 

@@ -64,8 +64,9 @@ export default function Header({
   }
 
   return (
-    <header className="app-header relative z-30 shrink-0 border-b border-base-border bg-base-950/85 backdrop-blur px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] sm:px-6">
-      <div className="flex items-center gap-3">
+    <header className="app-header relative z-30 shrink-0 bg-base-950/85 backdrop-blur">
+      <div className="border-y border-base-border px-4 py-3 sm:px-6">
+        <div className="flex items-center gap-3">
         <button
           aria-label="Buka menu"
           onClick={onMenuClick}
@@ -160,6 +161,7 @@ export default function Header({
               </div>
             )}
           </div>
+        </div>
         </div>
       </div>
     </header>

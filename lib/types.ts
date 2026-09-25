@@ -25,6 +25,8 @@ export interface PipelineStage {
   position: number;
   message?: string;
   updated_at?: string;
+  started_at?: number;
+  finished_at?: number;
 }
 
 export interface DeploymentJob {

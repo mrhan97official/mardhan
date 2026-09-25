@@ -10,7 +10,7 @@ export default function DeploymentsPage() {
 
   return (
     <AppShell title="Deployments" subtitle="Pipeline stages and rollout status" isOffline={pipeline.isOffline}>
-      <DeploymentPipeline jobs={pipeline.data} onDeployed={pipeline.reload} loading={pipeline.loading} error={pipeline.error} isOffline={pipeline.isOffline} />
+      <DeploymentPipeline jobs={pipeline.data} onDeployed={pipeline.reload} error={pipeline.error} />
     </AppShell>
   );
 }
