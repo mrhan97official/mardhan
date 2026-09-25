@@ -356,9 +356,17 @@ func (s *Store) DeleteThumbnail(key string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusNoContent { return nil }
 	if resp.StatusCode != http.StatusOK { return fmt.Errorf("gagal menghapus thumbnail di R2 (HTTP %d)", resp.StatusCode) }
-	var result struct { Success bool `json:"success"` }
+	var result struct {
+		Success bool `json:"success"`
+		Errors []struct { Message string `json:"message"` } `json:"errors"`
+	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result); err != nil { return err }
-	if !result.Success { return fmt.Errorf("R2 tidak mengonfirmasi penghapusan thumbnail") }
+	if !result.Success {
+		if len(result.Errors) > 0 && result.Errors[0].Message != "" {
+			return fmt.Errorf("R2 menolak penghapusan thumbnail: %s", result.Errors[0].Message)
+		}
+		return fmt.Errorf("R2 tidak mengonfirmasi penghapusan thumbnail")
+	}
 	return nil
 }
 

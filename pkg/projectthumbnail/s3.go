@@ -193,6 +193,18 @@ func (s *signedStorage) sign(method, key, contentType string, seconds int) (stri
 	return "https://" + host + uri + "?" + query.Encode(), nil
 }
 
+func (s *signedStorage) delete(key string) error {
+	location, err := s.sign(http.MethodDelete, key, "", 60)
+	if err != nil { return err }
+	req, err := http.NewRequest(http.MethodDelete, location, nil)
+	if err != nil { return err }
+	resp, err := s.client.Do(req)
+	if err != nil { return err }
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent { return fmt.Errorf("R2 S3 mengembalikan HTTP %d", resp.StatusCode) }
+	return nil
+}
+
 func (s *signedStorage) verify(key, contentType string, size int64) error {
 	url, err := s.sign(http.MethodHead, key, "", 60)
 	if err != nil { return err }

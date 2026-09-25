@@ -13,7 +13,6 @@ import { useOfflineData } from "@/lib/useOfflineData";
 import {
   fallbackActivity,
   fallbackApiPerformance,
-  fallbackEnvironments,
   fallbackInfra,
   fallbackLogs,
   fallbackOverview,
@@ -33,7 +32,7 @@ import type {
 export default function OverviewPage() {
   const overview = useOfflineData<OverviewStats>("overview", "/api/overview", fallbackOverview, 10000);
   const pipeline = useOfflineData<DeploymentJob[]>("deployment-jobs-v16", "/api/deployments", [], 5000);
-  const environments = useOfflineData<Environment[]>("environments", "/api/environments", fallbackEnvironments, 30000);
+  const environments = useOfflineData<Environment[]>("vercel-environments-v30", "/api/environments", [], 30000);
   const infra = useOfflineData<InfraMetric[]>("infra-live-v27", "/api/health", fallbackInfra, 15000);
   const perf = useOfflineData<ApiPerformance>("api-checks-v12", "/api/performance", fallbackApiPerformance, 30000);
   const services = useOfflineData<Service[]>("services", "/api/services", fallbackServices, 10000);
@@ -50,7 +49,7 @@ export default function OverviewPage() {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] md:gap-3 xl:gap-6">
         <DeploymentPipeline jobs={pipeline.data} limit={3} onDeployed={pipeline.reload} error={pipeline.error} />
-        <EnvironmentStatus environments={environments.data} />
+        <EnvironmentStatus environments={environments.data} loading={environments.loading} error={environments.error} updatedAt={environments.updatedAt} viewAll />
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] md:gap-3 xl:gap-6">

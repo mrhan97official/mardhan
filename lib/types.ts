@@ -10,11 +10,12 @@ export interface OverviewStats {
 }
 
 export interface Environment {
-  id: number;
+  id: string;
   name: string;
-  region: string;
+  project: string;
   version: string;
-  status: "Healthy" | "Online" | "Degraded" | "Down";
+  status: "Ready" | "Building" | "Failed" | "Canceled" | "Blocked" | "Unknown";
+  url?: string;
 }
 
 export interface PipelineStage {

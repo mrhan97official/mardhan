@@ -49,6 +49,7 @@ import (
 	"devcontrol/pkg/apimanagement"
 	"devcontrol/pkg/archive"
 	"devcontrol/pkg/branding"
+	"devcontrol/pkg/environmentstatus"
 	"devcontrol/pkg/projectdelete"
 	"devcontrol/pkg/projectthumbnail"
 	"devcontrol/pkg/auth"
@@ -83,7 +84,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	case "deployments":
 		handleDeployments(w, r)
 	case "environments":
-		handleEnvironments(w, r)
+		environmentstatus.Handle(w, r, vercelAppProjectName)
 	case "health":
 		handleHealth(w, r)
 	case "performance":
@@ -279,20 +280,6 @@ func updateDeploymentStage(id string, position int, status string) {
 		WHERE id = ? AND status = 'Running'`,
 		statusPath, status, durationPath, duration, timestampPath, timestampPath, time.Now().Unix(),
 		status, position, status, id)
-}
-
-// GET /api/environments -> environment status table.
-func handleEnvironments(w http.ResponseWriter, r *http.Request) {
-	rows, err := d1.Query(`
-		SELECT id, name, region, version, status
-		FROM environments
-		ORDER BY id ASC
-	`)
-	if err != nil {
-		util.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	util.JSON(w, http.StatusOK, rows)
 }
 
 // GET /api/services -> services status table.

@@ -73,6 +73,21 @@ func HasActiveUploads(repo string) (bool, error) {
 	return len(rows) > 0, err
 }
 
+// Large thumbnails are uploaded through R2's S3 API. Delete through the same
+// API first and keep the Cloudflare REST endpoint as a fallback for older
+// installations that do not have S3 credentials configured.
+func deleteStoredThumbnail(key string, store *archive.Store) error {
+	storage, setupErr := newSignedStorage()
+	if setupErr == nil {
+		setupErr = storage.delete(key)
+		if setupErr == nil { return nil }
+	}
+	if err := store.DeleteThumbnail(key); err != nil {
+		return fmt.Errorf("penghapusan thumbnail gagal (S3: %v; API: %w)", setupErr, err)
+	}
+	return nil
+}
+
 // Delete removes both the current image and pending objects for this repo.
 // Old rows with no object_key retain their original deterministic R2 key.
 func Delete(repo string, store *archive.Store) error {
@@ -85,7 +100,7 @@ func Delete(repo string, store *archive.Store) error {
 	for _, row := range objects {
 		key, _ := row["object_key"].(string)
 		if key != objectKey(repo) && !validUploadedKey(repo, key) { return fmt.Errorf("kunci thumbnail tersimpan tidak valid") }
-		if err := store.DeleteThumbnail(key); err != nil { return err }
+		if err := deleteStoredThumbnail(key, store); err != nil { return err }
 		if _, err := d1.Query(`DELETE FROM project_thumbnail_objects WHERE object_key = ?`, key); err != nil { return err }
 	}
 	pending, err := d1.Query(`SELECT id, object_key FROM project_thumbnail_uploads WHERE repo = ?`, repo)
@@ -94,14 +109,14 @@ func Delete(repo string, store *archive.Store) error {
 		id, _ := row["id"].(string)
 		key, _ := row["object_key"].(string)
 		if !validID(id) || key != uploadedKey(repo, id) { return fmt.Errorf("kunci unggahan thumbnail tidak valid") }
-		if err := store.DeleteThumbnail(key); err != nil { return err }
+		if err := deleteStoredThumbnail(key, store); err != nil { return err }
 		if _, err := d1.Query(`DELETE FROM project_thumbnail_uploads WHERE id = ?`, id); err != nil { return err }
 	}
 	rows, err := d1.Query(`SELECT object_key FROM project_thumbnails WHERE repo = ? LIMIT 1`, repo)
 	if err != nil || len(rows) == 0 { return err }
 	key, err := currentKey(repo, rows[0])
 	if err != nil { return err }
-	if err := store.DeleteThumbnail(key); err != nil { return err }
+	if err := deleteStoredThumbnail(key, store); err != nil { return err }
 	_, err = d1.Query(`DELETE FROM project_thumbnails WHERE repo = ?`, repo)
 	return err
 }
@@ -118,7 +133,7 @@ func cleanupPending(id, repo, key string, store *archive.Store) error {
 	rows, err := d1.Query(`SELECT repo FROM project_thumbnails WHERE object_key = ? LIMIT 1`, key)
 	if err != nil { return err }
 	if len(rows) == 0 {
-		if err := store.DeleteThumbnail(key); err != nil { return err }
+		if err := deleteStoredThumbnail(key, store); err != nil { return err }
 		if _, err := d1.Query(`DELETE FROM project_thumbnail_objects WHERE object_key = ?`, key); err != nil { return err }
 	}
 	_, err = d1.Query(`DELETE FROM project_thumbnail_uploads WHERE id = ? AND repo = ?`, id, repo)
@@ -254,7 +269,7 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 			// A committed image is never removed by cancellation or stale-upload cleanup.
 			_, _ = d1.Query(`DELETE FROM project_thumbnail_uploads WHERE id = ?`, input.UploadID)
 			if old != "" && old != key {
-				if store, storeErr := archive.New(); storeErr == nil && store.DeleteThumbnail(old) == nil {
+				if store, storeErr := archive.New(); storeErr == nil && deleteStoredThumbnail(old, store) == nil {
 					_, _ = d1.Query(`DELETE FROM project_thumbnail_objects WHERE object_key = ?`, old)
 				}
 			}

@@ -1,7 +1,6 @@
 import type {
   ActivityItem,
   ApiPerformance,
-  Environment,
   GithubRepo,
   InfraMetric,
   LiveLog,
@@ -26,12 +25,6 @@ export const fallbackPipeline: PipelineStage[] = [
   { id: 2, stage: "Uji Vercel", duration: "-", status: "Pending", position: 2 },
   { id: 3, stage: "GitHub", duration: "-", status: "Pending", position: 3 },
   { id: 4, stage: "Online Vercel", duration: "-", status: "Pending", position: 4 },
-];
-
-export const fallbackEnvironments: Environment[] = [
-  { id: 1, name: "Development", region: "us-east-1", version: "v2.4.0", status: "Healthy" },
-  { id: 2, name: "Staging", region: "eu-west-1", version: "v2.4.0", status: "Healthy" },
-  { id: 3, name: "Production", region: "us-east-1", version: "v2.3.8", status: "Online" },
 ];
 
 export const fallbackServices: Service[] = [

@@ -3,11 +3,6 @@
 INSERT INTO overview_stats (active_projects, active_projects_change, deployments_today, deployments_change, uptime, uptime_change, open_incidents, incidents_change) VALUES
   (12, 20, 28, 12, 99.99, 0.01, 2, -60);
 
-INSERT INTO environments (name, region, version, status) VALUES
-  ('Development', 'us-east-1', 'v2.4.0', 'Healthy'),
-  ('Staging', 'eu-west-1', 'v2.4.0', 'Healthy'),
-  ('Production', 'us-east-1', 'v2.3.8', 'Online');
-
 INSERT INTO deployment_pipeline (stage, duration, status, position) VALUES
   ('Ekstrak ZIP', '-', 'Pending', 1),
   ('Uji Vercel', '-', 'Pending', 2),

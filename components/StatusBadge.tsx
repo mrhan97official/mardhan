@@ -7,6 +7,11 @@ const STATUS_STYLES: Record<string, string> = {
   Down: "text-red-400",
   Failed: "text-red-400",
   Pending: "text-slate-400",
+  Ready: "text-emerald-400",
+  Building: "text-purple-400",
+  Canceled: "text-slate-400",
+  Blocked: "text-amber-400",
+  Unknown: "text-slate-400",
 };
 
 const DOT_STYLES: Record<string, string> = {
@@ -18,6 +23,11 @@ const DOT_STYLES: Record<string, string> = {
   Down: "bg-red-400",
   Failed: "bg-red-400",
   Pending: "bg-slate-500",
+  Ready: "bg-emerald-400",
+  Building: "bg-purple-400 animate-pulse",
+  Canceled: "bg-slate-500",
+  Blocked: "bg-amber-400",
+  Unknown: "bg-slate-500",
 };
 
 export default function StatusBadge({ status }: { status: string }) {
