@@ -123,7 +123,7 @@ export default function Header({
 
           <button
             aria-label="Notifikasi"
-            className="relative rounded-xl border border-base-border bg-base-850 p-2.5 text-slate-300 hover:bg-base-800"
+            className="relative p-2.5 text-slate-300 transition-colors hover:text-white"
           >
             <Bell size={16} />
             <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-red-500" />
@@ -138,7 +138,7 @@ export default function Header({
               aria-expanded={profileOpen}
               aria-haspopup="menu"
               onClick={() => { setProfileError(""); setProfileOpen((open) => !open); }}
-              className="flex items-center gap-2 rounded-xl border border-base-border bg-base-850 px-2.5 py-1.5 text-slate-200 hover:bg-base-800"
+              className="flex items-center gap-2 px-1 py-1 text-slate-200 transition-colors hover:text-white"
             >
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-blue/20 text-xs font-semibold text-accent-blue">A</span>
               <span className="hidden text-sm font-medium sm:inline md:hidden xl:inline">Admin</span>

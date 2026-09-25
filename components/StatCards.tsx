@@ -1,20 +1,18 @@
 "use client";
 
-import { AlertTriangle, Boxes, FolderOpen, TrendingDown, TrendingUp, Activity } from "lucide-react";
+import { AlertTriangle, Boxes, FolderOpen, Activity } from "lucide-react";
 import Sparkline from "./Sparkline";
 import type { OverviewStats } from "@/lib/types";
 import { summarySparklines } from "@/lib/fallbackData";
 
 function ChangeTag({ value, invert = false }: { value: number; invert?: boolean }) {
   const positive = invert ? value < 0 : value >= 0;
-  const Icon = value >= 0 ? TrendingUp : TrendingDown;
   return (
     <span
-      className={`inline-flex items-center gap-1 text-xs font-semibold ${
+      className={`shrink-0 whitespace-nowrap text-[11px] font-semibold md:text-[10px] xl:text-xs ${
         positive ? "text-emerald-400" : "text-red-400"
       }`}
     >
-      <Icon size={12} />
       {value >= 0 ? "+" : ""}
       {value}%
     </span>
@@ -70,21 +68,23 @@ export default function StatCards({ stats }: { stats: OverviewStats }) {
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4 md:gap-3 xl:gap-4">
       {cards.map((c) => (
         <div key={c.label} className="card p-4 md:p-3 xl:p-4">
-          <div className="flex min-w-0 items-center gap-2.5 md:min-h-11 xl:gap-3">
-            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${c.iconBg}`}>
+          <div className="flex min-w-0 items-center gap-2.5 md:min-h-[3.75rem] md:gap-2 xl:min-h-0 xl:gap-3">
+            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl md:h-8 md:w-8 xl:h-9 xl:w-9 ${c.iconBg}`}>
               <c.icon size={18} />
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-semibold leading-4 text-slate-200 xl:text-sm">{c.label}</p>
-              <p className="mt-0.5 text-[11px] leading-4 text-slate-500">{c.sub}</p>
+              <p className="break-words text-xs font-semibold leading-4 text-slate-200 md:text-[11px] xl:text-sm">{c.label}</p>
+              <p className="mt-0.5 text-2xl font-bold leading-none text-white md:text-[22px] xl:text-[28px]">{c.value}</p>
             </div>
           </div>
-          <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
-            <p className="text-2xl font-bold leading-none text-white md:text-[22px] xl:text-[28px]">{c.value}</p>
-            <ChangeTag value={c.change} invert={c.invert} />
-          </div>
-          <div className="mt-2 -mb-1 h-7">
-            <Sparkline values={c.spark} color={c.color} height={28} width={140} />
+          <div className="mt-3 flex min-w-0 items-center gap-1.5 md:mt-2">
+            <div className="flex min-w-0 flex-1 items-center gap-1">
+              <ChangeTag value={c.change} invert={c.invert} />
+              <span className="min-w-0 truncate text-[11px] text-slate-500 md:text-[10px] xl:text-xs">{c.sub}</span>
+            </div>
+            <div className="h-7 w-16 shrink-0 sm:w-20 md:w-7 lg:w-12 xl:w-20">
+              <Sparkline values={c.spark} color={c.color} height={28} width={140} />
+            </div>
           </div>
         </div>
       ))}
