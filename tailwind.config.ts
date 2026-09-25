@@ -7,21 +7,46 @@ const config: Config = {
     extend: {
       colors: {
         base: {
-          950: "#080D17",
-          900: "#0B1220",
-          850: "#0E1626",
-          800: "#111B2E",
-          700: "#182338",
-          600: "#243450",
-          border: "#1D2A40",
+          950: "rgb(var(--base-950) / <alpha-value>)",
+          900: "rgb(var(--base-900) / <alpha-value>)",
+          850: "rgb(var(--base-850) / <alpha-value>)",
+          800: "rgb(var(--base-800) / <alpha-value>)",
+          700: "rgb(var(--base-700) / <alpha-value>)",
+          600: "rgb(var(--base-600) / <alpha-value>)",
+          border: "rgb(var(--base-border) / <alpha-value>)",
+        },
+        white: "rgb(var(--ui-white) / <alpha-value>)",
+        slate: {
+          100: "rgb(var(--slate-100) / <alpha-value>)",
+          200: "rgb(var(--slate-200) / <alpha-value>)",
+          300: "rgb(var(--slate-300) / <alpha-value>)",
+          400: "rgb(var(--slate-400) / <alpha-value>)",
+          500: "rgb(var(--slate-500) / <alpha-value>)",
+          600: "rgb(var(--slate-600) / <alpha-value>)",
+        },
+        emerald: {
+          300: "rgb(var(--emerald-300) / <alpha-value>)",
+          400: "rgb(var(--emerald-400) / <alpha-value>)",
+        },
+        amber: {
+          200: "rgb(var(--amber-200) / <alpha-value>)",
+          300: "rgb(var(--amber-300) / <alpha-value>)",
+          400: "rgb(var(--amber-400) / <alpha-value>)",
+        },
+        purple: {
+          400: "rgb(var(--purple-400) / <alpha-value>)",
+        },
+        red: {
+          300: "rgb(var(--red-300) / <alpha-value>)",
+          400: "rgb(var(--red-400) / <alpha-value>)",
         },
         accent: {
-          blue: "#3B82F6",
-          cyan: "#22D3EE",
-          purple: "#A855F7",
-          green: "#22C55E",
-          amber: "#F59E0B",
-          red: "#EF4444",
+          blue: "rgb(var(--accent-blue) / <alpha-value>)",
+          cyan: "rgb(var(--accent-cyan) / <alpha-value>)",
+          purple: "rgb(var(--accent-purple) / <alpha-value>)",
+          green: "rgb(var(--accent-green) / <alpha-value>)",
+          amber: "rgb(var(--accent-amber) / <alpha-value>)",
+          red: "rgb(var(--accent-red) / <alpha-value>)",
         },
       },
       fontFamily: {
@@ -29,7 +54,7 @@ const config: Config = {
         mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       boxShadow: {
-        glow: "0 0 0 1px rgba(255,255,255,0.03), 0 8px 24px -8px rgba(0,0,0,0.6)",
+        glow: "var(--shadow-glow)",
       },
       borderRadius: {
         xl2: "1rem",

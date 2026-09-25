@@ -6,12 +6,78 @@
 
 :root {
   color-scheme: dark;
+  --base-950: 8 13 23;
+  --base-900: 11 18 32;
+  --base-850: 14 22 38;
+  --base-800: 17 27 46;
+  --base-700: 24 35 56;
+  --base-600: 36 52 80;
+  --base-border: 29 42 64;
+  --ui-white: 255 255 255;
+  --body-text: 230 235 243;
+  --slate-100: 241 245 249;
+  --slate-200: 226 232 240;
+  --slate-300: 203 213 225;
+  --slate-400: 148 163 184;
+  --slate-500: 100 116 139;
+  --slate-600: 71 85 105;
+  --emerald-300: 110 231 183;
+  --emerald-400: 52 211 153;
+  --amber-200: 253 230 138;
+  --amber-300: 252 211 77;
+  --amber-400: 251 191 36;
+  --purple-400: 192 132 252;
+  --red-300: 252 165 165;
+  --red-400: 248 113 113;
+  --accent-blue: 59 130 246;
+  --accent-cyan: 34 211 238;
+  --accent-purple: 168 85 247;
+  --accent-green: 34 197 94;
+  --accent-amber: 245 158 11;
+  --accent-red: 239 68 68;
+  --shadow-glow: 0 0 0 1px rgba(255,255,255,0.03), 0 8px 24px -8px rgba(0,0,0,0.6);
+  --thumbnail-window: #17243c;
+}
+
+html.light {
+  color-scheme: light;
+  --base-950: 248 252 255;
+  --base-900: 255 255 255;
+  --base-850: 255 255 255;
+  --base-800: 240 247 255;
+  --base-700: 226 239 254;
+  --base-600: 205 224 246;
+  --base-border: 209 228 250;
+  --ui-white: 15 31 67;
+  --body-text: 20 42 77;
+  --slate-100: 20 42 77;
+  --slate-200: 27 52 89;
+  --slate-300: 42 69 109;
+  --slate-400: 72 100 139;
+  --slate-500: 83 108 145;
+  --slate-600: 99 121 152;
+  --emerald-300: 5 150 105;
+  --emerald-400: 4 140 98;
+  --amber-200: 166 91 3;
+  --amber-300: 166 91 3;
+  --amber-400: 166 91 3;
+  --purple-400: 124 58 237;
+  --red-300: 185 28 28;
+  --red-400: 220 38 38;
+  --accent-blue: 8 101 222;
+  --accent-cyan: 8 130 174;
+  --accent-purple: 124 58 237;
+  --accent-green: 5 150 105;
+  --accent-amber: 166 91 3;
+  --accent-red: 220 38 38;
+  --shadow-glow: 0 2px 18px rgba(40, 114, 190, 0.08);
+  --thumbnail-window: #e9f2ff;
 }
 
 html,
 body {
-  background-color: #080d17;
-  color: #e6ebf3;
+  background-color: rgb(var(--base-950));
+  color: rgb(var(--body-text));
 }
 
 .app-shell {
@@ -45,7 +111,7 @@ body:has(.app-shell) {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #243450 transparent;
+  scrollbar-color: rgb(var(--base-600)) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -53,12 +119,26 @@ body:has(.app-shell) {
   width: 8px;
 }
 *::-webkit-scrollbar-thumb {
-  background: #243450;
+  background: rgb(var(--base-600));
   border-radius: 8px;
 }
 
 .card {
   @apply rounded-2xl border border-base-border bg-base-850 shadow-glow;
+}
+
+/* Solid primary actions and thumbnail captions keep white lettering in both palettes. */
+html.light :is(.bg-accent-blue, .bg-red-600).text-white,
+html.light .project-thumb-caption { color: #fff; }
+
+.logo-transparency-bg {
+  background-color: #fff;
+  background-image: linear-gradient(45deg, #d9e2ef 25%, transparent 25%),
+    linear-gradient(-45deg, #d9e2ef 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #d9e2ef 75%),
+    linear-gradient(-45deg, transparent 75%, #d9e2ef 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }
 
 .scroll-x {

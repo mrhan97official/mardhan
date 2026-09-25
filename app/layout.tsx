@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import DeploymentOverlayProvider from "@/components/deployment/DeploymentOverlayProvider";
 import AuthGate from "@/components/AuthGate";
 import BrandingProvider from "@/components/BrandingProvider";
+import ThemeProvider from "@/components/ThemeProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -32,9 +33,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="id" className="dark">
+    <html lang="id" className="dark" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: `try{if(localStorage.getItem("devcontrol-theme")==="light"){document.documentElement.classList.remove("dark");document.documentElement.classList.add("light");document.querySelector('meta[name="theme-color"]')?.setAttribute("content","#F8FCFF");document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')?.setAttribute("content","default")}}catch(e){}` }} />
+      </head>
       <body className="font-sans antialiased min-h-screen bg-base-950 text-slate-100">
-        <AuthGate><BrandingProvider><DeploymentOverlayProvider>{children}</DeploymentOverlayProvider></BrandingProvider></AuthGate>
+        <ThemeProvider><AuthGate><BrandingProvider><DeploymentOverlayProvider>{children}</DeploymentOverlayProvider></BrandingProvider></AuthGate></ThemeProvider>
       </body>
     </html>
   );

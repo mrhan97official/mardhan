@@ -16,7 +16,7 @@ export default function SidebarLogo({ expanded, onClick, label }: {
       aria-label={label}
       title={label}
       onClick={onClick}
-      className="sidebar-brand-control relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent-blue/15 text-accent-blue"
+      className={`sidebar-brand-control relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-accent-blue ${version ? "bg-transparent" : "bg-accent-blue/15"}`}
     >
       <span className="sidebar-brand-face absolute inset-0 flex items-center justify-center transition-opacity duration-150">
         {version

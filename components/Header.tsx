@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import SidebarLogo from "@/components/SidebarLogo";
+import { useTheme } from "@/components/ThemeProvider";
 import type { DeploymentJob } from "@/lib/types";
 import {
   Bell,
@@ -10,8 +11,10 @@ import {
   ChevronDown,
   Clock3,
   LogOut,
+  Moon,
   Search,
   Settings,
+  Sun,
   X,
 } from "lucide-react";
 
@@ -39,6 +42,7 @@ export default function Header({
   title?: string;
   subtitle?: string;
 }) {
+  const { theme, setTheme } = useTheme();
   const [profileOpen, setProfileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationJobs, setNotificationJobs] = useState<DeploymentJob[]>([]);
@@ -217,6 +221,13 @@ export default function Header({
                 <Link href="/settings" role="menuitem" onClick={() => setProfileOpen(false)} className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-slate-200 hover:bg-base-800">
                   <Settings size={16} /> Pengaturan
                 </Link>
+                <div role="group" aria-label="Mode tampilan" className="border-t border-base-border px-2.5 py-2">
+                  <p className="mb-1.5 px-1 text-xs text-slate-400">Mode tampilan</p>
+                  <div className="grid grid-cols-2 gap-1 rounded-lg bg-base-800/70 p-1">
+                    <button type="button" role="menuitemradio" aria-checked={theme === "light"} onClick={() => setTheme("light")} className={`flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium ${theme === "light" ? "bg-base-900 text-accent-blue shadow-sm" : "text-slate-400 hover:text-slate-200"}`}><Sun size={14} /> Terang</button>
+                    <button type="button" role="menuitemradio" aria-checked={theme === "dark"} onClick={() => setTheme("dark")} className={`flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium ${theme === "dark" ? "bg-base-900 text-accent-blue shadow-sm" : "text-slate-400 hover:text-slate-200"}`}><Moon size={14} /> Gelap</button>
+                  </div>
+                </div>
                 <button type="button" role="menuitem" disabled={loggingOut} onClick={() => void logout()} className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-red-300 hover:bg-red-500/10 disabled:opacity-50">
                   <LogOut size={16} /> {loggingOut ? "Keluar…" : "Keluar"}
                 </button>
