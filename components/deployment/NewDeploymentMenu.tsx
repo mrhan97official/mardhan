@@ -52,12 +52,8 @@ export default function NewDeploymentMenu() {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-base-border bg-base-850 shadow-glow"
+          className="absolute right-0 z-20 mt-2 w-72 overflow-hidden rounded-xl border border-base-border bg-base-850 shadow-glow"
         >
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute -top-[5px] right-4 h-2.5 w-2.5 rotate-45 border-l border-t border-base-border bg-base-850"
-          />
           {MENU_ITEMS.map(({ key, label, description, icon: Icon }) => (
             <button
               key={key}
@@ -67,7 +63,7 @@ export default function NewDeploymentMenu() {
                 openModal(key);
                 setOpen(false);
               }}
-              className="flex w-full items-start gap-3 px-3.5 py-3 text-left first:rounded-t-xl last:rounded-b-xl hover:bg-base-800"
+              className="flex w-full items-start gap-3 px-3.5 py-3 text-left hover:bg-base-800"
             >
               <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-blue/15 text-accent-blue">
                 <Icon size={16} />

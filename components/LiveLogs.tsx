@@ -31,7 +31,7 @@ export default function LiveLogs({ logs }: { logs: LiveLog[] }) {
   const visible = logs.filter((l) => matches(filter, l.level));
 
   return (
-    <div className="card flex h-full min-w-0 flex-col p-4 sm:p-6">
+    <div className="card flex min-w-0 flex-col p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-bold text-white sm:text-lg">Live Logs</h2>
         <button className="rounded-lg border border-base-border bg-base-850 p-1.5 text-slate-400 hover:text-slate-200">

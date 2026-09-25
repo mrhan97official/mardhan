@@ -27,8 +27,8 @@ export default function InfraHealth({ metrics }: { metrics: InfraMetric[] }) {
   return (
     <div className="card min-w-0 p-4 md:p-3 xl:p-6">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-base font-bold text-white sm:text-lg">Infrastructure Health</h2>
-        <span className="text-right text-[10px] text-slate-500">Go · {metrics.some((m) => m.source === "DevControl · API") ? "API" : "Cloudflare"}</span>
+        <h2 className="text-sm font-bold text-white sm:text-base">Infrastructure Health</h2>
+        <span className="text-right text-[9px] text-slate-500">Go · {metrics.some((m) => m.source === "DevControl · API") ? "API" : "Cloudflare"}</span>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4 md:gap-1 xl:gap-4">
@@ -38,21 +38,21 @@ export default function InfraHealth({ metrics }: { metrics: InfraMetric[] }) {
           return (
             <div key={m.metric} className="min-w-0 rounded-xl border border-base-border/70 p-3 md:p-1 xl:p-3">
               <div className="flex items-center justify-between gap-1 md:flex-wrap xl:flex-nowrap">
-                <span className="flex min-w-0 items-center gap-1 text-sm font-medium text-slate-300 md:text-[10px] xl:text-sm">
+                <span className="flex min-w-0 items-center gap-1 text-xs font-medium text-slate-300 md:text-[9px] xl:text-xs">
                   <span style={{ color: meta.color }}>{meta.icon}</span>
                   {m.source === "DevControl · API" && m.metric === "network" ? "API Network" : m.source === "DevControl · API" && m.metric === "requests" ? "API Requests" : meta.label}
                 </span>
-                <span className="min-w-0 text-right text-sm font-bold tabular-nums text-white md:text-[10px] xl:text-sm">
+                <span className="min-w-0 text-right text-xs font-bold tabular-nums text-white md:text-[9px] xl:text-xs">
                   {formatValue(m)}
                 </span>
               </div>
               <div className="mt-3 flex h-14 items-center">
                 {hasSeries
                   ? <Sparkline values={m.values} color={meta.color} height={56} width={220} />
-                  : <span className="text-xs text-slate-500 md:text-[9px] xl:text-xs">{m.current === null ? "Belum tersedia" : "Pengukuran langsung"}</span>}
+                  : <span className="text-[11px] text-slate-500 md:text-[8px] xl:text-[11px]">{m.current === null ? "Belum tersedia" : "Pengukuran langsung"}</span>}
               </div>
-              <p className="mt-1 break-words text-[10px] leading-tight text-slate-400 md:text-[9px] xl:text-[10px]">{m.source}</p>
-              <p className="mt-1 break-words text-[10px] leading-tight text-slate-500 md:text-[9px] xl:text-[10px]">{m.note}</p>
+              <p className="mt-1 break-words text-[9px] leading-tight text-slate-400 md:text-[8px] xl:text-[9px]">{m.source}</p>
+              <p className="mt-1 break-words text-[9px] leading-tight text-slate-500 md:text-[8px] xl:text-[9px]">{m.note}</p>
             </div>
           );
         })}
