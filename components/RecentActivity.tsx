@@ -21,7 +21,7 @@ const COLOR_BY_TYPE: Record<string, string> = {
 
 export default function RecentActivity({ items }: { items: ActivityItem[] }) {
   return (
-    <div className="card min-w-0 p-4 sm:p-6">
+    <div className="card flex h-full min-w-0 flex-col p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-white sm:text-lg">Recent Activity</h2>
         <button className="flex items-center gap-1 text-sm font-medium text-accent-blue hover:text-blue-400">
@@ -29,7 +29,7 @@ export default function RecentActivity({ items }: { items: ActivityItem[] }) {
         </button>
       </div>
 
-      <ul className="mt-4 space-y-4">
+      <ul className="mt-4 max-h-64 flex-1 space-y-4 overflow-y-auto">
         {items.map((a) => (
           <li key={a.id} className="flex items-start gap-3">
             <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${COLOR_BY_TYPE[a.icon] ?? COLOR_BY_TYPE.box}`}>

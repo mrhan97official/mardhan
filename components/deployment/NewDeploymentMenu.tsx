@@ -50,10 +50,15 @@ export default function NewDeploymentMenu() {
       </button>
 
       {open && (
-        <div
-          role="menu"
-          className="absolute right-0 z-20 mt-2 w-72 overflow-hidden rounded-xl border border-base-border bg-base-850 shadow-glow"
-        >
+        <div className="absolute right-0 z-20 mt-2 w-72">
+          <span
+            aria-hidden="true"
+            className="absolute -top-[5px] right-4 h-2.5 w-2.5 rotate-45 rounded-[2px] border-l border-t border-base-border bg-base-850"
+          />
+          <div
+            role="menu"
+            className="relative overflow-hidden rounded-xl border border-base-border bg-base-850 shadow-glow"
+          >
           {MENU_ITEMS.map(({ key, label, description, icon: Icon }) => (
             <button
               key={key}
@@ -74,6 +79,7 @@ export default function NewDeploymentMenu() {
               </span>
             </button>
           ))}
+          </div>
         </div>
       )}
     </div>
