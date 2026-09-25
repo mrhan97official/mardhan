@@ -68,11 +68,11 @@ export default function Sidebar({
       )}
       <aside
         className={`fixed inset-y-0 left-0 z-50 flex w-64 shrink-0 flex-col border-r border-base-border bg-base-900 transition-[transform,width] duration-200
-        md:sticky md:top-0 md:h-screen md:translate-x-0 ${expanded ? "md:w-64" : "md:w-20"}
+        md:sticky md:top-0 md:h-full md:translate-x-0 ${expanded ? "md:w-64" : "md:w-20"}
         ${open ? "translate-x-0" : "-translate-x-full"}`}
       >
         <div
-          className={`flex items-center justify-between gap-2 px-5 py-5 ${
+          className={`app-sidebar-brand flex items-center justify-between gap-2 px-5 py-5 ${
             expanded ? "md:px-5" : "md:justify-center md:px-3"
           }`}
         >
@@ -140,14 +140,14 @@ export default function Sidebar({
             <span className={expanded ? "md:inline" : "md:hidden"}>Panel Admin</span>
           </div>
           <p className={`mt-1 items-center gap-1 text-xs text-slate-500 ${expanded ? "flex" : "flex md:hidden"}`}>
-            <Cpu size={12} /> v1.0.23
+            <Cpu size={12} /> v1.0.24
           </p>
           {!expanded && (
             <span
               aria-hidden="true"
               className="nav-tooltip pointer-events-none invisible absolute left-full top-1/2 z-[60] ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-semibold text-slate-100 opacity-0 shadow-xl transition-opacity before:absolute before:left-0 before:top-1/2 before:h-2 before:w-2 before:-translate-x-1/2 before:-translate-y-1/2 before:rotate-45 before:border-b before:border-l before:border-base-border before:bg-base-800 md:block"
             >
-              Panel Admin · v1.0.23
+              Panel Admin · v1.0.24
             </span>
           )}
         </div>

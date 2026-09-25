@@ -131,7 +131,32 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(rows) == 0 {
-		util.JSON(w, http.StatusOK, map[string]interface{}{})
+		// A fresh database has no overview_stats row. Derive real counters
+		// from deployed services and successful ZIP archives instead of
+		// returning an empty object (which hides the numbers in the UI).
+		live, err := d1.Query(`
+			SELECT
+			  (SELECT COUNT(*) FROM services WHERE status <> 'Down') AS active_projects,
+			  (SELECT COUNT(*) FROM zip_archives
+			   WHERE source = 'upload' AND status IN ('current', 'previous')
+			     AND date(created_at) = date('now')) AS deployments_today,
+			  (SELECT COALESCE(ROUND(AVG(uptime), 2), 0) FROM services) AS uptime,
+			  (SELECT COUNT(*) FROM services WHERE status IN ('Degraded', 'Down')) AS open_incidents
+		`)
+		if err != nil {
+			util.Error(w, http.StatusInternalServerError, err)
+			return
+		}
+		stats := map[string]interface{}{
+			"active_projects": 0, "active_projects_change": 0,
+			"deployments_today": 0, "deployments_change": 0,
+			"uptime": 0, "uptime_change": 0,
+			"open_incidents": 0, "incidents_change": 0,
+		}
+		if len(live) > 0 {
+			for key, value := range live[0] { stats[key] = value }
+		}
+		util.JSON(w, http.StatusOK, stats)
 		return
 	}
 	util.JSON(w, http.StatusOK, rows[0])

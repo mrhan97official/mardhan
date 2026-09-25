@@ -19,7 +19,7 @@ export default function AppShell({
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-base-950">
+    <div className="app-shell fixed inset-0 flex w-full overflow-hidden bg-base-950">
       <Sidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -36,7 +36,7 @@ export default function AppShell({
           subtitle={subtitle}
         />
 
-        <main className="flex-1 overflow-y-auto space-y-4 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:space-y-6 sm:p-6">
+        <main className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-y-contain p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:space-y-6 sm:p-6">
           {children}
         </main>
       </div>

@@ -11,14 +11,14 @@ import type {
 } from "./types";
 
 export const fallbackOverview: OverviewStats = {
-  active_projects: 12,
-  active_projects_change: 20,
-  deployments_today: 28,
-  deployments_change: 12,
-  uptime: 99.99,
-  uptime_change: 0.01,
-  open_incidents: 2,
-  incidents_change: -60,
+  active_projects: 0,
+  active_projects_change: 0,
+  deployments_today: 0,
+  deployments_change: 0,
+  uptime: 0,
+  uptime_change: 0,
+  open_incidents: 0,
+  incidents_change: 0,
 };
 
 export const fallbackPipeline: PipelineStage[] = [

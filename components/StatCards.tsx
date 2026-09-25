@@ -5,6 +5,11 @@ import Sparkline from "./Sparkline";
 import type { OverviewStats } from "@/lib/types";
 import { summarySparklines } from "@/lib/fallbackData";
 
+// Older offline snapshots may contain the empty response from a fresh D1.
+function numberOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 function ChangeTag({ value, invert = false }: { value: number; invert?: boolean }) {
   const positive = invert ? value < 0 : value >= 0;
   return (
@@ -23,8 +28,8 @@ export default function StatCards({ stats }: { stats: OverviewStats }) {
   const cards = [
     {
       label: "Active Projects",
-      value: stats.active_projects,
-      change: stats.active_projects_change,
+      value: numberOrZero(stats.active_projects),
+      change: numberOrZero(stats.active_projects_change),
       icon: FolderOpen,
       color: "#3B82F6",
       iconBg: "bg-accent-blue/15 text-accent-blue",
@@ -33,8 +38,8 @@ export default function StatCards({ stats }: { stats: OverviewStats }) {
     },
     {
       label: "Deployments Today",
-      value: stats.deployments_today,
-      change: stats.deployments_change,
+      value: numberOrZero(stats.deployments_today),
+      change: numberOrZero(stats.deployments_change),
       icon: Boxes,
       color: "#A855F7",
       iconBg: "bg-accent-purple/15 text-accent-purple",
@@ -43,8 +48,8 @@ export default function StatCards({ stats }: { stats: OverviewStats }) {
     },
     {
       label: "Uptime",
-      value: `${stats.uptime}%`,
-      change: stats.uptime_change,
+      value: `${numberOrZero(stats.uptime)}%`,
+      change: numberOrZero(stats.uptime_change),
       icon: Activity,
       color: "#22D3EE",
       iconBg: "bg-accent-cyan/15 text-accent-cyan",
@@ -53,8 +58,8 @@ export default function StatCards({ stats }: { stats: OverviewStats }) {
     },
     {
       label: "Open Incidents",
-      value: stats.open_incidents,
-      change: stats.incidents_change,
+      value: numberOrZero(stats.open_incidents),
+      change: numberOrZero(stats.incidents_change),
       icon: AlertTriangle,
       color: "#EF4444",
       iconBg: "bg-accent-red/15 text-accent-red",
@@ -72,9 +77,9 @@ export default function StatCards({ stats }: { stats: OverviewStats }) {
             <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl md:h-8 md:w-8 xl:h-9 xl:w-9 ${c.iconBg}`}>
               <c.icon size={18} />
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="break-words text-xs font-semibold leading-4 text-slate-200 md:text-[11px] xl:text-sm">{c.label}</p>
-              <p className="mt-0.5 text-2xl font-bold leading-none text-white md:text-[22px] xl:text-[28px]">{c.value}</p>
+              <p className="mt-0.5 block whitespace-nowrap text-2xl font-bold leading-none tabular-nums text-white md:text-[22px] xl:text-[28px]">{c.value}</p>
             </div>
           </div>
           <div className="mt-3 flex min-w-0 items-center gap-1.5 md:mt-2">
