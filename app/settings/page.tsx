@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { Cloud, ImagePlus, RotateCcw, Save, Settings } from "lucide-react";
 import AppShell from "@/components/AppShell";
+import CloudflareZoneSettings from "@/components/CloudflareZoneSettings";
 import { useBranding } from "@/components/BrandingProvider";
 import { notifyDataChanged } from "@/lib/liveUpdates";
 
@@ -176,6 +177,8 @@ export default function SettingsPage() {
         {message && <p role="status" className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-300">{message}</p>}
         <p className="text-xs text-slate-500">Untuk menghilangkan latar hitam pada logo lama, pilih lagi file PNG asli yang transparan sebelum menyimpan.</p>
       </section>
+
+      <CloudflareZoneSettings />
 
       <aside className="max-w-3xl rounded-xl border border-base-border bg-base-900/60 p-4 text-sm text-slate-300">
         <p className="font-medium text-white">Ikon aplikasi yang sudah dipasang</p>

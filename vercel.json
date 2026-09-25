@@ -13,6 +13,7 @@
     { "source": "/api/deployments", "destination": "/api/gateway?resource=deployments" },
     { "source": "/api/environments", "destination": "/api/gateway?resource=environments" },
     { "source": "/api/health", "destination": "/api/gateway?resource=health" },
+    { "source": "/api/zone-approval", "destination": "/api/gateway?resource=zone-approval" },
     { "source": "/api/performance", "destination": "/api/gateway?resource=performance" },
     { "source": "/api/services", "destination": "/api/gateway?resource=services" },
     { "source": "/api/activity", "destination": "/api/gateway?resource=activity" },

@@ -52,6 +52,7 @@ import (
 	"devcontrol/pkg/environmentstatus"
 	"devcontrol/pkg/projectdelete"
 	"devcontrol/pkg/projectthumbnail"
+	"devcontrol/pkg/zonemanagement"
 	"devcontrol/pkg/auth"
 	"devcontrol/pkg/d1"
 	"devcontrol/pkg/setup"
@@ -87,6 +88,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		environmentstatus.Handle(w, r, vercelAppProjectName)
 	case "health":
 		handleHealth(w, r)
+	case "zone-approval":
+		zonemanagement.Handle(w, r, queryCloudflareTraffic)
 	case "performance":
 		handlePerformance(w, r)
 	case "services":
@@ -417,7 +420,10 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	series = append(series, infraSeries{Metric: "memory", Values: []float64{}, Current: &heapMiB, Unit: "MiB", Source: "Instans Go", Note: "Heap Go saat ini pada instans yang melayani permintaan"})
 
 	zoneID, token := strings.TrimSpace(os.Getenv("CF_ZONE_ID")), strings.TrimSpace(os.Getenv("CF_API_TOKEN"))
-	network := infraSeries{Metric: "network", Values: []float64{}, Unit: "MiB", Source: "Cloudflare · zona", Note: "Atur CF_ZONE_ID dan izin Account Analytics Read pada CF_API_TOKEN"}
+	// An admin-approved zone is immediately active, even on a running Vercel
+	// deployment whose environment snapshot predates the approval.
+	if approved, err := zonemanagement.ApprovedZone(); err == nil && approved != "" { zoneID = approved }
+	network := infraSeries{Metric: "network", Values: []float64{}, Unit: "MiB", Source: "Cloudflare · zona", Note: "Pilih dan setujui zona Cloudflare di Pengaturan; token perlu izin Account Analytics Read"}
 	requests := infraSeries{Metric: "requests", Values: []float64{}, Unit: "req", Source: "Cloudflare · zona", Note: network.Note}
 	if zoneID != "" && token != "" {
 		network, requests = cachedCloudflareTraffic(r.Context(), zoneID, token)
