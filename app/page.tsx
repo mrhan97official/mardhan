@@ -33,7 +33,7 @@ export default function OverviewPage() {
   const overview = useOfflineData<OverviewStats>("overview", "/api/overview", fallbackOverview, 10000);
   const pipeline = useOfflineData<DeploymentJob[]>("deployment-jobs-v16", "/api/deployments", [], 5000);
   const environments = useOfflineData<Environment[]>("vercel-environments-v30", "/api/environments", [], 30000);
-  const infra = useOfflineData<InfraMetric[]>("infra-live-v27", "/api/health", fallbackInfra, 10000);
+  const infra = useOfflineData<InfraMetric[]>("infra-live-v27", "/api/health", fallbackInfra, 15000);
   const perf = useOfflineData<ApiPerformance>("api-checks-v12", "/api/performance", fallbackApiPerformance, 30000);
   const services = useOfflineData<Service[]>("services", "/api/services", fallbackServices, 10000);
   const activity = useOfflineData<ActivityItem[]>("activity", "/api/activity", fallbackActivity, 30000);
@@ -53,7 +53,7 @@ export default function OverviewPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,2.3fr)_minmax(0,1fr)] md:gap-3 xl:gap-6">
-        <InfraHealth metrics={infra.data} updatedAt={infra.updatedAt} error={infra.error} />
+        <InfraHealth metrics={infra.data} />
         <ApiPerformancePanel perf={perf.data} />
       </div>
 

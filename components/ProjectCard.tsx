@@ -88,8 +88,8 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
   }, [actionsOpen]);
 
   return (
-    <div className={`card relative flex min-w-0 flex-col gap-2.5 p-3 sm:p-4 ${actionsOpen ? "z-30" : "z-0"}`}>
-      <div className="relative aspect-[16/10] rounded-xl border border-base-border bg-base-800">
+    <div className={`card relative flex min-w-0 flex-col gap-3 p-4 sm:p-5 ${actionsOpen ? "z-30" : "z-0"}`}>
+      <div className="relative aspect-[4/3] rounded-xl border border-base-border bg-base-800">
         <div className="absolute inset-0 overflow-hidden rounded-xl">
           <div className="absolute inset-0 bg-gradient-to-br from-blue-500/25 via-base-800 to-violet-500/20" aria-hidden="true">
             <svg viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" className="h-full w-full text-blue-300/20" fill="none">
@@ -109,11 +109,12 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
             // eslint-disable-next-line @next/next/no-img-element
             <img key={thumbnailVersion} src={`/api/project-thumbnails?repo=${encodeURIComponent(repo.full_name)}&v=${encodeURIComponent(thumbnailVersion)}`} alt={`Thumbnail aplikasi ${repo.full_name}`} loading="lazy" className="absolute inset-0 h-full w-full object-cover" onLoad={() => setFailedVersion(null)} onError={() => setFailedVersion(thumbnailVersion)} />
           )}
+          <span className="project-thumb-caption absolute bottom-3 left-3 right-3 truncate rounded-lg bg-black/70 px-2.5 py-1.5 text-xs font-semibold text-white backdrop-blur-sm">{name}</span>
         </div>
         <div ref={menuRef} className="absolute right-2 top-2 z-10" onBlur={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false);
         }}>
-          <button type="button" aria-label={`Aksi proyek ${repo.full_name}`} aria-expanded={actionsOpen} aria-haspopup="menu" onClick={() => setActionsOpen((open) => !open)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/20 bg-base-900/45 text-white shadow-sm backdrop-blur-[2px] hover:bg-base-900/70">
+          <button type="button" aria-label={`Aksi proyek ${repo.full_name}`} aria-expanded={actionsOpen} aria-haspopup="menu" onClick={() => setActionsOpen((open) => !open)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-base-border bg-base-900/90 text-slate-200 shadow-lg backdrop-blur hover:bg-base-800">
             <MoreVertical size={17} />
           </button>
           {actionsOpen && (

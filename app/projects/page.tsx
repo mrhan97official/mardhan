@@ -184,7 +184,7 @@ export default function ProjectsPage() {
       )}
 
       {loading && apps.length === 0 ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 md:gap-3 xl:gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="card h-44 animate-pulse bg-base-800/40" />
           ))}
@@ -200,7 +200,7 @@ export default function ProjectsPage() {
           }
         />
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 md:gap-3 xl:gap-4">
           {apps.map(({ service, repo, source }) => (
             <ProjectCard key={repo.full_name.toLowerCase()} repo={repo} appUrl={service?.app_url} linked={!!service} source={source}
               thumbnailVersion={thumbnailByRepo.get(repo.full_name.toLowerCase())} uploading={uploading === repo.full_name}

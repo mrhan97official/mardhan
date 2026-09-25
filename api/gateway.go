@@ -603,45 +603,28 @@ var trafficCache struct {
 	requests  infraSeries
 }
 
-var cpuSample struct {
-	sync.Mutex
-	total float64
-	idle  float64
-	ready bool
-}
-
 // GET /api/health -> this Go instance plus HTTP traffic through the configured Cloudflare zone.
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	series := make([]infraSeries, 0, 4)
-	cpu := infraSeries{Metric: "cpu", Values: []float64{}, Unit: "%", Source: "Instans Go", Note: "Penggunaan CPU instans Go sejak pengukuran sebelumnya"}
+	cpu := infraSeries{Metric: "cpu", Values: []float64{}, Unit: "%", Source: "Instans Go", Note: "Rata-rata penggunaan CPU proses Go sejak instans ini mulai"}
 	samples := []metrics.Sample{
 		{Name: "/cpu/classes/total:cpu-seconds"},
 		{Name: "/cpu/classes/idle:cpu-seconds"},
 	}
-	cpuSample.Lock()
 	metrics.Read(samples)
 	if samples[0].Value.Kind() == metrics.KindFloat64 && samples[1].Value.Kind() == metrics.KindFloat64 {
 		total, idle := samples[0].Value.Float64(), samples[1].Value.Float64()
 		if total > 0 {
-			previousTotal, previousIdle, ready := cpuSample.total, cpuSample.idle, cpuSample.ready
-			cpuSample.total, cpuSample.idle, cpuSample.ready = total, idle, true
-			measuredTotal, measuredIdle := total, idle
-			if ready && total > previousTotal && idle >= previousIdle {
-				measuredTotal, measuredIdle = total-previousTotal, idle-previousIdle
-			} else {
-				cpu.Note = "Sampel awal: rata-rata CPU sejak instans Go hidup"
-			}
-			used := math.Round(math.Max(0, math.Min(100, (measuredTotal-measuredIdle)/measuredTotal*100))*100) / 100
+			used := math.Round(math.Max(0, math.Min(100, (total-idle)/total*100))*10) / 10
 			cpu.Current = &used
 		}
 	}
-	cpuSample.Unlock()
 	if cpu.Current == nil { cpu.Note = "Metrik CPU instans Go belum tersedia" }
 	series = append(series, cpu)
 
 	var memory runtime.MemStats
 	runtime.ReadMemStats(&memory)
-	heapMiB := math.Round(float64(memory.HeapAlloc)/1024/1024*100) / 100
+	heapMiB := math.Round(float64(memory.HeapAlloc)/1024/1024*10) / 10
 	series = append(series, infraSeries{Metric: "memory", Values: []float64{}, Current: &heapMiB, Unit: "MiB", Source: "Instans Go", Note: "Heap Go saat ini pada instans yang melayani permintaan"})
 
 	zoneID, token := strings.TrimSpace(os.Getenv("CF_ZONE_ID")), strings.TrimSpace(os.Getenv("CF_API_TOKEN"))
