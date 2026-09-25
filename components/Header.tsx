@@ -3,13 +3,30 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import SidebarLogo from "@/components/SidebarLogo";
+import type { DeploymentJob } from "@/lib/types";
 import {
   Bell,
+  Check,
   ChevronDown,
+  Clock3,
   LogOut,
   Search,
   Settings,
+  X,
 } from "lucide-react";
+
+const DEPLOYMENT_LABEL: Record<DeploymentJob["kind"], string> = {
+  new_app: "Aplikasi baru",
+  update_app: "Update aplikasi",
+  self_update: "Update diri",
+};
+
+const STATUS_LABEL: Record<DeploymentJob["status"], string> = {
+  Running: "Sedang berjalan",
+  Success: "Berhasil",
+  Failed: "Gagal",
+  Interrupted: "Terputus",
+};
 
 export default function Header({
   onMenuClick,
@@ -23,17 +40,27 @@ export default function Header({
   subtitle?: string;
 }) {
   const [profileOpen, setProfileOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationJobs, setNotificationJobs] = useState<DeploymentJob[]>([]);
+  const [notificationLoading, setNotificationLoading] = useState(true);
+  const [notificationError, setNotificationError] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [profileError, setProfileError] = useState("");
   const profileRef = useRef<HTMLDivElement>(null);
+  const notificationRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!profileOpen) return;
+    if (!profileOpen && !notificationsOpen) return;
     const closeOutside = (event: PointerEvent) => {
-      if (!profileRef.current?.contains(event.target as Node)) setProfileOpen(false);
+      if (profileOpen && !profileRef.current?.contains(event.target as Node)) setProfileOpen(false);
+      if (notificationsOpen && !notificationRef.current?.contains(event.target as Node)) setNotificationsOpen(false);
     };
     const closeEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { setProfileOpen(false); profileRef.current?.querySelector("button")?.focus(); }
+      if (event.key !== "Escape") return;
+      if (profileOpen) profileRef.current?.querySelector("button")?.focus();
+      if (notificationsOpen) notificationRef.current?.querySelector("button")?.focus();
+      setProfileOpen(false);
+      setNotificationsOpen(false);
     };
     document.addEventListener("pointerdown", closeOutside);
     document.addEventListener("keydown", closeEscape);
@@ -41,7 +68,41 @@ export default function Header({
       document.removeEventListener("pointerdown", closeOutside);
       document.removeEventListener("keydown", closeEscape);
     };
-  }, [profileOpen]);
+  }, [profileOpen, notificationsOpen]);
+
+  useEffect(() => {
+    let active = true;
+    let requestId = 0;
+    async function loadNotifications() {
+      const currentRequest = ++requestId;
+      try {
+        const response = await fetch("/api/deployments", { cache: "no-store", credentials: "same-origin" });
+        if (!response.ok) throw new Error("Gagal mengambil deployment");
+        const jobs: unknown = await response.json();
+        if (!Array.isArray(jobs)) throw new Error("Respons deployment tidak valid");
+        if (active && currentRequest === requestId) { setNotificationJobs(jobs as DeploymentJob[]); setNotificationError(false); }
+      } catch {
+        if (active && currentRequest === requestId) setNotificationError(true);
+      } finally {
+        if (active && currentRequest === requestId) setNotificationLoading(false);
+      }
+    }
+    const onVisible = () => { if (document.visibilityState === "visible") void loadNotifications(); };
+    void loadNotifications();
+    const timer = window.setInterval(onVisible, 15_000);
+    window.addEventListener("deployment:changed", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      active = false;
+      requestId++;
+      window.clearInterval(timer);
+      window.removeEventListener("deployment:changed", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
+  const hasFailedDeployment = notificationJobs.some((job) => job.status === "Failed" || job.status === "Interrupted");
+  const hasRunningDeployment = notificationJobs.some((job) => job.status === "Running");
 
   async function logout() {
     setLoggingOut(true);
@@ -82,13 +143,51 @@ export default function Header({
             />
           </div>
 
-          <button
-            aria-label="Notifikasi"
-            className="relative p-2.5 text-slate-300 transition-colors hover:text-white"
-          >
-            <Bell size={16} />
-            <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-red-500" />
-          </button>
+          <div ref={notificationRef} className="relative" onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setNotificationsOpen(false);
+          }}>
+            <button
+              type="button"
+              aria-label="Notifikasi deployment"
+              aria-expanded={notificationsOpen}
+              aria-haspopup="menu"
+              onClick={() => { setProfileOpen(false); setNotificationsOpen((open) => !open); }}
+              className="relative p-2.5 text-slate-300 transition-colors hover:text-white"
+            >
+              <Bell size={16} />
+              {(hasFailedDeployment || hasRunningDeployment) && (
+                <span aria-hidden="true" className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${hasFailedDeployment ? "bg-red-500" : "bg-purple-400"}`} />
+              )}
+            </button>
+            {notificationsOpen && (
+              <div role="menu" aria-label="Notifikasi deployment" className="absolute -right-12 top-full z-40 mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-base-border bg-base-900 p-1.5 text-sm shadow-2xl">
+                <span aria-hidden="true" className="pointer-events-none absolute -top-[5px] right-[3.75rem] h-2.5 w-2.5 rotate-45 border-l border-t border-base-border bg-base-900" />
+                <p className="border-b border-base-border px-3 py-2 font-semibold text-white">Notifikasi deployment</p>
+                {notificationJobs.length === 0 && (
+                  <p className="px-3 py-4 text-xs text-slate-400">
+                    {notificationLoading ? "Memuat status…" : notificationError ? "Status belum bisa dimuat. Coba buka lagi nanti." : "Belum ada deployment terbaru."}
+                  </p>
+                )}
+                {notificationJobs.slice(0, 4).map((job) => (
+                  <Link key={job.id} href="/deployments" role="menuitem" onClick={() => setNotificationsOpen(false)} className="flex items-start gap-2.5 rounded-lg px-3 py-2.5 hover:bg-base-800">
+                    <span className={`mt-0.5 ${job.status === "Success" ? "text-emerald-400" : job.status === "Running" ? "text-purple-400" : "text-amber-400"}`}>
+                      {job.status === "Success" ? <Check size={16} /> : job.status === "Running" ? <Clock3 size={16} /> : <X size={16} />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-medium text-slate-100">{DEPLOYMENT_LABEL[job.kind]} · {job.target}</span>
+                      <span className="mt-0.5 block text-[11px] text-slate-400">{STATUS_LABEL[job.status]}</span>
+                    </span>
+                  </Link>
+                ))}
+                {notificationError && notificationJobs.length > 0 && (
+                  <p className="px-3 py-1 text-[11px] text-amber-300">Status terbaru belum bisa diperbarui.</p>
+                )}
+                <Link href="/deployments" role="menuitem" onClick={() => setNotificationsOpen(false)} className="mt-1 block border-t border-base-border px-3 py-2.5 text-xs font-medium text-accent-blue hover:text-blue-400">
+                  Lihat pipeline
+                </Link>
+              </div>
+            )}
+          </div>
 
           <div ref={profileRef} className="relative" onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget)) setProfileOpen(false);
@@ -98,7 +197,7 @@ export default function Header({
               aria-label={`Profil Admin, ${isOffline ? "offline" : "online"}`}
               aria-expanded={profileOpen}
               aria-haspopup="menu"
-              onClick={() => { setProfileError(""); setProfileOpen((open) => !open); }}
+              onClick={() => { setNotificationsOpen(false); setProfileError(""); setProfileOpen((open) => !open); }}
               className="flex items-center gap-2 px-1 py-1 text-slate-200 transition-colors hover:text-white"
             >
               <span className="relative flex h-7 w-7 items-center justify-center rounded-full bg-accent-blue/20 text-xs font-semibold text-accent-blue">
@@ -110,6 +209,7 @@ export default function Header({
             </button>
             {profileOpen && (
               <div role="menu" aria-label="Menu profil" className="absolute right-0 top-full z-40 mt-2 w-56 rounded-xl border border-base-border bg-base-900 p-1.5 text-sm shadow-2xl">
+                <span aria-hidden="true" className="pointer-events-none absolute -top-[5px] right-9 h-2.5 w-2.5 rotate-45 border-l border-t border-base-border bg-base-900 sm:right-[4.75rem] md:right-9 xl:right-[4.75rem]" />
                 <div className="border-b border-base-border px-3 py-2.5">
                   <p className="font-semibold text-white">Admin</p>
                   <p className="text-xs text-slate-400">Administrator</p>

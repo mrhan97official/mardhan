@@ -172,8 +172,10 @@ type deploymentStage struct {
 	Duration string `json:"duration"`
 	Status string `json:"status"`
 	Position int `json:"position"`
-	StartedAt int64 `json:"started_at,omitempty"`
-	FinishedAt int64 `json:"finished_at,omitempty"`
+	// D1's json_set may serialize bound Unix seconds as 1790304023.0.
+	// JSON float64 accepts both that representation and older integer values.
+	StartedAt float64 `json:"started_at,omitempty"`
+	FinishedAt float64 `json:"finished_at,omitempty"`
 }
 
 type deploymentJob struct {
@@ -232,7 +234,7 @@ func startDeploymentPipeline(id, kind, target, lockKey string, names [4]string) 
 		status := "Pending"
 		if index == 0 { status = "Running" }
 		stage := deploymentStage{ID: index+1, Stage: name, Duration: "-", Status: status, Position: index+1}
-		if index == 0 { stage.StartedAt = startedAt }
+		if index == 0 { stage.StartedAt = float64(startedAt) }
 		stages = append(stages, stage)
 	}
 	encoded, err := json.Marshal(stages)
@@ -270,7 +272,7 @@ func updateDeploymentStage(id string, position int, status string) {
 	durationPath := fmt.Sprintf("$[%d].duration", position-1)
 	timestampPath := fmt.Sprintf("$[%d].%s", position-1, timestampKey)
 	_, _ = d1.Query(`UPDATE deployment_jobs SET
-		stages = json_set(stages, ?, ?, ?, ?, ?, COALESCE(json_extract(stages, ?), ?)),
+		stages = json_set(stages, ?, ?, ?, ?, ?, CAST(COALESCE(json_extract(stages, ?), ?) AS INTEGER)),
 		status = CASE WHEN ? = 'Failed' THEN 'Failed'
 			WHEN ? = 4 AND ? = 'Success' THEN 'Success' ELSE status END,
 		lease_until = datetime('now', '+10 minutes'), updated_at = CURRENT_TIMESTAMP
