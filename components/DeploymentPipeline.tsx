@@ -9,11 +9,11 @@ import NewDeploymentMenu from "@/components/deployment/NewDeploymentMenu";
 type StageStatus = PipelineStage["status"] | "Interrupted";
 
 const ICON_BY_STATUS: Record<StageStatus, JSX.Element> = {
-  Success: <Check size={18} strokeWidth={3} />,
-  Running: <Loader2 size={18} className="animate-spin" />,
-  Failed: <X size={18} strokeWidth={3} />,
-  Interrupted: <X size={18} strokeWidth={3} />,
-  Pending: <span className="h-2 w-2 rounded-full bg-slate-500" />,
+  Success: <Check size={14} strokeWidth={3} />,
+  Running: <Loader2 size={14} className="animate-spin" />,
+  Failed: <X size={14} strokeWidth={3} />,
+  Interrupted: <X size={14} strokeWidth={3} />,
+  Pending: <span className="h-1.5 w-1.5 rounded-full bg-slate-500" />,
 };
 
 const RING_BY_STATUS: Record<StageStatus, string> = {
@@ -66,17 +66,17 @@ function JobStages({ stages, job, inactive = false, now }: {
   now: number | null;
 }) {
   return (
-    <div className={`grid grid-cols-2 gap-4 sm:grid-cols-4 ${inactive ? "opacity-60" : "mt-3"}`}>
+    <div className={`grid grid-cols-2 gap-3 sm:grid-cols-4 ${inactive ? "opacity-60" : "mt-2"}`}>
       {stages.map((stage) => {
         const status: StageStatus = job?.status === "Interrupted" && stage.status === "Running" ? "Interrupted" : stage.status;
         return (
           <div key={stage.id} aria-label={`${stage.stage}: ${status}`} className="flex items-start gap-2 sm:flex-col sm:items-center sm:text-center">
-            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 bg-base-850 ${RING_BY_STATUS[status]}`}>
+            <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 bg-base-850 ${RING_BY_STATUS[status]}`}>
               {ICON_BY_STATUS[status]}
             </div>
-            <div className="min-w-0 sm:mt-2">
-              <p className="text-xs font-semibold text-slate-100">{stage.stage}</p>
-              <time aria-live="off" className={`mt-1 block font-mono text-xs tabular-nums ${status === "Failed" ? "text-red-400" : status === "Interrupted" ? "text-amber-400" : status === "Running" ? "text-purple-400" : "text-slate-500"}`}>
+            <div className="min-w-0 sm:mt-1">
+              <p className="text-[11px] font-semibold text-slate-100">{stage.stage}</p>
+              <time aria-live="off" className={`block font-mono text-[11px] tabular-nums ${status === "Failed" ? "text-red-400" : status === "Interrupted" ? "text-amber-400" : status === "Running" ? "text-purple-400" : "text-slate-500"}`}>
                 {job ? stageTime(stage, job, now) : "0m 0s"}
               </time>
             </div>
@@ -133,24 +133,24 @@ export default function DeploymentPipeline({
           {onDeployed && <button type="button" onClick={onDeployed} className="ml-2 font-semibold text-accent-blue hover:underline">Coba lagi</button>}
         </div>
       )}
-      <div className="mt-3 space-y-2.5">
+      <div className="mt-3 space-y-2">
         {visibleJobs.length === 0 && (
-          <section className="flex min-h-[clamp(96px,7rem,116px)] flex-col justify-center rounded-xl border border-base-border bg-base-900 p-2.5" aria-label="Tahapan deployment">
+          <section className="flex min-h-[clamp(80px,6rem,96px)] flex-col justify-center rounded-xl border border-base-border bg-base-900 p-2" aria-label="Tahapan deployment">
             <JobStages stages={fallbackPipeline} inactive now={now} />
           </section>
         )}
         {visibleJobs.map((job) => (
-          <section key={job.id} className="min-h-[clamp(96px,7rem,116px)] rounded-xl border border-base-border bg-base-900 p-2.5" aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
+          <section key={job.id} className="min-h-[clamp(80px,6rem,96px)] rounded-xl border border-base-border bg-base-900 p-2" aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-100">{KIND_TEXT[job.kind]} · <span className="break-all">{job.target}</span></p>
-                <p className="mt-1 text-[11px] text-slate-500"><Clock3 size={11} className="mr-1 inline" />{job.created_at} UTC</p>
+                <p className="mt-0.5 text-[11px] text-slate-500"><Clock3 size={11} className="mr-1 inline" />{job.created_at} UTC</p>
               </div>
               <span className={`rounded-full border px-2 py-1 text-xs font-medium ${job.status === "Running" ? "border-purple-400/40 text-purple-400" : job.status === "Success" ? "border-emerald-400/40 text-emerald-400" : job.status === "Failed" ? "border-red-400/40 text-red-400" : "border-amber-400/40 text-amber-400"}`}>
                 {job.status === "Running" && <Loader2 size={12} className="mr-1 inline animate-spin" />}{STATUS_TEXT[job.status]}
               </span>
             </div>
-            {job.message && <p className={`mt-2 text-xs ${job.status === "Failed" ? "text-red-400" : job.status === "Interrupted" ? "text-amber-400" : "text-slate-400"}`}>{job.message}</p>}
+            {job.message && <p className={`mt-1 text-xs ${job.status === "Failed" ? "text-red-400" : job.status === "Interrupted" ? "text-amber-400" : "text-slate-400"}`}>{job.message}</p>}
             <JobStages stages={job.stages} job={job} now={now} />
           </section>
         ))}
