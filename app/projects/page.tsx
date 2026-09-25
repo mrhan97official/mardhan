@@ -5,6 +5,7 @@ import { FolderKanban, RefreshCw, Trash2, X } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import ComingSoon from "@/components/ComingSoon";
 import ProjectCard from "@/components/ProjectCard";
+import AppsPromoBanner from "@/components/AppsPromoBanner";
 import ZipArchivePanel from "@/components/ZipArchivePanel";
 import { useOfflineData } from "@/lib/useOfflineData";
 import { fallbackGithubRepos, fallbackServices } from "@/lib/fallbackData";
@@ -153,6 +154,8 @@ export default function ProjectsPage() {
       subtitle="Repository GitHub yang dapat diakses dan aplikasi yang tersimpan"
       isOffline={repos.isOffline || services.isOffline}
     >
+      <AppsPromoBanner />
+
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-400">
           {loading && apps.length === 0 ? "Memuat repo GitHub..." : `${apps.length} repository ditemukan`}
