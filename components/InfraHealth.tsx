@@ -35,6 +35,7 @@ export default function InfraHealth({ metrics }: { metrics: InfraMetric[] }) {
         {metrics.map((m) => {
           const meta = META[m.metric];
           const hasSeries = Array.isArray(m.values) && m.values.length > 1 && m.current !== null;
+          const sparkValues = hasSeries ? m.values : m.current !== null ? [m.current, m.current] : null;
           return (
             <div key={m.metric} className="min-w-0 rounded-xl border border-base-border/70 p-3 md:p-2 xl:p-3">
               <div className="flex items-center justify-between gap-1 md:flex-wrap xl:flex-nowrap">
@@ -47,12 +48,10 @@ export default function InfraHealth({ metrics }: { metrics: InfraMetric[] }) {
                 </span>
               </div>
               <div className="mt-3 flex h-14 items-center">
-                {hasSeries
-                  ? <Sparkline values={m.values} color={meta.color} height={56} width={220} />
-                  : <span className="text-[11px] text-slate-500 md:text-[8px] xl:text-[11px]">{m.current === null ? "Belum tersedia" : "Pengukuran langsung"}</span>}
+                {sparkValues
+                  ? <Sparkline values={sparkValues} color={meta.color} height={56} width={220} />
+                  : <span className="text-[11px] text-slate-500 md:text-[8px] xl:text-[11px]">Belum tersedia</span>}
               </div>
-              <p className="mt-1 break-words text-[9px] leading-tight text-slate-400 md:text-[8px] xl:text-[9px]">{m.source}</p>
-              <p className="mt-1 break-words text-[9px] leading-tight text-slate-500 md:text-[8px] xl:text-[9px]">{m.note}</p>
             </div>
           );
         })}
