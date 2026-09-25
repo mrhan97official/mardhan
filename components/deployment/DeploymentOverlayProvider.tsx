@@ -125,7 +125,7 @@ export default function DeploymentOverlayProvider({ children }: { children: Reac
               </div>
             ))}
           </div>
-          {tasks.some((task) => task.progress.running) && <p className="mt-2 text-xs text-amber-400">Biarkan tab tetap terbuka sampai semua proses selesai.</p>}
+          {tasks.some((task) => task.progress.running) && <p className="mt-2 text-xs text-slate-400">Setelah ZIP tersimpan, laptop boleh ditutup. Runner Cloudflare melanjutkan proses.</p>}
           <div className="mt-3 flex flex-wrap gap-2 border-t border-base-border pt-3">
             {(["new_app", "update_app", "self_update"] as const).map((mode) => (
               <button key={mode} type="button" onClick={() => openModal(mode)} className="inline-flex items-center gap-1 rounded-lg border border-base-border px-2 py-1.5 text-xs font-medium text-accent-blue hover:bg-base-800">

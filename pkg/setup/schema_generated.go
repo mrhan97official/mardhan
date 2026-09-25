@@ -10,6 +10,7 @@ var schemaStatements = []string{
   "CREATE TABLE IF NOT EXISTS deployment_jobs (\n  id TEXT PRIMARY KEY,\n  kind TEXT NOT NULL CHECK (kind IN ('new_app', 'update_app', 'self_update')),\n  target TEXT NOT NULL,\n  lock_key TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('Running', 'Success', 'Failed', 'Interrupted')),\n  stages TEXT NOT NULL,\n  lease_until TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_deployment_jobs_running_target ON deployment_jobs (lock_key) WHERE status = 'Running'",
   "CREATE INDEX IF NOT EXISTS idx_deployment_jobs_updated ON deployment_jobs (updated_at DESC)",
+  "CREATE TABLE IF NOT EXISTS deployment_runner (\n  id TEXT PRIMARY KEY,\n  phase TEXT NOT NULL,\n  ticket TEXT NOT NULL DEFAULT '',\n  branch TEXT NOT NULL DEFAULT '',\n  environment TEXT NOT NULL DEFAULT 'Production',\n  claim_until TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  attempts INTEGER NOT NULL DEFAULT 0,\n  message TEXT NOT NULL DEFAULT '',\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE TABLE IF NOT EXISTS services (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  name TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('Healthy', 'Degraded', 'Down')),\n  uptime REAL NOT NULL,\n  version TEXT NOT NULL,\n  repo TEXT,\n  branch TEXT DEFAULT 'main',\n  app_url TEXT\n)",
   "CREATE TABLE IF NOT EXISTS activity_log (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  title TEXT NOT NULL,\n  description TEXT NOT NULL,\n  icon TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE TABLE IF NOT EXISTS live_logs (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  level TEXT NOT NULL CHECK (level IN ('INFO', 'WARN', 'ERROR')),\n  message TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
@@ -48,6 +49,7 @@ var migrationStatements = []migrationStatement{
   {"003", "CREATE TABLE IF NOT EXISTS zip_archives (\n  id TEXT PRIMARY KEY,\n  scope TEXT NOT NULL CHECK (scope IN ('app', 'self')),\n  target TEXT NOT NULL,\n  filename TEXT NOT NULL,\n  object_key TEXT NOT NULL,\n  size_bytes INTEGER NOT NULL,\n  sha256 TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('pending', 'current', 'previous', 'failed')),\n  source TEXT NOT NULL CHECK (source IN ('upload', 'github_snapshot')),\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)"},
   {"003", "CREATE INDEX IF NOT EXISTS idx_zip_archives_target ON zip_archives (scope, target, created_at DESC)"},
   {"004", "ALTER TABLE project_thumbnails ADD COLUMN object_key TEXT"},
+  {"005", "CREATE TABLE IF NOT EXISTS deployment_runner (\n  id TEXT PRIMARY KEY,\n  phase TEXT NOT NULL,\n  ticket TEXT NOT NULL DEFAULT '',\n  branch TEXT NOT NULL DEFAULT '',\n  environment TEXT NOT NULL DEFAULT 'Production',\n  claim_until TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  attempts INTEGER NOT NULL DEFAULT 0,\n  message TEXT NOT NULL DEFAULT '',\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)"},
 }
 
 var expectedColumns = map[string][]string{
@@ -55,6 +57,7 @@ var expectedColumns = map[string][]string{
   "environments": {"id", "name", "region", "version", "status"},
   "deployment_pipeline": {"id", "stage", "duration", "status", "position"},
   "deployment_jobs": {"id", "kind", "target", "lock_key", "status", "stages", "lease_until", "created_at", "updated_at"},
+  "deployment_runner": {"id", "phase", "ticket", "branch", "environment", "claim_until", "attempts", "message", "updated_at"},
   "services": {"id", "name", "status", "uptime", "version", "repo", "branch", "app_url"},
   "activity_log": {"id", "title", "description", "icon", "created_at"},
   "live_logs": {"id", "level", "message", "created_at"},
@@ -80,6 +83,7 @@ var expectedTypes = map[string]map[string]string{
   "environments": {"id": "INTEGER", "name": "TEXT", "region": "TEXT", "version": "TEXT", "status": "TEXT"},
   "deployment_pipeline": {"id": "INTEGER", "stage": "TEXT", "duration": "TEXT", "status": "TEXT", "position": "INTEGER"},
   "deployment_jobs": {"id": "TEXT", "kind": "TEXT", "target": "TEXT", "lock_key": "TEXT", "status": "TEXT", "stages": "TEXT", "lease_until": "TEXT", "created_at": "TEXT", "updated_at": "TEXT"},
+  "deployment_runner": {"id": "TEXT", "phase": "TEXT", "ticket": "TEXT", "branch": "TEXT", "environment": "TEXT", "claim_until": "TEXT", "attempts": "INTEGER", "message": "TEXT", "updated_at": "TEXT"},
   "services": {"id": "INTEGER", "name": "TEXT", "status": "TEXT", "uptime": "REAL", "version": "TEXT", "repo": "TEXT", "branch": "TEXT", "app_url": "TEXT"},
   "activity_log": {"id": "INTEGER", "title": "TEXT", "description": "TEXT", "icon": "TEXT", "created_at": "TEXT"},
   "live_logs": {"id": "INTEGER", "level": "TEXT", "message": "TEXT", "created_at": "TEXT"},

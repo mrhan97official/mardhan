@@ -34,7 +34,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path"
@@ -56,6 +58,7 @@ import (
 	"devcontrol/pkg/zonemanagement"
 	"devcontrol/pkg/auth"
 	"devcontrol/pkg/d1"
+	"devcontrol/pkg/deploymentrunner"
 	"devcontrol/pkg/setup"
 	"devcontrol/pkg/util"
 )
@@ -66,6 +69,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resource := r.URL.Query().Get("resource")
+	if resource == "deployment-runner" {
+		if r.Method != http.MethodPost || !deploymentrunner.Authorized(r.Header.Get("Authorization")) {
+			util.Error(w, http.StatusUnauthorized, fmt.Errorf("runner tidak diizinkan")); return
+		}
+		handleDeploymentRunner(w, r)
+		return
+	}
 	if !auth.SameOrigin(r) { util.Error(w, http.StatusForbidden, fmt.Errorf("permintaan harus berasal dari aplikasi ini")); return }
 	if resource == "branding-icon" || resource == "branding-manifest" {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -196,23 +206,25 @@ type deploymentJob struct {
 	Stages []deploymentStage `json:"stages"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+	Message string `json:"message,omitempty"`
 }
 
-// Each deployment owns its pipeline and a lease on its repo. A tab
-// closed mid-deployment eventually releases the lease, without declaring an
-// unknown Vercel outcome successful or failed.
+// Each deployment owns its pipeline and a lease on its repo. The Cloudflare
+// runner renews the lease even when the uploading device is closed.
 func expireDeploymentJobs() error {
 	_, err := d1.Query(`UPDATE deployment_jobs SET status = 'Interrupted', updated_at = CURRENT_TIMESTAMP
 		WHERE status = 'Running' AND lease_until <= CURRENT_TIMESTAMP`)
 	return err
 }
 
-// Terminal pipelines remain readable for five minutes, then are removed
+// Terminal pipelines remain readable for thirty minutes, then are removed
 // from D1 on the next read or deployment. Active jobs are never pruned.
 func pruneDeploymentJobs() error {
     if err := expireDeploymentJobs(); err != nil { return err }
     _, err := d1.Query(`DELETE FROM deployment_jobs WHERE status IN ('Success', 'Failed', 'Interrupted')
-        AND updated_at <= datetime('now', '-5 minutes')`)
+        AND updated_at <= datetime('now', '-30 minutes')`)
+    if err != nil { return err }
+    _, err = d1.Query(`DELETE FROM deployment_runner WHERE id NOT IN (SELECT id FROM deployment_jobs)`)
     return err
 }
 
@@ -220,8 +232,9 @@ func pruneDeploymentJobs() error {
 func handleDeployments(w http.ResponseWriter, r *http.Request) {
 	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	if err := pruneDeploymentJobs(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
-	rows, err := d1.Query(`SELECT id, kind, target, status, stages, created_at, updated_at
-		FROM deployment_jobs ORDER BY created_at DESC, rowid DESC LIMIT 30`)
+	rows, err := d1.Query(`SELECT j.id, j.kind, j.target, j.status, j.stages, j.created_at, j.updated_at,
+		COALESCE(r.message, '') AS message FROM deployment_jobs j
+		LEFT JOIN deployment_runner r ON r.id = j.id ORDER BY j.created_at DESC, j.rowid DESC LIMIT 30`)
 	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	jobs := make([]deploymentJob, 0, len(rows))
 	for _, row := range rows {
@@ -231,7 +244,7 @@ func handleDeployments(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusBadGateway, fmt.Errorf("status pipeline tidak valid: %w", err)); return
 		}
 		jobs = append(jobs, deploymentJob{ID: value("id"), Kind: value("kind"), Target: value("target"),
-			Status: value("status"), Stages: stages, CreatedAt: value("created_at"), UpdatedAt: value("updated_at")})
+			Status: value("status"), Stages: stages, CreatedAt: value("created_at"), UpdatedAt: value("updated_at"), Message: value("message")})
 	}
 	util.JSON(w, http.StatusOK, jobs)
 }
@@ -289,6 +302,195 @@ func updateDeploymentStage(id string, position int, status string) {
 		WHERE id = ? AND status = 'Running'`,
 		statusPath, status, durationPath, duration, timestampPath, timestampPath, time.Now().Unix(),
 		status, position, status, id)
+}
+
+// A Go function stops when its HTTP request ends. Cloudflare's scheduled
+// Worker starts fresh requests; R2 holds the ZIP and D1 holds the build ticket.
+func prepareDeploymentRunner(r *http.Request) error {
+	host := os.Getenv("VERCEL_PROJECT_PRODUCTION_URL")
+	if host == "" { host = r.Host }
+	if os.Getenv("VERCEL_ENV") == "preview" {
+		return fmt.Errorf("jalankan deployment dari domain production agar runner tetap tersedia setelah update diri")
+	}
+	return deploymentrunner.Ensure(host)
+}
+
+func enqueueDeployment(id, phase, ticket, branch, environment string) error {
+	_, err := d1.Query(`INSERT INTO deployment_runner (id, phase, ticket, branch, environment, message)
+		VALUES (?, ?, ?, ?, ?, 'ZIP tersimpan; runner Cloudflare akan melanjutkan proses')`,
+		id, phase, ticket, branch, environment)
+	if err != nil { return err }
+	// Newly configured Cron Triggers can take up to 15 minutes to propagate.
+	_, err = d1.Query(`UPDATE deployment_jobs SET lease_until = datetime('now', '+30 minutes') WHERE id = ?`, id)
+	return err
+}
+
+type runnerJob struct {
+	id, kind, target, phase, ticket, branch, environment string
+	attempts int
+}
+
+func rowText(row map[string]interface{}, key string) string { value, _ := row[key].(string); return value }
+
+func runnerStage(job runnerJob) int {
+	if job.kind == "self_update" {
+		switch job.phase { case "baseline", "start-test", "status": return 2; case "commit": return 3; default: return 4 }
+	}
+	switch job.phase {
+	case "baseline", "vercel-test", "vercel-test-status": return 2
+	case "github": return 3
+	default: return 4
+	}
+}
+
+func isStatusCheck(phase string) bool {
+	return phase == "status" || phase == "production-status" ||
+		phase == "vercel-test-status" || phase == "vercel-live-status"
+}
+
+func haltRunner(job runnerJob, message string, uncertain bool) {
+	if len(message) > 700 { message = message[:700] }
+	status := "Failed"
+	if uncertain { status = "Interrupted" }
+	if !uncertain { updateDeploymentStage(job.id, runnerStage(job), "Failed") } else {
+		_, _ = d1.Query(`UPDATE deployment_jobs SET status = 'Interrupted', updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND status = 'Running'`, job.id)
+	}
+	_, _ = d1.Query(`UPDATE deployment_runner SET phase = 'error', message = ?, claim_until = CURRENT_TIMESTAMP,
+		updated_at = CURRENT_TIMESTAMP WHERE id = ?`, message, job.id)
+	if store, err := archive.New(); err == nil { _ = store.Fail(job.id) }
+	logLiveLog("ERROR", fmt.Sprintf("Deployment %s %s: %s (%s)", job.kind, job.target, message, status))
+}
+
+func invokeRunnerStep(job runnerJob, zipBytes []byte) (int, []byte, error) {
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	values := map[string]string{"phase": job.phase, "ticket": job.ticket, "archive_id": job.id}
+	if job.kind == "self_update" {
+		values["branch"] = job.branch
+		values["repo"] = strings.TrimSuffix(job.target, "@"+job.branch)
+	} else {
+		values["type"] = job.kind
+		values["name"] = job.target
+		values["branch"] = job.branch
+		values["environment"] = job.environment
+	}
+	for key, value := range values {
+		if err := form.WriteField(key, value); err != nil { return 0, nil, err }
+	}
+	if len(zipBytes) > 0 {
+		part, err := form.CreateFormFile("zip", "source.zip")
+		if err != nil { return 0, nil, err }
+		if _, err = part.Write(zipBytes); err != nil { return 0, nil, err }
+	}
+	if err := form.Close(); err != nil { return 0, nil, err }
+	req, err := http.NewRequest(http.MethodPost, "https://internal/api/deployment-runner", &body)
+	if err != nil { return 0, nil, err }
+	req.Header.Set("Content-Type", form.FormDataContentType())
+	response := httptest.NewRecorder()
+	if job.kind == "self_update" { handleSelfUpdate(response, req) } else { handleTriggerDeployment(response, req) }
+	return response.Code, response.Body.Bytes(), nil
+}
+
+func runDeploymentJob(job runnerJob) error {
+	rows, err := d1.Query(`UPDATE deployment_runner SET claim_until = datetime('now', '+90 seconds'),
+		attempts = attempts + 1 WHERE id = ? AND phase = ? AND claim_until <= CURRENT_TIMESTAMP
+		RETURNING attempts`, job.id, job.phase)
+	if err != nil || len(rows) == 0 { return err }
+	if count, ok := rows[0]["attempts"].(float64); ok { job.attempts = int(count) }
+	// If the previous function died during a side effect, blindly repeating
+	// GitHub commits or Vercel deployments would be unsafe. A read-only status
+	// check can safely be retried, while a mutating step needs inspection.
+	if job.attempts > 1 && !isStatusCheck(job.phase) {
+		haltRunner(job, "Respons tahap sebelumnya tidak diketahui; periksa GitHub dan Vercel sebelum mengulang.", true)
+		return nil
+	}
+	if job.attempts > 10 {
+		haltRunner(job, "Status Vercel gagal diperiksa berulang kali; periksa GitHub dan Vercel.", true)
+		return nil
+	}
+	var zipBytes []byte
+	if !isStatusCheck(job.phase) {
+		store, storeErr := archive.New()
+		if storeErr != nil { haltRunner(job, storeErr.Error(), false); return nil }
+		record, getErr := store.Get(job.id)
+		if getErr != nil { haltRunner(job, getErr.Error(), false); return nil }
+		if (job.kind == "self_update" && (record.Scope != "self" || record.Target != job.target)) ||
+			(job.kind != "self_update" && (record.Scope != "app" || record.Target != job.target)) {
+			haltRunner(job, "ZIP tidak cocok dengan target deployment", false); return nil
+		}
+		zipBytes, err = store.Download(record)
+		if err != nil { haltRunner(job, "ZIP tersimpan tidak dapat dibaca: "+err.Error(), false); return nil }
+	}
+	code, data, err := invokeRunnerStep(job, zipBytes)
+	if err != nil { haltRunner(job, err.Error(), !isStatusCheck(job.phase)); return nil }
+	var result struct {
+		OK bool `json:"ok"`
+		Step string `json:"step"`
+		Status string `json:"status"`
+		Ticket string `json:"ticket"`
+		Message string `json:"message"`
+	}
+	if err = json.Unmarshal(data, &result); err != nil || code != http.StatusOK || result.Step == "" {
+		message := fmt.Sprintf("Runner tidak menerima respons tahap %s (HTTP %d)", job.phase, code)
+		if err == nil { var failure struct { Error string `json:"error"` }; _ = json.Unmarshal(data, &failure); if failure.Error != "" { message += ": " + failure.Error } }
+		if isStatusCheck(job.phase) {
+			_, _ = d1.Query(`UPDATE deployment_runner SET claim_until = CURRENT_TIMESTAMP, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, message, job.id)
+			return nil
+		}
+		haltRunner(job, message, true)
+		return nil
+	}
+	if !result.OK { haltRunner(job, result.Message, false); return nil }
+	next := job.phase
+	if job.kind == "self_update" {
+		switch job.phase {
+		case "baseline": next = "start-test"
+		case "start-test": next = "status"
+		case "status": if result.Status == "ready" { next = "commit" }
+		case "commit": next = "production-status"
+		case "production-status": if result.Step == "done" { next = "done" }
+		}
+	} else {
+		switch job.phase {
+		case "baseline": next = "vercel-test"
+		case "vercel-test": next = "vercel-test-status"
+		case "vercel-test-status": if result.Status == "ready" { next = "github" }
+		case "github": next = "vercel-live"
+		case "vercel-live": next = "vercel-live-status"
+		case "vercel-live-status": if result.Step == "done" { next = "done" }
+		}
+	}
+	if result.Ticket == "" && next != job.phase && next != "done" && job.phase != "baseline" {
+		haltRunner(job, "Sesi tahap berikutnya tidak tersedia; periksa status Vercel.", true); return nil
+	}
+	if result.Ticket == "" { result.Ticket = job.ticket }
+	if len(result.Message) > 700 { result.Message = result.Message[:700] }
+	_, err = d1.Query(`UPDATE deployment_runner SET phase = ?, ticket = ?, message = ?, attempts = 0,
+		claim_until = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND phase = ?`,
+		next, result.Ticket, result.Message, job.id, job.phase)
+	return err
+}
+
+func handleDeploymentRunner(w http.ResponseWriter, _ *http.Request) {
+	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	if err := expireDeploymentJobs(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	rows, err := d1.Query(`SELECT j.id, j.kind, j.target, r.phase, r.ticket, r.branch, r.environment
+		FROM deployment_runner r JOIN deployment_jobs j ON j.id = r.id
+		WHERE j.status = 'Running' AND r.phase NOT IN ('done', 'error')
+		AND r.claim_until <= CURRENT_TIMESTAMP ORDER BY r.updated_at ASC LIMIT 1`)
+	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	count := 0
+	for _, row := range rows {
+		job := runnerJob{id: rowText(row, "id"), kind: rowText(row, "kind"), target: rowText(row, "target"),
+			phase: rowText(row, "phase"), ticket: rowText(row, "ticket"), branch: rowText(row, "branch"), environment: rowText(row, "environment")}
+		if job.id == "" || job.phase == "" { continue }
+		if err := runDeploymentJob(job); err != nil {
+			util.Error(w, http.StatusBadGateway, fmt.Errorf("runner tidak dapat menyimpan status: %w", err)); return
+		}
+		count++
+	}
+	util.JSON(w, http.StatusOK, map[string]int{"processed": count})
 }
 
 // GET /api/services -> services status table.
@@ -580,7 +782,7 @@ type deployResult struct {
 func deployStagePosition(phase string) int {
 	switch phase {
 	case "extract": return 1
-	case "vercel-test": return 2
+	case "baseline", "vercel-test": return 2
 	case "github": return 3
 	default: return 4
 	}
@@ -636,7 +838,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	deployType := strings.TrimSpace(r.FormValue("type")) // "new_app" | "update_app"
 	phase := strings.TrimSpace(r.FormValue("phase"))
 	if (deployType != "new_app" && deployType != "update_app") ||
-		(phase != "extract" && phase != "vercel-test" && phase != "vercel-test-status" && phase != "github" && phase != "vercel-live" && phase != "vercel-live-status") {
+		(phase != "extract" && phase != "baseline" && phase != "vercel-test" && phase != "vercel-test-status" && phase != "github" && phase != "vercel-live" && phase != "vercel-live-status") {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("jenis atau tahap deployment tidak valid"))
 		return
 	}
@@ -678,6 +880,9 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("penyiapan D1/R2 gagal: %w", err))
 			return
 		}
+		if err := prepareDeploymentRunner(r); err != nil {
+			util.Error(w, http.StatusPreconditionFailed, err); return
+		}
 	}
 	store, err := archive.New()
 	if err != nil {
@@ -697,15 +902,6 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 			_ = store.Fail(archiveID)
 			util.Error(w, http.StatusConflict, err)
 			return
-		}
-		if isUpdate {
-			if backupErr := ensureAppBaseline(store, githubToken, name); backupErr != nil {
-				_ = store.Fail(archiveID)
-				updateDeploymentStage(archiveID, 1, "Failed")
-				util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, ArchiveID: archiveID,
-					Message: "ZIP baru tersimpan, tetapi versi sebelumnya belum dapat diarsipkan; update dibatalkan: " + backupErr.Error()})
-				return
-			}
 		}
 	} else if err := store.Verify(archiveID, "app", name, zipBytes); err != nil {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("arsip ZIP wajib tersimpan sebelum deployment: %w", err)); return
@@ -741,9 +937,30 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	logLiveLog("INFO", fmt.Sprintf("%s: mengekstrak %d file dari zip untuk %q", label, len(files), name))
 	if phase == "extract" {
-		// A separate request lets the modal show each stage while it runs.
 		updateDeploymentStage(archiveID, 1, "Success")
-		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: true, Message: fmt.Sprintf("ZIP disimpan; %d file berhasil diekstrak", len(files)), ArchiveID: archiveID})
+		updateDeploymentStage(archiveID, 2, "Running")
+		firstPhase := "vercel-test"
+		if isUpdate { firstPhase = "baseline" }
+		if err := enqueueDeployment(archiveID, firstPhase, "", branchInput, environment); err != nil {
+			_ = store.Fail(archiveID)
+			updateDeploymentStage(archiveID, 2, "Failed")
+			util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, ArchiveID: archiveID,
+				Message: "ZIP tersimpan, tetapi runner tidak dapat dijadwalkan: " + err.Error()})
+			return
+		}
+		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: true, Status: "pending", Message: fmt.Sprintf("ZIP disimpan; %d file diekstrak. Tahap berikutnya berjalan otomatis di server.", len(files)), ArchiveID: archiveID})
+		return
+	}
+	if phase == "baseline" {
+		if backupErr := ensureAppBaseline(store, githubToken, name); backupErr != nil {
+			_ = store.Fail(archiveID)
+			updateDeploymentStage(archiveID, 2, "Failed")
+			util.JSON(w, http.StatusOK, deployResult{Step: "vercel-test", OK: false, ArchiveID: archiveID,
+				Message: "Versi sebelumnya belum dapat diarsipkan; update dibatalkan: " + backupErr.Error()})
+			return
+		}
+		util.JSON(w, http.StatusOK, deployResult{Step: "vercel-test", OK: true, ArchiveID: archiveID,
+			Message: "Versi sebelumnya diarsipkan; memulai uji build Vercel."})
 		return
 	}
 	if phase == "vercel-test" {
@@ -1412,7 +1629,7 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	phase := orDefault(strings.TrimSpace(r.FormValue("phase")), "start")
-	if phase != "start" && phase != "status" && phase != "commit" && phase != "production-status" {
+	if phase != "start" && phase != "baseline" && phase != "start-test" && phase != "status" && phase != "commit" && phase != "production-status" {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("tahap update tidak valid"))
 		return
 	}
@@ -1450,6 +1667,9 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("penyiapan D1/R2 gagal: %w", err))
 			return
 		}
+		if err := prepareDeploymentRunner(r); err != nil {
+			util.Error(w, http.StatusPreconditionFailed, err); return
+		}
 	}
 	store, err := archive.New()
 	if err != nil {
@@ -1469,13 +1689,6 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusConflict, err)
 			return
 		}
-		if backupErr := ensureGithubBaseline(store, githubToken, "self", target, repo, branch); backupErr != nil {
-			_ = store.Fail(archiveID)
-			updateDeploymentStage(archiveID, 1, "Failed")
-			util.JSON(w, http.StatusOK, selfUpdateResult{Step: "extract", OK: false, ArchiveID: archiveID,
-				Message: "ZIP baru tersimpan, tetapi versi sebelumnya belum dapat diarsipkan; update dibatalkan: " + backupErr.Error()})
-			return
-		}
 	} else if phase == "commit" {
 		record, checkErr := store.Get(archiveID)
 		if checkErr != nil || record.Scope != "self" || record.Target != target || record.SizeBytes != int64(len(zipBytes)) || record.SHA256 != archive.Digest(zipBytes) ||
@@ -1486,6 +1699,8 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		updateDeploymentStage(archiveID, 3, "Running")
 	} else if err := store.Verify(archiveID, "self", target, zipBytes); err != nil {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("arsip ZIP wajib tersimpan sebelum update diri: %w", err)); return
+	} else if err := requireActiveDeployment(archiveID); err != nil {
+		util.Error(w, http.StatusConflict, err); return
 	}
 
 	// From here on the request itself is valid, so failures are reported as
@@ -1496,6 +1711,7 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		_ = store.Fail(archiveID)
 		position := 1
 		if phase == "commit" { position = 3 }
+		if phase == "baseline" || phase == "start-test" { position = 2 }
 		updateDeploymentStage(archiveID, position, "Failed")
 		msg := "[Ekstrak ZIP] Gagal mengekstrak file zip: " + err.Error()
 		logLiveLog("ERROR", "Self-update: "+msg)
@@ -1506,6 +1722,7 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		_ = store.Fail(archiveID)
 		position := 1
 		if phase == "commit" { position = 3 }
+		if phase == "baseline" || phase == "start-test" { position = 2 }
 		updateDeploymentStage(archiveID, position, "Failed")
 		msg := "[Ekstrak ZIP] Zip kosong atau tidak berisi file yang valid"
 		logLiveLog("ERROR", "Self-update: "+msg)
@@ -1539,7 +1756,32 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		finishSelfUpdate(w, githubToken, vercelToken, owner, repoName, branch, files, ticket.URL, ticket.Project, store, archiveID)
 		return
 	}
-	updateDeploymentStage(archiveID, 1, "Success")
+	if phase == "start" {
+		updateDeploymentStage(archiveID, 1, "Success")
+		updateDeploymentStage(archiveID, 2, "Running")
+		if err := enqueueDeployment(archiveID, "baseline", "", branch, "Production"); err != nil {
+			_ = store.Fail(archiveID)
+			updateDeploymentStage(archiveID, 2, "Failed")
+			util.JSON(w, http.StatusOK, selfUpdateResult{Step: "extract", OK: false, ArchiveID: archiveID,
+				Message: "ZIP tersimpan, tetapi runner tidak dapat dijadwalkan: " + err.Error()})
+			return
+		}
+		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "extract", OK: true, Status: "pending", ArchiveID: archiveID,
+			Message: "ZIP tersimpan dan diekstrak; tahap berikutnya berjalan otomatis di server."})
+		return
+	}
+	if phase == "baseline" {
+		if backupErr := ensureGithubBaseline(store, githubToken, "self", target, repo, branch); backupErr != nil {
+			_ = store.Fail(archiveID)
+			updateDeploymentStage(archiveID, 2, "Failed")
+			util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-test", OK: false, ArchiveID: archiveID,
+				Message: "Versi sebelumnya belum dapat diarsipkan; update dibatalkan: " + backupErr.Error()})
+			return
+		}
+		util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-test", OK: true, ArchiveID: archiveID,
+			Message: "Versi sebelumnya diarsipkan; memulai uji build Vercel."})
+		return
+	}
 	updateDeploymentStage(archiveID, 2, "Running")
 	logLiveLog("INFO", fmt.Sprintf("Self-update: mengekstrak %d file dari zip untuk %s/%s", len(files), owner, repoName))
 
@@ -1570,7 +1812,7 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	logLiveLog("INFO", fmt.Sprintf("Self-update: build uji dimulai (project %q, deployment %s)", tempProject, deploymentID))
 	util.JSON(w, http.StatusOK, selfUpdateResult{
 		Step: "vercel-test", OK: true, Status: "pending", Ticket: ticket, PreviewURL: previewURL, ArchiveID: archiveID,
-		Message: "ZIP disimpan; build uji Vercel dimulai; menunggu hasil build...",
+		Message: "ZIP disimpan; build uji dimulai. Tahap berikutnya berjalan otomatis di server.",
 	})
 }
 

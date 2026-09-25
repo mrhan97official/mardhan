@@ -6,7 +6,7 @@ import Modal from "./Modal";
 import { useOfflineData } from "@/lib/useOfflineData";
 import { fallbackServices } from "@/lib/fallbackData";
 import type { Service } from "@/lib/types";
-import { pollVercelBuild } from "@/lib/pollVercelBuild";
+import { pollDeploymentJob } from "@/lib/pollDeploymentJob";
 import Link from "next/link";
 
 type Mode = "new_app" | "update_app";
@@ -109,49 +109,45 @@ export default function DeployFormModal({
     setFailedStep(null);
     setElapsedSeconds(0);
     let currentPhase: StepKey = "extract";
-    let ticket = "";
     let archiveID = "";
     try {
-      for (const phase of STEP_ORDER) {
-        currentPhase = phase;
-        setActiveStep(phase);
-        const form = new FormData();
-        form.append("type", mode);
-        form.append("phase", phase);
-        form.append("name", name.trim());
-        if (branch.trim()) form.append("branch", branch.trim());
-        form.append("environment", "Production");
-        form.append("zip", zipFile);
-        if (ticket) form.append("ticket", ticket);
-        if (archiveID) form.append("archive_id", archiveID);
-
-        const res = await fetch("/api/deploy", { method: "POST", body: form });
-        const body = await res.json().catch(() => null);
-        if (!res.ok) {
-          throw new Error((body && body.error) || `Gagal pada tahap ${phase} (HTTP ${res.status})`);
-        }
-        let parsed = body as DeployResponse;
-        setResult(parsed);
-        if (parsed.archive_id) { archiveID = parsed.archive_id; setArchiveSaved(true); }
-        if (!parsed.ok) { setFailedStep(phase); return; }
-        if (parsed.status === "pending" && (phase === "vercel-test" || phase === "vercel-live")) {
-          parsed = await pollVercelBuild<DeployResponse>("/api/deploy", {
-            type: mode, name: name.trim(), phase: `${phase}-status`,
-          }, parsed, (progress, elapsed) => {
-            setResult(progress);
-            setElapsedSeconds(elapsed);
-          });
-        }
-        if (!parsed.ok) { setFailedStep(phase); return; }
-        if ((phase === "vercel-test" || phase === "github") && !parsed.ticket) {
-          throw new Error("Sesi tahap berikutnya tidak tersedia; periksa hasil deployment di Vercel.");
-        }
-        ticket = parsed.ticket ?? "";
-        setCompletedSteps((previous) => [...previous, phase]);
+      const form = new FormData();
+      form.append("type", mode);
+      form.append("phase", "extract");
+      form.append("name", name.trim());
+      if (branch.trim()) form.append("branch", branch.trim());
+      form.append("environment", "Production");
+      form.append("zip", zipFile);
+      const res = await fetch("/api/deploy", { method: "POST", body: form });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error((body && body.error) || `Gagal menyimpan ZIP (HTTP ${res.status})`);
+      const parsed = body as DeployResponse;
+      setResult(parsed);
+      if (parsed.archive_id) { archiveID = parsed.archive_id; setArchiveSaved(true); }
+      if (!parsed.ok || !archiveID) { setFailedStep("extract"); return; }
+      setCompletedSteps(["extract"]);
+      setActiveStep("vercel-test");
+      const final = await pollDeploymentJob(archiveID, (job, elapsed) => {
+        const done = job.stages.filter((stage) => stage.status === "Success").map((stage) => STEP_ORDER[stage.position - 1]);
+        setCompletedSteps(done.filter((step): step is StepKey => Boolean(step)));
+        const running = job.stages.find((stage) => stage.status === "Running") ?? job.stages.find((stage) => stage.status === "Pending");
+        if (running) setActiveStep(STEP_ORDER[running.position - 1]);
+        setResult({ step: running ? STEP_ORDER[running.position - 1] : "vercel-live", ok: true,
+          status: "pending", message: job.message || "Tahap deployment berjalan di server.", archive_id: archiveID });
+        setElapsedSeconds(elapsed);
+      });
+      if (final.status === "Success") {
+        setCompletedSteps([...STEP_ORDER]);
+        setResult({ step: "done", ok: true, status: "ready", message: final.message || "Aplikasi sudah online di Vercel.", archive_id: archiveID });
+        onSuccess();
+      } else {
+        const stage = final.stages.find((item) => item.status === "Failed" || item.status === "Running");
+        currentPhase = STEP_ORDER[(stage?.position ?? 4) - 1];
+        setFailedStep(currentPhase);
+        setResult({ step: currentPhase, ok: false, message: final.message || "Deployment terhenti; periksa Pipeline, GitHub, dan Vercel.", archive_id: archiveID });
       }
-      onSuccess();
     } catch (err) {
-      setFailedStep(currentPhase);
+      if (!archiveID) setFailedStep(currentPhase);
       setError(err instanceof Error ? err.message : "Terjadi kesalahan tak terduga.");
     } finally {
       setActiveStep(null);
@@ -166,8 +162,8 @@ export default function DeployFormModal({
       <form onSubmit={handleSubmit} className="space-y-4">
         <p className="text-xs text-slate-500">
           {isUpdate
-            ? "ZIP disimpan lebih dulu. Versi sebelumnya tetap dapat diunduh jika update gagal; lalu build diuji sebelum GitHub dan Vercel diperbarui."
-            : "ZIP disimpan lebih dulu, lalu build diuji sebelum repo GitHub dibuat dan aplikasi dionlinekan di Vercel."}
+            ? "Setelah ZIP tersimpan, server otomatis menguji build, memperbarui GitHub, lalu Vercel. Versi sebelumnya tetap tersedia jika update gagal."
+            : "Setelah ZIP tersimpan, server otomatis menguji build, membuat repo GitHub, lalu menayangkan aplikasi di Vercel."}
         </p>
 
         {isUpdate ? (
@@ -267,7 +263,7 @@ export default function DeployFormModal({
           </p>
         )}
         {submitting && result?.status === "pending" && (
-          <p className="text-xs text-slate-500">Status diperiksa otomatis setiap 5 detik. Tekan Hide untuk berpindah halaman dan pantau di Pipeline; biarkan tab tetap terbuka.</p>
+          <p className="text-xs text-slate-500">ZIP sudah tersimpan. Laptop boleh ditutup; runner Cloudflare melanjutkan proses. Cek hasilnya di Pipeline.</p>
         )}
         {finished && result?.app_url && (
           <a href={result.app_url} target="_blank" rel="noopener noreferrer" className="block break-all text-xs text-accent-blue hover:underline">
@@ -285,12 +281,12 @@ export default function DeployFormModal({
           <button
             type="button"
             onClick={onClose}
-            disabled={submitting}
+            disabled={submitting && !archiveSaved}
             className="rounded-xl border border-base-border px-3.5 py-2 text-sm font-medium text-slate-300 hover:bg-base-800 disabled:opacity-60"
           >
-            {finished ? "Tutup" : "Batal"}
+            {submitting && archiveSaved ? "Sembunyikan" : finished ? "Tutup" : archiveSaved ? "Tutup" : "Batal"}
           </button>
-          {!finished && (
+          {!finished && !archiveSaved && (
             <button
               type="submit"
               disabled={submitting}

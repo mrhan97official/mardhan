@@ -150,6 +150,7 @@ export default function DeploymentPipeline({
                 {job.status === "Running" && <Loader2 size={12} className="mr-1 inline animate-spin" />}{STATUS_TEXT[job.status]}
               </span>
             </div>
+            {job.message && <p className={`mt-2 text-xs ${job.status === "Failed" ? "text-red-400" : job.status === "Interrupted" ? "text-amber-400" : "text-slate-400"}`}>{job.message}</p>}
             <JobStages stages={job.stages} job={job} now={now} />
           </section>
         ))}

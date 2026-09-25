@@ -11,6 +11,7 @@
     { "source": "/api/api-management", "destination": "/api/gateway?resource=api-management" },
     { "source": "/api/overview", "destination": "/api/gateway?resource=overview" },
     { "source": "/api/deployments", "destination": "/api/gateway?resource=deployments" },
+    { "source": "/api/deployment-runner", "destination": "/api/gateway?resource=deployment-runner" },
     { "source": "/api/environments", "destination": "/api/gateway?resource=environments" },
     { "source": "/api/health", "destination": "/api/gateway?resource=health" },
     { "source": "/api/zone-approval", "destination": "/api/gateway?resource=zone-approval" },

@@ -48,6 +48,20 @@ CREATE TABLE IF NOT EXISTS deployment_jobs (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_deployment_jobs_running_target ON deployment_jobs (lock_key) WHERE status = 'Running';
 CREATE INDEX IF NOT EXISTS idx_deployment_jobs_updated ON deployment_jobs (updated_at DESC);
 
+-- Durable stage cursor. The Cloudflare scheduler advances this one stage at
+-- a time; the archive ZIP and signed Vercel ticket survive browser closure.
+CREATE TABLE IF NOT EXISTS deployment_runner (
+  id TEXT PRIMARY KEY,
+  phase TEXT NOT NULL,
+  ticket TEXT NOT NULL DEFAULT '',
+  branch TEXT NOT NULL DEFAULT '',
+  environment TEXT NOT NULL DEFAULT 'Production',
+  claim_until TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  message TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS services (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,

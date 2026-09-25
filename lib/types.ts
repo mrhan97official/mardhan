@@ -38,6 +38,7 @@ export interface DeploymentJob {
   stages: PipelineStage[];
   created_at: string;
   updated_at: string;
+  message?: string;
 }
 
 export interface Service {

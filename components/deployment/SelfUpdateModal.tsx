@@ -6,7 +6,7 @@ import Modal from "./Modal";
 import { useOfflineData } from "@/lib/useOfflineData";
 import { fallbackGithubRepos } from "@/lib/fallbackData";
 import type { GithubRepo } from "@/lib/types";
-import { pollVercelBuild } from "@/lib/pollVercelBuild";
+import { pollDeploymentJob } from "@/lib/pollDeploymentJob";
 import Link from "next/link";
 
 interface SelfUpdateResponse {
@@ -162,46 +162,29 @@ export default function SelfUpdateModal({
       if (!res.ok) {
         throw new Error((body && body.error) || `Gagal (HTTP ${res.status})`);
       }
-      let parsed = body as SelfUpdateResponse;
+      const parsed = body as SelfUpdateResponse;
       setResult(parsed);
       if (parsed.archive_id) setArchiveSaved(true);
       if (!parsed.ok) return;
+      if (!parsed.archive_id) throw new Error("ID ZIP yang tersimpan tidak tersedia.");
       setActiveStep("vercel-test");
-      if (parsed.status !== "pending") throw new Error("Sesi build Vercel tidak tersedia.");
-      parsed = await pollVercelBuild<SelfUpdateResponse>("/api/self-update", {
-        phase: "status", repo: repo.trim(), branch: branch.trim() || "main",
-      }, parsed, (progress, elapsed) => {
-        setResult(progress);
+      const final = await pollDeploymentJob(parsed.archive_id, (job, elapsed) => {
+        const active = job.stages.find((stage) => stage.status === "Running") ?? job.stages.find((stage) => stage.status === "Pending");
+        const step = STEP_ORDER[(active?.position ?? 2) - 1];
+        setActiveStep(step);
+        setResult({ step, ok: true, status: "pending", archive_id: parsed.archive_id,
+          message: job.message || "Tahap update berjalan di server." });
         setElapsedSeconds(elapsed);
       });
-      if (!parsed.ok) return;
-      if (!parsed.ticket || parsed.status !== "ready") throw new Error("Hasil uji build Vercel tidak valid.");
-      setActiveStep("github-push");
-      const commit = new FormData();
-      commit.append("phase", "commit");
-      commit.append("repo", repo.trim());
-      commit.append("branch", branch.trim() || "main");
-      commit.append("zip", zipFile);
-      commit.append("ticket", parsed.ticket);
-      if (parsed.archive_id) commit.append("archive_id", parsed.archive_id);
-      const commitRes = await fetch("/api/self-update", { method: "POST", body: commit, cache: "no-store" });
-      const commitBody = await commitRes.json().catch(() => null);
-      if (!commitRes.ok) throw new Error((commitBody && commitBody.error) || `Gagal memperbarui GitHub (HTTP ${commitRes.status})`);
-      parsed = commitBody as SelfUpdateResponse;
-      setResult(parsed);
-      if (!parsed.ok) return;
-      if (parsed.step !== "vercel-production" || parsed.status !== "pending" || !parsed.ticket) {
-        throw new Error("Sesi verifikasi deployment production Vercel tidak tersedia.");
+      if (final.status === "Success") {
+        setResult({ step: "done", ok: true, status: "ready", archive_id: parsed.archive_id,
+          message: final.message || "GitHub diperbarui dan deployment production siap." });
+        onSuccess();
+      } else {
+        const failed = final.stages.find((stage) => stage.status === "Failed" || stage.status === "Running");
+        setResult({ step: STEP_ORDER[(failed?.position ?? 4) - 1], ok: false, archive_id: parsed.archive_id,
+          message: final.message || "Update terhenti; periksa Pipeline, GitHub, dan Vercel." });
       }
-      setActiveStep("vercel-production");
-      parsed = await pollVercelBuild<SelfUpdateResponse>("/api/self-update", {
-        phase: "production-status", repo: repo.trim(), branch: branch.trim() || "main",
-      }, parsed, (progress, elapsed) => {
-        setResult(progress);
-        setElapsedSeconds(elapsed);
-      });
-      setResult(parsed);
-      if (parsed.ok && parsed.step === "done") onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Terjadi kesalahan tak terduga.");
     } finally {
@@ -216,8 +199,8 @@ export default function SelfUpdateModal({
     <Modal title="Update Diri" hidden={hidden} onHide={submitting ? onHide : undefined} onClose={submitting ? onHide : onClose} widthClassName="max-w-lg">
       <form onSubmit={handleSubmit} className="space-y-4">
         <p className="text-xs text-slate-500">
-          ZIP disimpan sebelum build diuji di Vercel. Versi sebelumnya tetap bisa diunduh jika update gagal;
-          perubahan dikirim ke GitHub hanya setelah uji build lulus, lalu dinyatakan berhasil setelah deployment production Vercel siap.
+          Setelah ZIP tersimpan, server otomatis menguji build, memperbarui GitHub, dan memeriksa production Vercel.
+          Versi sebelumnya tetap dapat diunduh jika update gagal.
         </p>
 
         <div>
@@ -378,7 +361,7 @@ export default function SelfUpdateModal({
           </div>
         )}
         {submitting && result?.status === "pending" && (
-          <p className="text-xs text-slate-500">Status diperiksa otomatis setiap 5 detik. Tekan Hide untuk berpindah halaman dan pantau di Pipeline; biarkan tab tetap terbuka.</p>
+          <p className="text-xs text-slate-500">ZIP sudah tersimpan. Laptop boleh ditutup; runner Cloudflare melanjutkan proses. Cek hasilnya di Pipeline.</p>
         )}
         {error && <p className="text-xs font-medium text-red-400">{error}</p>}
         {archiveSaved && (
@@ -391,12 +374,12 @@ export default function SelfUpdateModal({
           <button
             type="button"
             onClick={onClose}
-            disabled={submitting}
+            disabled={submitting && !archiveSaved}
             className="rounded-xl border border-base-border px-3.5 py-2 text-sm font-medium text-slate-300 hover:bg-base-800 disabled:opacity-60"
           >
-            {finished ? "Tutup" : "Batal"}
+            {submitting && archiveSaved ? "Sembunyikan" : finished ? "Tutup" : archiveSaved ? "Tutup" : "Batal"}
           </button>
-          {!finished && (
+          {!finished && !archiveSaved && (
             <button
               type="submit"
               disabled={submitting}
