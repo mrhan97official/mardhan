@@ -25,6 +25,7 @@ package handler
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -32,13 +33,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
-	"sort"
+	"runtime"
+	"runtime/metrics"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -385,66 +389,143 @@ func prepareArchiveStorage() error {
 type infraSeries struct {
 	Metric  string    `json:"metric"`
 	Values  []float64 `json:"values"`
-	Current float64   `json:"current"`
+	Current *float64  `json:"current"`
+	Unit    string    `json:"unit"`
+	Source  string    `json:"source"`
+	Note    string    `json:"note"`
 }
 
-// GET /api/health -> infra_metrics grouped into a sparkline series per metric.
+var trafficCache struct {
+	sync.Mutex
+	zoneID    string
+	fetchedAt time.Time
+	network   infraSeries
+	requests  infraSeries
+}
+
+// GET /api/health -> this Go instance plus HTTP traffic through the configured Cloudflare zone.
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	rows, err := d1.Query(`
-		SELECT metric, value, recorded_at
-		FROM infra_metrics
-		ORDER BY recorded_at ASC
-	`)
-	if err != nil {
-		util.Error(w, http.StatusInternalServerError, err)
-		return
+	series := make([]infraSeries, 0, 4)
+	cpu := infraSeries{Metric: "cpu", Values: []float64{}, Unit: "%", Source: "Instans Go", Note: "Rata-rata penggunaan CPU proses Go sejak instans ini mulai"}
+	samples := []metrics.Sample{
+		{Name: "/cpu/classes/total:cpu-seconds"},
+		{Name: "/cpu/classes/idle:cpu-seconds"},
 	}
-
-	grouped := map[string][]float64{}
-	order := []string{"cpu", "memory", "network", "requests"}
-
-	for _, row := range rows {
-		metric, _ := row["metric"].(string)
-		grouped[metric] = append(grouped[metric], toFloat(row["value"]))
-	}
-
-	series := make([]infraSeries, 0, len(order))
-	for _, m := range order {
-		values := grouped[m]
-		if len(values) == 0 {
-			continue
+	metrics.Read(samples)
+	if samples[0].Value.Kind() == metrics.KindFloat64 && samples[1].Value.Kind() == metrics.KindFloat64 {
+		total, idle := samples[0].Value.Float64(), samples[1].Value.Float64()
+		if total > 0 {
+			used := math.Round(math.Max(0, math.Min(100, (total-idle)/total*100))*10) / 10
+			cpu.Current = &used
 		}
-		if len(values) > 20 {
-			values = values[len(values)-20:]
-		}
-		series = append(series, infraSeries{Metric: m, Values: values, Current: values[len(values)-1]})
 	}
+	if cpu.Current == nil { cpu.Note = "Metrik CPU instans Go belum tersedia" }
+	series = append(series, cpu)
 
-	sort.SliceStable(series, func(i, j int) bool {
-		return indexOf(order, series[i].Metric) < indexOf(order, series[j].Metric)
-	})
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+	heapMiB := math.Round(float64(memory.HeapAlloc)/1024/1024*10) / 10
+	series = append(series, infraSeries{Metric: "memory", Values: []float64{}, Current: &heapMiB, Unit: "MiB", Source: "Instans Go", Note: "Heap Go saat ini pada instans yang melayani permintaan"})
 
+	zoneID, token := strings.TrimSpace(os.Getenv("CF_ZONE_ID")), strings.TrimSpace(os.Getenv("CF_API_TOKEN"))
+	network := infraSeries{Metric: "network", Values: []float64{}, Unit: "MiB", Source: "Cloudflare · zona", Note: "Atur CF_ZONE_ID dan izin Account Analytics Read pada CF_API_TOKEN"}
+	requests := infraSeries{Metric: "requests", Values: []float64{}, Unit: "req", Source: "Cloudflare · zona", Note: network.Note}
+	if zoneID != "" && token != "" {
+		network, requests = cachedCloudflareTraffic(r.Context(), zoneID, token)
+	}
+	series = append(series, network, requests)
 	util.JSON(w, http.StatusOK, series)
 }
 
-func toFloat(v interface{}) float64 {
-	switch n := v.(type) {
-	case float64:
-		return n
-	case int:
-		return float64(n)
-	default:
-		return 0
+func cachedCloudflareTraffic(ctx context.Context, zoneID, token string) (infraSeries, infraSeries) {
+	trafficCache.Lock()
+	defer trafficCache.Unlock()
+	if trafficCache.zoneID == zoneID && time.Since(trafficCache.fetchedAt) < time.Minute {
+		return trafficCache.network, trafficCache.requests
 	}
+	network := infraSeries{Metric: "network", Values: []float64{}, Unit: "MiB", Source: "Cloudflare · zona", Note: "Estimasi trafik semua host di zona, 24 jam terakhir"}
+	requests := infraSeries{Metric: "requests", Values: []float64{}, Unit: "req", Source: "Cloudflare · zona", Note: network.Note}
+	bytesByHour, countByHour, err := queryCloudflareTraffic(ctx, zoneID, token)
+	if err != nil {
+		network.Note = "Analitik Cloudflare tidak tersedia. Periksa CF_ZONE_ID dan izin Account Analytics Read"
+		requests.Note = network.Note
+	} else {
+		bytesTotal, countTotal := 0.0, 0.0
+		for i, bytes := range bytesByHour {
+			bytesByHour[i] = math.Round(bytes/1024/1024*1000) / 1000
+			bytesTotal += bytes
+			countTotal += countByHour[i]
+		}
+		bandwidth := math.Round(bytesTotal/1024/1024*10) / 10
+		network.Current, network.Values = &bandwidth, bytesByHour
+		requests.Current, requests.Values = &countTotal, countByHour
+	}
+	if ctx.Err() == nil {
+		trafficCache.zoneID, trafficCache.fetchedAt = zoneID, time.Now()
+		trafficCache.network, trafficCache.requests = network, requests
+	}
+	return network, requests
 }
 
-func indexOf(list []string, v string) int {
-	for i, s := range list {
-		if s == v {
-			return i
-		}
+func queryCloudflareTraffic(ctx context.Context, zoneID, token string) ([]float64, []float64, error) {
+	const query = `query($zoneTag: string, $start: Time, $end: Time) {
+		viewer { zones(filter: {zoneTag: $zoneTag}) {
+			traffic: httpRequestsAdaptiveGroups(limit: 25, orderBy: [datetimeHour_ASC], filter: {
+				datetime_geq: $start, datetime_lt: $end, requestSource: "eyeball"
+			}) { count sum { edgeResponseBytes } dimensions { datetimeHour } }
+		} }
+	}`
+	now := time.Now().UTC()
+	start := now.Add(-24 * time.Hour)
+	input, _ := json.Marshal(map[string]interface{}{
+		"query": query,
+		"variables": map[string]string{
+			"zoneTag": zoneID,
+			"start": start.Format(time.RFC3339),
+			"end": now.Format(time.RFC3339),
+		},
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.cloudflare.com/client/v4/graphql", bytes.NewReader(input))
+	if err != nil { return nil, nil, err }
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	response, err := (&http.Client{Timeout: 7 * time.Second}).Do(req)
+	if err != nil { return nil, nil, err }
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK { return nil, nil, fmt.Errorf("Cloudflare Analytics HTTP %d", response.StatusCode) }
+	var body struct {
+		Errors []json.RawMessage `json:"errors"`
+		Data struct {
+			Viewer struct {
+				Zones []struct {
+					Traffic []struct {
+						Count float64 `json:"count"`
+						Sum struct {
+							EdgeResponseBytes float64 `json:"edgeResponseBytes"`
+						} `json:"sum"`
+						Dimensions struct {
+							DatetimeHour string `json:"datetimeHour"`
+						} `json:"dimensions"`
+					} `json:"traffic"`
+				} `json:"zones"`
+			} `json:"viewer"`
+		} `json:"data"`
 	}
-	return len(list)
+	if err := json.NewDecoder(io.LimitReader(response.Body, 2<<20)).Decode(&body); err != nil { return nil, nil, err }
+	if len(body.Errors) > 0 || len(body.Data.Viewer.Zones) == 0 {
+		return nil, nil, fmt.Errorf("Cloudflare Analytics returned no accessible zone")
+	}
+	startHour := start.Truncate(time.Hour)
+	bytesByHour, countByHour := make([]float64, 25), make([]float64, 25)
+	for _, group := range body.Data.Viewer.Zones[0].Traffic {
+		hour, err := time.Parse(time.RFC3339, group.Dimensions.DatetimeHour)
+		if err != nil { return nil, nil, err }
+		index := int(hour.Sub(startHour) / time.Hour)
+		if index < 0 || index >= len(bytesByHour) { continue }
+		bytesByHour[index] += group.Sum.EdgeResponseBytes
+		countByHour[index] += group.Count
+	}
+	return bytesByHour, countByHour, nil
 }
 
 // --- merged from deploy.go (trigger-deployment) ---

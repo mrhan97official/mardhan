@@ -87,6 +87,12 @@ Menu **API Management** menampilkan endpoint baca DevControl dan dapat mendaftar
 
 Admin dapat membuat API key baca untuk scope yang dipilih dan mencabutnya kapan saja. Kunci hanya ditampilkan sekali; D1 menyimpan hash dan riwayat tindakan tanpa nilai rahasia. Contoh pemakaian klien: `Authorization: Bearer dc_...` pada `GET /api/overview` dengan scope `read:overview`. Tidak ada API key yang bisa memanggil deployment, update diri, migrasi, atau arsip ZIP.
 
+### Infrastructure Health
+
+Kartu **CPU** menampilkan estimasi pemakaian CPU instans Go yang melayani permintaan, dirata-ratakan sejak instans hidup; **Memory** menampilkan besar heap Go instans tersebut dalam MiB. Karena API berjalan di Vercel Functions, dua angka ini bukan penggunaan semua mesin atau seluruh deployment. Grafik CPU/Memory tidak dibuat jika belum ada riwayat pengukuran yang sebanding.
+
+Untuk **Network** (byte respons HTTP dalam MiB) dan **Requests** (jumlah request), isi `CF_ZONE_ID` pada environment Vercel dan berikan `CF_API_TOKEN` izin **Account Analytics Read** atas akun/zona terkait, lalu deploy ulang. Zone ID ada di halaman Overview domain Cloudflare; pastikan trafik domain itu benar-benar melalui proxy Cloudflare. Data GraphQL dijumlah selama 24 jam terakhir untuk **semua hostname** dalam zona, dengan grafik per jam dan pembaruan paling cepat tiap menit. Cloudflare dapat memakai sampling adaptif sehingga total trafiknya berupa estimasi. Jika zona, izin, atau layanan analitik tidak tersedia, kartu menampilkan tanda `—` beserta petunjuk konfigurasi; tabel D1 `infra_metrics` dan data contoh tidak digunakan sebagai metrik langsung.
+
 Bila `db/schema.sql` diperbarui, jalankan `npm run db:generate` dan sertakan perubahan `pkg/setup/schema_generated.go` pada commit/ZIP agar fungsi Go menjalankan SQL yang sama. Hak akses database dan session tetap diperiksa di backend. Password admin serta secret sesi harus berbeda; mengganti secret sesi membatalkan seluruh cookie lama. Versi ini memakai satu admin instalasi, belum menyediakan akun tim terpisah atau pemulihan password otomatis.
 
 ### 3. Install dependency & jalankan dev server

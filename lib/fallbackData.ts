@@ -82,10 +82,10 @@ function wave(base: number, spread: number, n = 20) {
 }
 
 export const fallbackInfra: InfraMetric[] = [
-  { metric: "cpu", values: wave(18, 8), current: 18 },
-  { metric: "memory", values: wave(42, 10), current: 42 },
-  { metric: "network", values: wave(28, 9), current: 28 },
-  { metric: "requests", values: wave(55, 15), current: 55 },
+  { metric: "cpu", values: [], current: null, unit: "%", source: "Instans Go", note: "Menunggu metrik CPU dari API" },
+  { metric: "memory", values: [], current: null, unit: "MiB", source: "Instans Go", note: "Menunggu metrik memori dari API" },
+  { metric: "network", values: [], current: null, unit: "MiB", source: "Cloudflare · zona", note: "Menunggu analitik Cloudflare" },
+  { metric: "requests", values: [], current: null, unit: "req", source: "Cloudflare · zona", note: "Menunggu analitik Cloudflare" },
 ];
 
 // Empty on purpose: unlike the dashboard's demo fallbacks above, there's no

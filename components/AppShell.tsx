@@ -23,14 +23,13 @@ export default function AppShell({
       <Sidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        onToggle={() => setSidebarExpanded((current) => !current)}
         expanded={sidebarExpanded}
       />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header
           onMenuClick={() => setSidebarOpen(true)}
-          onSidebarToggle={() => setSidebarExpanded((current) => !current)}
-          sidebarExpanded={sidebarExpanded}
           isOffline={isOffline}
           title={title}
           subtitle={subtitle}

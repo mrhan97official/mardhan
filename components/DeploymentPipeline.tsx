@@ -43,20 +43,20 @@ function utcMillis(value: string): number | null {
 }
 
 function stageTime(stage: PipelineStage, job: DeploymentJob, now: number | null): string {
-  if (stage.status === "Pending") return "00:00";
+  if (stage.status === "Pending") return "0m 0s";
   const started = stage.started_at
     ? stage.started_at * 1000
     : stage.position === 1 ? utcMillis(job.created_at) : null;
-  if (started === null) return "--:--";
+  if (started === null) return "—";
 
   const finished = stage.finished_at
     ? stage.finished_at * 1000
     : stage.status === "Running" && job.status === "Running" ? now
     : stage.status === "Running" && job.status === "Interrupted" ? utcMillis(job.updated_at)
     : null;
-  if (finished === null) return "--:--";
+  if (finished === null) return "—";
   const elapsed = Math.max(0, Math.floor((finished - started) / 1000));
-  return `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+  return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
 }
 
 function JobStages({ stages, job, inactive = false, now }: {
@@ -77,7 +77,7 @@ function JobStages({ stages, job, inactive = false, now }: {
             <div className="min-w-0 sm:mt-2">
               <p className="text-xs font-semibold text-slate-100">{stage.stage}</p>
               <time aria-live="off" className={`mt-1 block font-mono text-xs tabular-nums ${status === "Failed" ? "text-red-400" : status === "Interrupted" ? "text-amber-400" : status === "Running" ? "text-purple-400" : "text-slate-500"}`}>
-                {job ? stageTime(stage, job, now) : "00:00"}
+                {job ? stageTime(stage, job, now) : "0m 0s"}
               </time>
             </div>
           </div>

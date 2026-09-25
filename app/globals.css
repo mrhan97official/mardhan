@@ -74,6 +74,13 @@ body:has(.app-shell) {
   }
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .sidebar-brand-control:hover .sidebar-brand-face,
+  .sidebar-brand-control:focus-visible .sidebar-brand-face { opacity: 0; }
+  .sidebar-brand-control:hover .sidebar-brand-toggle,
+  .sidebar-brand-control:focus-visible .sidebar-brand-toggle { opacity: 1; }
+}
+
 :focus-visible {
   outline: 2px solid #3b82f6;
   outline-offset: 2px;

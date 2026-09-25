@@ -3,10 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useBranding } from "@/components/BrandingProvider";
+import SidebarLogo from "@/components/SidebarLogo";
 import {
   Boxes,
-  Cloud,
   Cpu,
   Database,
   FolderKanban,
@@ -38,14 +37,15 @@ const NAV_ITEMS = [
 export default function Sidebar({
   open,
   onClose,
+  onToggle,
   expanded,
 }: {
   open: boolean;
   onClose: () => void;
+  onToggle: () => void;
   expanded: boolean;
 }) {
   const pathname = usePathname();
-  const { version } = useBranding();
   const [touchLabel, setTouchLabel] = useState<string | null>(null);
   const labelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -77,9 +77,11 @@ export default function Sidebar({
           }`}
         >
           <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent-blue/15 text-accent-blue">
-              {version ? <img src={`/api/branding/icon?size=192&v=${version}`} alt="" className="h-full w-full rounded-xl object-contain" /> : <Cloud size={20} />}
-            </div>
+            <SidebarLogo
+              expanded={open || expanded}
+              onClick={open ? onClose : onToggle}
+              label={open ? "Tutup menu" : expanded ? "Ciutkan sidebar" : "Tampilkan sidebar"}
+            />
             <div className={`leading-tight ${expanded ? "md:block" : "md:hidden"}`}>
               <p className="text-[13px] font-semibold tracking-wide text-slate-400">DEV</p>
               <p className="text-sm font-bold text-white -mt-0.5">CONTROL</p>
@@ -140,14 +142,14 @@ export default function Sidebar({
             <span className={expanded ? "md:inline" : "md:hidden"}>Panel Admin</span>
           </div>
           <p className={`mt-1 items-center gap-1 text-xs text-slate-500 ${expanded ? "flex" : "flex md:hidden"}`}>
-            <Cpu size={12} /> v1.0.26
+            <Cpu size={12} /> v1.0.27
           </p>
           {!expanded && (
             <span
               aria-hidden="true"
               className="nav-tooltip pointer-events-none invisible absolute left-full top-1/2 z-[60] ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-semibold text-slate-100 opacity-0 shadow-xl transition-opacity before:absolute before:left-0 before:top-1/2 before:h-2 before:w-2 before:-translate-x-1/2 before:-translate-y-1/2 before:rotate-45 before:border-b before:border-l before:border-base-border before:bg-base-800 md:block"
             >
-              Panel Admin · v1.0.26
+              Panel Admin · v1.0.27
             </span>
           )}
         </div>

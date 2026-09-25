@@ -2,29 +2,22 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import SidebarLogo from "@/components/SidebarLogo";
 import {
   Bell,
   ChevronDown,
   LogOut,
-  Menu,
-  PanelLeftClose,
-  PanelLeftOpen,
   Search,
   Settings,
-  WifiOff,
 } from "lucide-react";
 
 export default function Header({
   onMenuClick,
-  onSidebarToggle,
-  sidebarExpanded,
   isOffline,
   title = "Overview",
   subtitle = "Infrastructure & deployment workspace",
 }: {
   onMenuClick: () => void;
-  onSidebarToggle: () => void;
-  sidebarExpanded: boolean;
   isOffline: boolean;
   title?: string;
   subtitle?: string;
@@ -67,23 +60,9 @@ export default function Header({
     <header className="app-header relative z-30 shrink-0 bg-base-950/85 backdrop-blur">
       <div className="border-y border-base-border px-4 py-3 sm:px-6">
         <div className="flex items-center gap-3">
-        <button
-          aria-label="Buka menu"
-          onClick={onMenuClick}
-          className="rounded-lg p-2 text-slate-300 hover:bg-base-800 md:hidden"
-        >
-          <Menu size={20} />
-        </button>
-
-        <button
-          type="button"
-          aria-label={sidebarExpanded ? "Ciutkan sidebar" : "Tampilkan sidebar"}
-          title={sidebarExpanded ? "Ciutkan sidebar" : "Tampilkan sidebar"}
-          onClick={onSidebarToggle}
-          className="hidden rounded-lg p-2 text-slate-300 hover:bg-base-800 md:inline-flex"
-        >
-          {sidebarExpanded ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
-        </button>
+        <div className="md:hidden">
+          <SidebarLogo expanded={false} onClick={onMenuClick} label="Buka menu" />
+        </div>
 
         <div className="hidden sm:block">
           <h1 className="text-xl font-bold text-white md:text-base xl:text-xl">{title}</h1>
@@ -103,25 +82,6 @@ export default function Header({
             />
           </div>
 
-          <button className="hidden items-center gap-2 rounded-xl border border-base-border bg-base-850 px-3 py-2 text-sm text-slate-300 hover:bg-base-800 md:flex md:px-2 md:text-xs xl:px-3 xl:text-sm">
-            <span className="xl:hidden">Prod</span><span className="hidden xl:inline">Production Workspace</span>
-            <ChevronDown size={14} />
-          </button>
-
-          <div className="hidden items-center gap-1.5 rounded-xl border border-base-border bg-base-850 px-3 py-2 text-sm md:flex md:px-2 md:text-xs xl:px-3 xl:text-sm">
-            {isOffline ? (
-              <>
-                <WifiOff size={14} className="text-amber-400" />
-                <span className="font-medium text-amber-400">Offline</span>
-              </>
-            ) : (
-              <>
-                <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                <span className="font-medium text-emerald-400">Online</span>
-              </>
-            )}
-          </div>
-
           <button
             aria-label="Notifikasi"
             className="relative p-2.5 text-slate-300 transition-colors hover:text-white"
@@ -135,13 +95,16 @@ export default function Header({
           }}>
             <button
               type="button"
-              aria-label="Profil Admin"
+              aria-label={`Profil Admin, ${isOffline ? "offline" : "online"}`}
               aria-expanded={profileOpen}
               aria-haspopup="menu"
               onClick={() => { setProfileError(""); setProfileOpen((open) => !open); }}
               className="flex items-center gap-2 px-1 py-1 text-slate-200 transition-colors hover:text-white"
             >
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-blue/20 text-xs font-semibold text-accent-blue">A</span>
+              <span className="relative flex h-7 w-7 items-center justify-center rounded-full bg-accent-blue/20 text-xs font-semibold text-accent-blue">
+                A
+                <span aria-hidden="true" title={isOffline ? "Offline" : "Online"} className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-base-950 ${isOffline ? "bg-amber-400" : "bg-emerald-400"}`} />
+              </span>
               <span className="hidden text-sm font-medium sm:inline md:hidden xl:inline">Admin</span>
               <ChevronDown size={14} className={`transition-transform ${profileOpen ? "rotate-180" : ""}`} />
             </button>

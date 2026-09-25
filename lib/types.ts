@@ -82,7 +82,10 @@ export interface ApiPerformance {
 export interface InfraMetric {
   metric: "cpu" | "memory" | "network" | "requests";
   values: number[];
-  current: number;
+  current: number | null;
+  unit: string;
+  source: string;
+  note: string;
 }
 
 export interface GithubRepo {
