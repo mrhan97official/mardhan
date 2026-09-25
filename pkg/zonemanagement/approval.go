@@ -18,6 +18,7 @@ import (
 	"devcontrol/pkg/auth"
 	"devcontrol/pkg/d1"
 	"devcontrol/pkg/setup"
+	"devcontrol/pkg/trafficmetrics"
 	"devcontrol/pkg/util"
 )
 
@@ -184,10 +185,21 @@ func Handle(w http.ResponseWriter, r *http.Request, verify func(context.Context,
 	cfToken, accountID := strings.TrimSpace(os.Getenv("CF_API_TOKEN")), strings.TrimSpace(os.Getenv("CF_ACCOUNT_ID"))
 	if cfToken == "" || accountID == "" { util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("CF_API_TOKEN dan CF_ACCOUNT_ID diperlukan")); return }
 	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("D1 belum siap: %w", err)); return }
+	var input struct { ZoneID string `json:"zone_id"`; Action string `json:"action"` }
+	if r.Method == http.MethodPost {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil { util.Error(w, http.StatusBadRequest, fmt.Errorf("pilihan monitoring tidak valid")); return }
+		if input.Action != "auto" && (input.Action != "" || input.ZoneID == "") {
+			util.Error(w, http.StatusBadRequest, fmt.Errorf("pilihan monitoring tidak valid")); return
+		}
+	}
 	current, err := currentApproval()
 	if err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("gagal membaca persetujuan zona: %w", err)); return }
-	zones, err := cloudflareZones(r.Context(), cfToken, accountID)
-	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	mode, err := trafficmetrics.Mode()
+	if err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("gagal membaca mode monitoring: %w", err)); return }
+	zones, zoneErr := cloudflareZones(r.Context(), cfToken, accountID)
+	if zones == nil { zones = []zone{} }
 	vercelToken := strings.TrimSpace(os.Getenv("VERCEL_TOKEN"))
 	var p project
 	var projectError string
@@ -202,30 +214,48 @@ func Handle(w http.ResponseWriter, r *http.Request, verify func(context.Context,
 		return zones[i].Name < zones[j].Name
 	})
 	if r.Method == http.MethodGet {
+		zoneError := ""
+		if zoneErr != nil { zoneError = zoneErr.Error() }
 		util.JSON(w, http.StatusOK, map[string]interface{}{
-			"zones": zones, "approved": current,
+			"zones": zones, "approved": current, "mode": mode, "zone_error": zoneError,
 			"active_zone_id": func() string { if current != nil { return current.ZoneID }; return strings.TrimSpace(os.Getenv("CF_ZONE_ID")) }(),
 			"project": map[string]string{"id": p.ID, "name": p.Name, "domain": host},
 			"project_error": projectError,
 		})
 		return
 	}
-	if projectError != "" { util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("%s", projectError)); return }
-	var input struct { ZoneID string `json:"zone_id"` }
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil { util.Error(w, http.StatusBadRequest, fmt.Errorf("pilihan zona tidak valid")); return }
 	var selected zone
-	for _, item := range zones { if item.ID == input.ZoneID { selected = item; break } }
-	if selected.ID == "" { util.Error(w, http.StatusBadRequest, fmt.Errorf("zona tidak terdaftar di akun Cloudflare ini; segarkan pilihan")); return }
-	if _, _, err := verify(r.Context(), selected.ID, cfToken); err != nil {
-		util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("analitik zona %s tidak dapat dibaca; periksa izin Account Analytics Read (%w)", selected.Name, err)); return
+	if input.Action == "auto" {
+		matches := make([]zone, 0, 1)
+		if zoneErr == nil && projectError == "" {
+			for _, item := range zones { if domainMatches(host, item.Name) { matches = append(matches, item) } }
+		}
+		if len(matches) == 1 {
+			if _, _, verifyErr := verify(r.Context(), matches[0].ID, cfToken); verifyErr == nil { selected = matches[0] }
+		}
+		if selected.ID == "" {
+			if err := trafficmetrics.Enable("api"); err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("gagal mengaktifkan monitoring API di D1: %w", err)); return }
+			util.JSON(w, http.StatusOK, map[string]interface{}{
+				"mode": "api", "approved": current,
+				"message": "Monitoring API DevControl aktif. Network menghitung byte respons Go API; Requests menghitung permintaan Go API. Halaman dan aset CDN Vercel tidak termasuk.",
+			})
+			return
+		}
+	} else {
+		if zoneErr != nil { util.Error(w, http.StatusBadGateway, zoneErr); return }
+		if projectError != "" { util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("%s", projectError)); return }
+		for _, item := range zones { if item.ID == input.ZoneID { selected = item; break } }
+		if selected.ID == "" { util.Error(w, http.StatusBadRequest, fmt.Errorf("zona tidak terdaftar di akun Cloudflare ini; segarkan pilihan")); return }
+		if _, _, err := verify(r.Context(), selected.ID, cfToken); err != nil {
+			util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("analitik zona %s tidak dapat dibaca; periksa izin Account Analytics Read (%w)", selected.Name, err)); return
+		}
 	}
 	_, err = d1.Query(`INSERT INTO cloudflare_zone_approval (id, zone_id, zone_name, project_id, vercel_synced, approved_at)
 		VALUES (1, ?, ?, ?, 0, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET zone_id = excluded.zone_id, zone_name = excluded.zone_name,
 		project_id = excluded.project_id, vercel_synced = 0, approved_at = CURRENT_TIMESTAMP`, selected.ID, selected.Name, p.ID)
 	if err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("gagal menyimpan persetujuan ke D1: %w", err)); return }
+	if err := trafficmetrics.Enable("cloudflare"); err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("zona tersimpan, tetapi gagal mengaktifkan monitoring: %w; coba lagi", err)); return }
 	result := &approval{ZoneID: selected.ID, ZoneName: selected.Name, ProjectID: p.ID}
 	message := "Zona disetujui dan metrik langsung aktif."
 	if err := saveVercelZone(r.Context(), vercelToken, p.ID, selected.ID); err != nil {
@@ -236,7 +266,7 @@ func Handle(w http.ResponseWriter, r *http.Request, verify func(context.Context,
 		result.VercelSynced = true
 		message += " CF_ZONE_ID juga tersimpan untuk deployment berikutnya di Vercel."
 	}
-	util.JSON(w, http.StatusOK, map[string]interface{}{"approved": result, "message": message})
+	util.JSON(w, http.StatusOK, map[string]interface{}{"mode": "cloudflare", "approved": result, "message": message})
 }
 
 func saveVercelZone(ctx context.Context, token, projectID, zoneID string) error {

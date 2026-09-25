@@ -105,6 +105,19 @@ CREATE TABLE IF NOT EXISTS cloudflare_zone_approval (
   approved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- One-click monitoring chooses Cloudflare when available or measures this
+-- application's Go API traffic when no owned Cloudflare zone exists.
+CREATE TABLE IF NOT EXISTS traffic_monitoring (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  mode TEXT NOT NULL CHECK (mode IN ('cloudflare', 'api')),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS api_traffic_hourly (
+  bucket TEXT PRIMARY KEY,
+  requests INTEGER NOT NULL DEFAULT 0,
+  response_bytes INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_infra_metrics_metric_time ON infra_metrics (metric, recorded_at);
 CREATE INDEX IF NOT EXISTS idx_live_logs_created_at ON live_logs (created_at);
 CREATE INDEX IF NOT EXISTS idx_activity_created_at ON activity_log (created_at);

@@ -52,6 +52,7 @@ import (
 	"devcontrol/pkg/environmentstatus"
 	"devcontrol/pkg/projectdelete"
 	"devcontrol/pkg/projectthumbnail"
+	"devcontrol/pkg/trafficmetrics"
 	"devcontrol/pkg/zonemanagement"
 	"devcontrol/pkg/auth"
 	"devcontrol/pkg/d1"
@@ -78,6 +79,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		if !auth.Configured() { util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("isi DEVCONTROL_ADMIN_PASSWORD dan DEVCONTROL_SESSION_SECRET di Vercel untuk mengaktifkan panel admin")); return }
 		if !auth.Allowed(r, resource) { util.Error(w, http.StatusUnauthorized, fmt.Errorf("login admin atau API key dengan hak baca diperlukan")); return }
 	}
+	// Record only traffic handled by this authenticated Go API. CDN pages,
+	// images and static files do not pass through this function.
+	meter := &trafficmetrics.CountingWriter{ResponseWriter: w}
+	w = meter
+	defer func() { trafficmetrics.Record(resource, meter.BytesWritten) }()
 
 	switch resource {
 	case "overview":
@@ -420,16 +426,43 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	series = append(series, infraSeries{Metric: "memory", Values: []float64{}, Current: &heapMiB, Unit: "MiB", Source: "Instans Go", Note: "Heap Go saat ini pada instans yang melayani permintaan"})
 
 	zoneID, token := strings.TrimSpace(os.Getenv("CF_ZONE_ID")), strings.TrimSpace(os.Getenv("CF_API_TOKEN"))
+	mode, _ := trafficmetrics.Mode()
 	// An admin-approved zone is immediately active, even on a running Vercel
 	// deployment whose environment snapshot predates the approval.
-	if approved, err := zonemanagement.ApprovedZone(); err == nil && approved != "" { zoneID = approved }
+	if mode != "api" {
+		if approved, err := zonemanagement.ApprovedZone(); err == nil && approved != "" { zoneID = approved }
+	}
 	network := infraSeries{Metric: "network", Values: []float64{}, Unit: "MiB", Source: "Cloudflare · zona", Note: "Pilih dan setujui zona Cloudflare di Pengaturan; token perlu izin Account Analytics Read"}
 	requests := infraSeries{Metric: "requests", Values: []float64{}, Unit: "req", Source: "Cloudflare · zona", Note: network.Note}
-	if zoneID != "" && token != "" {
+	if mode == "api" {
+		network, requests = apiTrafficSeries()
+	} else if zoneID != "" && token != "" {
 		network, requests = cachedCloudflareTraffic(r.Context(), zoneID, token)
 	}
 	series = append(series, network, requests)
 	util.JSON(w, http.StatusOK, series)
+}
+
+func apiTrafficSeries() (infraSeries, infraSeries) {
+	note := "Respons dan request yang ditangani Go API DevControl; tidak termasuk halaman atau aset CDN Vercel. Data per jam."
+	network := infraSeries{Metric: "network", Values: []float64{}, Unit: "MiB", Source: "DevControl · API", Note: note}
+	requests := infraSeries{Metric: "requests", Values: []float64{}, Unit: "req", Source: "DevControl · API", Note: note}
+	bytesByHour, countByHour, err := trafficmetrics.Series()
+	if err != nil {
+		network.Note = "Pengukuran API belum tersedia; periksa koneksi D1."
+		requests.Note = network.Note
+		return network, requests
+	}
+	bytesTotal, countTotal := 0.0, 0.0
+	for i, count := range bytesByHour {
+		bytesTotal += count
+		countTotal += countByHour[i]
+		bytesByHour[i] = math.Round(count/1024/1024*10000) / 10000
+	}
+	bandwidth := math.Round(bytesTotal/1024/1024*1000) / 1000
+	network.Current, network.Values = &bandwidth, bytesByHour
+	requests.Current, requests.Values = &countTotal, countByHour
+	return network, requests
 }
 
 func cachedCloudflareTraffic(ctx context.Context, zoneID, token string) (infraSeries, infraSeries) {

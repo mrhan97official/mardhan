@@ -17,7 +17,7 @@ const META: Record<
 function formatValue(metric: InfraMetric) {
   if (typeof metric.current !== "number" || !Number.isFinite(metric.current)) return "—";
   const amount = new Intl.NumberFormat("id-ID", {
-    maximumFractionDigits: metric.metric === "requests" ? 0 : 1,
+    maximumFractionDigits: metric.metric === "requests" ? 0 : metric.source === "DevControl · API" ? 3 : 1,
     ...(metric.metric === "requests" && metric.current >= 10_000 ? { notation: "compact" as const } : {}),
   }).format(metric.current);
   return `${amount}${metric.unit === "%" ? "%" : ` ${metric.unit}`}`;
@@ -28,7 +28,7 @@ export default function InfraHealth({ metrics }: { metrics: InfraMetric[] }) {
     <div className="card min-w-0 p-4 md:p-3 xl:p-6">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-base font-bold text-white sm:text-lg">Infrastructure Health</h2>
-        <span className="text-right text-[10px] text-slate-500">Go · Cloudflare</span>
+        <span className="text-right text-[10px] text-slate-500">Go · {metrics.some((m) => m.source === "DevControl · API") ? "API" : "Cloudflare"}</span>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4 md:gap-1 xl:gap-4">
@@ -40,7 +40,7 @@ export default function InfraHealth({ metrics }: { metrics: InfraMetric[] }) {
               <div className="flex items-center justify-between gap-1 md:flex-wrap xl:flex-nowrap">
                 <span className="flex min-w-0 items-center gap-1 text-sm font-medium text-slate-300 md:text-[10px] xl:text-sm">
                   <span style={{ color: meta.color }}>{meta.icon}</span>
-                  {meta.label}
+                  {m.source === "DevControl · API" && m.metric === "network" ? "API Network" : m.source === "DevControl · API" && m.metric === "requests" ? "API Requests" : meta.label}
                 </span>
                 <span className="min-w-0 text-right text-sm font-bold tabular-nums text-white md:text-[10px] xl:text-sm">
                   {formatValue(m)}
