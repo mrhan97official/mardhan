@@ -52,7 +52,7 @@ export default function OverviewPage() {
         <EnvironmentStatus environments={environments.data} loading={environments.loading} error={environments.error} updatedAt={environments.updatedAt} viewAll />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] md:gap-3 xl:gap-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,2.3fr)_minmax(0,1fr)] md:gap-3 xl:gap-6">
         <InfraHealth metrics={infra.data} />
         <ApiPerformancePanel perf={perf.data} />
       </div>
