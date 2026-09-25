@@ -66,7 +66,7 @@ function JobStages({ stages, job, inactive = false, now }: {
   now: number | null;
 }) {
   return (
-    <div className={`grid grid-cols-2 gap-4 sm:grid-cols-4 ${inactive ? "opacity-60" : "mt-4"}`}>
+    <div className={`grid grid-cols-2 gap-4 sm:grid-cols-4 ${inactive ? "opacity-60" : "mt-3"}`}>
       {stages.map((stage) => {
         const status: StageStatus = job?.status === "Interrupted" && stage.status === "Running" ? "Interrupted" : stage.status;
         return (
@@ -133,14 +133,14 @@ export default function DeploymentPipeline({
           {onDeployed && <button type="button" onClick={onDeployed} className="ml-2 font-semibold text-accent-blue hover:underline">Coba lagi</button>}
         </div>
       )}
-      <div className="mt-4 space-y-3">
+      <div className="mt-3 space-y-2.5">
         {visibleJobs.length === 0 && (
-          <section className="flex min-h-[clamp(112px,8rem,132px)] flex-col justify-center rounded-xl border border-base-border bg-base-900 p-3" aria-label="Tahapan deployment">
+          <section className="flex min-h-[clamp(96px,7rem,116px)] flex-col justify-center rounded-xl border border-base-border bg-base-900 p-2.5" aria-label="Tahapan deployment">
             <JobStages stages={fallbackPipeline} inactive now={now} />
           </section>
         )}
         {visibleJobs.map((job) => (
-          <section key={job.id} className="min-h-[clamp(112px,8rem,132px)] rounded-xl border border-base-border bg-base-900 p-3" aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
+          <section key={job.id} className="min-h-[clamp(96px,7rem,116px)] rounded-xl border border-base-border bg-base-900 p-2.5" aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-100">{KIND_TEXT[job.kind]} · <span className="break-all">{job.target}</span></p>
