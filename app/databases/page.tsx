@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Database, RefreshCw, ShieldCheck } from "lucide-react";
 import AppShell from "@/components/AppShell";
+import D1DataBrowser from "@/components/D1DataBrowser";
 
 interface TableInfo {
   name: string;
@@ -57,7 +58,7 @@ export default function DatabasesPage() {
 
   const missing = status?.d1.tables.filter((table) => !table.exists || table.missing.length || table.mismatched.length) || [];
   return (
-    <AppShell title="Databases" subtitle="Pemeriksaan skema D1 dan penyimpanan R2">
+    <AppShell title="Databases" subtitle="Data tabel D1, pemeriksaan skema, dan penyimpanan R2">
       <section className="card space-y-4 p-4 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div><h2 className="flex items-center gap-2 text-lg font-bold"><Database size={19} /> Kesiapan penyimpanan</h2>
@@ -83,6 +84,7 @@ export default function DatabasesPage() {
           </div>
         </div>}
       </section>
+      {status?.d1.connected && <D1DataBrowser />}
       {status && <section className="card p-4 sm:p-6">
         <h2 className="flex items-center gap-2 text-base font-semibold"><ShieldCheck size={18} /> Tabel aplikasi</h2>
         <p className="mt-1 text-xs text-slate-400">Kolom tambahan pada database lama ditampilkan, tidak dihapus. Perubahan akan ditinjau sebelum tombol penyiapan dijalankan.</p>

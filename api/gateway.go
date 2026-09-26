@@ -59,6 +59,7 @@ import (
 	"devcontrol/pkg/zonemanagement"
 	"devcontrol/pkg/auth"
 	"devcontrol/pkg/d1"
+	"devcontrol/pkg/databrowser"
 	"devcontrol/pkg/deploymentrunner"
 	"devcontrol/pkg/diagnose"
 	"devcontrol/pkg/setup"
@@ -575,6 +576,8 @@ func handlePerformance(w http.ResponseWriter, r *http.Request) {
 // Database setup runs only on an admin action or before the first ZIP stage.
 func handleDatabases(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	// Read-only table browser: ?view=tables and ?table=<name>.
+	if databrowser.Handle(w, r) { return }
 	if r.Method == http.MethodGet {
 		status, err := setup.Inspect()
 		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
