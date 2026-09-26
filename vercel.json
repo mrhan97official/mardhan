@@ -24,6 +24,7 @@
     { "source": "/api/github-repos", "destination": "/api/gateway?resource=github-repos" },
     { "source": "/api/project", "destination": "/api/gateway?resource=project" },
     { "source": "/api/project-thumbnails", "destination": "/api/gateway?resource=project-thumbnails" },
+    { "source": "/api/app-promo", "destination": "/api/gateway?resource=app-promo" },
     { "source": "/api/github-branches", "destination": "/api/gateway?resource=github-branches" },
     { "source": "/api/zip-archives", "destination": "/api/gateway?resource=zip-archives" }
   ],

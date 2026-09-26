@@ -154,7 +154,7 @@ export default function ProjectsPage() {
       subtitle="Repository GitHub yang dapat diakses dan aplikasi yang tersimpan"
       isOffline={repos.isOffline || services.isOffline}
     >
-      <AppsPromoBanner />
+      <AppsPromoBanner apps={apps} />
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-400">

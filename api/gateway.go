@@ -124,6 +124,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		projectdelete.Handle(w, r, vercelAppProjectName)
 	case "project-thumbnails":
 		projectthumbnail.Handle(w, r)
+	case "app-promo":
+		handleAppPromo(w, r)
 	case "branding":
 		branding.Handle(w, r)
 	case "github-branches":
@@ -1410,6 +1412,101 @@ type githubRepo struct {
 	PushedAt      string `json:"pushed_at"`
 	Stars         int    `json:"stargazers_count"`
 	OpenIssues    int    `json:"open_issues_count"`
+}
+
+const promoImagePrefix = "__devcontrol__/banner-"
+
+func validPromoImageRepo(repo string) bool {
+	if !strings.HasPrefix(repo, promoImagePrefix) { return false }
+	id := strings.TrimPrefix(repo, promoImagePrefix)
+	return len(id) == 32 && strings.Trim(id, "0123456789abcdef") == ""
+}
+
+func validPromoTarget(repo string) bool {
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 { return false }
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || len(part) > 100 { return false }
+		for _, ch := range part {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+				(ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.') { return false }
+		}
+	}
+	return true
+}
+
+// Banner text is stored in D1. Its image uses a separate verified R2 upload
+// slot for each replacement, so a failed save cannot remove the live image.
+func handleAppPromo(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	if !auth.IsAdmin(r) { util.Error(w, http.StatusForbidden, fmt.Errorf("sesi admin diperlukan")); return }
+	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+
+	switch r.Method {
+	case http.MethodGet:
+		rows, err := d1.Query(`SELECT target_repo AS repo, title, description, image_repo, version
+			FROM app_promo_banner WHERE id = 1 LIMIT 1`)
+		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		if len(rows) == 0 { util.JSON(w, http.StatusOK, nil); return }
+		util.JSON(w, http.StatusOK, rows[0])
+	case http.MethodPost:
+		var input struct {
+			Repo string `json:"repo"`
+			Title string `json:"title"`
+			Description string `json:"description"`
+			ImageRepo string `json:"image_repo"`
+			Version string `json:"version"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&input); err != nil {
+			util.Error(w, http.StatusBadRequest, fmt.Errorf("data banner tidak valid")); return
+		}
+		input.Repo = strings.TrimSpace(input.Repo)
+		input.Title = strings.TrimSpace(input.Title)
+		input.Description = strings.TrimSpace(input.Description)
+		if !validPromoTarget(input.Repo) || input.Title == "" || utf8.RuneCountInString(input.Title) > 80 ||
+			utf8.RuneCountInString(input.Description) > 220 || !validPromoImageRepo(input.ImageRepo) ||
+			len(input.Version) != 32 || strings.Trim(input.Version, "0123456789abcdef") != "" {
+			util.Error(w, http.StatusBadRequest, fmt.Errorf("pilih aplikasi, isi judul maksimal 80 karakter, deskripsi maksimal 220 karakter, dan unggah gambar banner")); return
+		}
+		images, err := d1.Query(`SELECT version FROM project_thumbnails WHERE repo = ? LIMIT 1`, input.ImageRepo)
+		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		if len(images) != 1 || images[0]["version"] != input.Version {
+			util.Error(w, http.StatusBadRequest, fmt.Errorf("gambar banner belum selesai diunggah")); return
+		}
+		previous, err := d1.Query(`SELECT image_repo FROM app_promo_banner WHERE id = 1 LIMIT 1`)
+		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		if _, err := d1.Query(`INSERT INTO app_promo_banner (id, target_repo, title, description, image_repo, version)
+			VALUES (1, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+			target_repo = excluded.target_repo, title = excluded.title,
+			description = excluded.description, image_repo = excluded.image_repo,
+			version = excluded.version, updated_at = CURRENT_TIMESTAMP`,
+			input.Repo, input.Title, input.Description, input.ImageRepo, input.Version); err != nil {
+			util.Error(w, http.StatusBadGateway, err); return
+		}
+		if len(previous) == 1 {
+			old, _ := previous[0]["image_repo"].(string)
+			if validPromoImageRepo(old) && old != input.ImageRepo {
+				if store, storeErr := archive.New(); storeErr == nil { _ = projectthumbnail.Delete(old, store) }
+			}
+		}
+		util.JSON(w, http.StatusOK, map[string]bool{"saved": true})
+	case http.MethodDelete:
+		rows, err := d1.Query(`SELECT image_repo FROM app_promo_banner WHERE id = 1 LIMIT 1`)
+		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		if len(rows) == 1 {
+			imageRepo, _ := rows[0]["image_repo"].(string)
+			if !validPromoImageRepo(imageRepo) { util.Error(w, http.StatusBadGateway, fmt.Errorf("gambar banner tersimpan tidak valid")); return }
+			store, storeErr := archive.New()
+			if storeErr != nil { util.Error(w, http.StatusPreconditionFailed, storeErr); return }
+			if err := projectthumbnail.Delete(imageRepo, store); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		}
+		if _, err := d1.Query(`DELETE FROM app_promo_banner WHERE id = 1`); err != nil {
+			util.Error(w, http.StatusBadGateway, err); return
+		}
+		util.JSON(w, http.StatusOK, map[string]bool{"deleted": true})
+	default:
+		util.Error(w, http.StatusMethodNotAllowed, fmt.Errorf("gunakan GET, POST, atau DELETE"))
+	}
 }
 
 // GET /api/github-repos -> repos the configured GITHUB_TOKEN can see, so the

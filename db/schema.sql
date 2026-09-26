@@ -182,6 +182,18 @@ CREATE TABLE IF NOT EXISTS project_thumbnail_objects (
 );
 CREATE INDEX IF NOT EXISTS idx_project_thumbnail_objects_repo ON project_thumbnail_objects (repo);
 
+-- One featured application promotion; its compressed banner image lives in
+-- R2 through the same verified upload flow as project thumbnails.
+CREATE TABLE IF NOT EXISTS app_promo_banner (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  target_repo TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  image_repo TEXT NOT NULL,
+  version TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- The current application logo is rendered into PWA icon sizes and stored in
 -- private R2. A missing row means the original checked-in icon is displayed.
 CREATE TABLE IF NOT EXISTS app_branding (
