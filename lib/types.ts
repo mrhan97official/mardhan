@@ -39,6 +39,21 @@ export interface DeploymentJob {
   created_at: string;
   updated_at: string;
   message?: string;
+  diagnosis?: Diagnosis;
+}
+
+export interface Diagnosis {
+  stage: string;
+  category: string;
+  summary: string;
+  location?: { file: string; line?: number; column?: number };
+  cause: string;
+  fixes: string[];
+  snippet?: string;
+  log_excerpt?: string;
+  stack?: string;
+  retryable: boolean;
+  prompt: string;
 }
 
 export interface Service {

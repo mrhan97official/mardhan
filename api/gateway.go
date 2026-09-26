@@ -60,6 +60,7 @@ import (
 	"devcontrol/pkg/auth"
 	"devcontrol/pkg/d1"
 	"devcontrol/pkg/deploymentrunner"
+	"devcontrol/pkg/diagnose"
 	"devcontrol/pkg/setup"
 	"devcontrol/pkg/util"
 )
@@ -137,6 +138,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		handleGithubBranches(w, r)
 	case "zip-archives":
 		handleZipArchives(w, r)
+	case "diagnose":
+		handleDiagnose(w, r)
 	case "databases":
 		handleDatabases(w, r)
 	case "api-management":
@@ -168,9 +171,8 @@ func handleOverview(w http.ResponseWriter, r *http.Request) {
 		live, err := d1.Query(`
 			SELECT
 			  (SELECT COUNT(*) FROM services WHERE status <> 'Down') AS active_projects,
-			  (SELECT COUNT(*) FROM zip_archives
-			   WHERE source = 'upload' AND status IN ('current', 'previous')
-			     AND date(created_at) = date('now')) AS deployments_today,
+			  (SELECT COUNT(*) FROM deployment_jobs
+			   WHERE status = 'Success' AND date(created_at) = date('now')) AS deployments_today,
 			  (SELECT COALESCE(ROUND(AVG(uptime), 2), 0) FROM services) AS uptime,
 			  (SELECT COUNT(*) FROM services WHERE status IN ('Degraded', 'Down')) AS open_incidents
 		`)
@@ -214,6 +216,7 @@ type deploymentJob struct {
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 	Message string `json:"message,omitempty"`
+	Diagnosis json.RawMessage `json:"diagnosis,omitempty"`
 }
 
 // Each deployment owns its pipeline and a lease on its repo. The Cloudflare
@@ -228,8 +231,9 @@ func expireDeploymentJobs() error {
 // from D1 on the next read or deployment. Active jobs are never pruned.
 func pruneDeploymentJobs() error {
     if err := expireDeploymentJobs(); err != nil { return err }
-    _, err := d1.Query(`DELETE FROM deployment_jobs WHERE status IN ('Success', 'Failed', 'Interrupted')
-        AND updated_at <= datetime('now', '-30 minutes')`)
+    // Failed runs stay 24 hours so their error diagnosis can still be copied.
+    _, err := d1.Query(`DELETE FROM deployment_jobs WHERE (status = 'Success' AND updated_at <= datetime('now', '-30 minutes'))
+        OR (status IN ('Failed', 'Interrupted') AND updated_at <= datetime('now', '-24 hours'))`)
     if err != nil { return err }
     _, err = d1.Query(`DELETE FROM deployment_runner WHERE id NOT IN (SELECT id FROM deployment_jobs)`)
     return err
@@ -238,9 +242,10 @@ func pruneDeploymentJobs() error {
 // GET /api/deployments -> independent recent pipelines.
 func handleDeployments(w http.ResponseWriter, r *http.Request) {
 	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	sweepArchives()
 	if err := pruneDeploymentJobs(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	rows, err := d1.Query(`SELECT j.id, j.kind, j.target, j.status, j.stages, j.created_at, j.updated_at,
-		COALESCE(r.message, '') AS message FROM deployment_jobs j
+		COALESCE(r.message, '') AS message, j.diagnosis FROM deployment_jobs j
 		LEFT JOIN deployment_runner r ON r.id = j.id ORDER BY j.created_at DESC, j.rowid DESC LIMIT 30`)
 	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	jobs := make([]deploymentJob, 0, len(rows))
@@ -250,8 +255,10 @@ func handleDeployments(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal([]byte(value("stages")), &stages); err != nil {
 			util.Error(w, http.StatusBadGateway, fmt.Errorf("status pipeline tidak valid: %w", err)); return
 		}
-		jobs = append(jobs, deploymentJob{ID: value("id"), Kind: value("kind"), Target: value("target"),
-			Status: value("status"), Stages: stages, CreatedAt: value("created_at"), UpdatedAt: value("updated_at"), Message: value("message")})
+		job := deploymentJob{ID: value("id"), Kind: value("kind"), Target: value("target"),
+			Status: value("status"), Stages: stages, CreatedAt: value("created_at"), UpdatedAt: value("updated_at"), Message: value("message")}
+		if raw := value("diagnosis"); raw != "" && json.Valid([]byte(raw)) { job.Diagnosis = json.RawMessage(raw) }
+		jobs = append(jobs, job)
 	}
 	util.JSON(w, http.StatusOK, jobs)
 }
@@ -309,6 +316,10 @@ func updateDeploymentStage(id string, position int, status string) {
 		WHERE id = ? AND status = 'Running'`,
 		statusPath, status, durationPath, duration, timestampPath, timestampPath, time.Now().Unix(),
 		status, position, status, id)
+	// Fully successful: keep only this ZIP for the target, drop older ones.
+	if position == 4 && status == "Success" {
+		if store, err := archive.New(); err == nil { _ = store.Finalize(id) }
+	}
 }
 
 // A Go function stops when its HTTP request ends. Cloudflare's scheduled
@@ -355,7 +366,11 @@ func isStatusCheck(phase string) bool {
 		phase == "vercel-test-status" || phase == "vercel-live-status"
 }
 
-func haltRunner(job runnerJob, message string, uncertain bool) {
+func haltRunner(job runnerJob, message string, uncertain bool) { haltRunnerWithLog(job, message, "", uncertain) }
+
+func haltRunnerWithLog(job runnerJob, message, buildLog string, uncertain bool) {
+	// Diagnose before discarding: the snippet is read from the uploaded ZIP.
+	recordDiagnosis(job.id, job.kind, job.target, runnerStage(job), message, buildLog)
 	if len(message) > 700 { message = message[:700] }
 	status := "Failed"
 	if uncertain { status = "Interrupted" }
@@ -365,7 +380,8 @@ func haltRunner(job runnerJob, message string, uncertain bool) {
 	}
 	_, _ = d1.Query(`UPDATE deployment_runner SET phase = 'error', message = ?, claim_until = CURRENT_TIMESTAMP,
 		updated_at = CURRENT_TIMESTAMP WHERE id = ?`, message, job.id)
-	if store, err := archive.New(); err == nil { _ = store.Fail(job.id) }
+	// A failed run never keeps its ZIP; the last successful ZIP stays current.
+	if store, err := archive.New(); err == nil { _ = store.Discard(job.id) }
 	logLiveLog("ERROR", fmt.Sprintf("Deployment %s %s: %s (%s)", job.kind, job.target, message, status))
 }
 
@@ -437,6 +453,7 @@ func runDeploymentJob(job runnerJob) error {
 		Status string `json:"status"`
 		Ticket string `json:"ticket"`
 		Message string `json:"message"`
+		BuildLog string `json:"build_log"`
 	}
 	if err = json.Unmarshal(data, &result); err != nil || code != http.StatusOK || result.Step == "" {
 		message := fmt.Sprintf("Runner tidak menerima respons tahap %s (HTTP %d)", job.phase, code)
@@ -448,7 +465,7 @@ func runDeploymentJob(job runnerJob) error {
 		haltRunner(job, message, true)
 		return nil
 	}
-	if !result.OK { haltRunner(job, result.Message, false); return nil }
+	if !result.OK { haltRunnerWithLog(job, result.Message, result.BuildLog, false); return nil }
 	next := job.phase
 	if job.kind == "self_update" {
 		switch job.phase {
@@ -482,6 +499,7 @@ func runDeploymentJob(job runnerJob) error {
 func handleDeploymentRunner(w http.ResponseWriter, _ *http.Request) {
 	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	if err := expireDeploymentJobs(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	sweepArchives()
 	rows, err := d1.Query(`SELECT j.id, j.kind, j.target, r.phase, r.ticket, r.branch, r.environment
 		FROM deployment_runner r JOIN deployment_jobs j ON j.id = r.id
 		WHERE j.status = 'Running' AND r.phase NOT IN ('done', 'error')
@@ -784,6 +802,7 @@ type deployResult struct {
 	Status  string `json:"status,omitempty"` // pending | ready; a pending build must never advance the pipeline
 	Ticket  string `json:"ticket,omitempty"`
 	ArchiveID string `json:"archive_id,omitempty"`
+	BuildLog string `json:"build_log,omitempty"`
 }
 
 func deployStagePosition(phase string) int {
@@ -1153,12 +1172,18 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 	}
 	if state != "READY" {
 		_ = store.Fail(ticket.ArchiveID)
-		if step == "vercel-test" { cleanupTestProject(token, ticket.Project) }
 		msg := fmt.Sprintf("[%s] Build Vercel %s", map[string]string{"vercel-test": "Uji Build Vercel", "vercel-live": "Onlinekan di Vercel"}[step], state)
-		if detail != "" { msg += ": " + detail }
+		// Read the compiler output before the temporary project is deleted.
+		buildLog, logErr := getVercelBuildLog(token, ticket.DeploymentID)
+		if detail != "" { msg += ": " + detail } else if buildLog != "" { msg += ": " + vercelFailureSummary(buildLog) }
+		if step == "vercel-test" {
+			if logErr == nil { cleanupTestProject(token, ticket.Project) } else {
+				msg += ". Log belum dapat dibaca (" + logErr.Error() + "); periksa project uji " + ticket.Project + " di Vercel."
+			}
+		}
 		updateDeploymentStage(ticket.ArchiveID, position, "Failed")
 		logLiveLog("ERROR", msg)
-		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: msg, Repo: ticket.Repo})
+		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: msg, Repo: ticket.Repo, BuildLog: buildLog})
 		return
 	}
 	if step == "vercel-test" {
@@ -2826,4 +2851,88 @@ func githubJSONRequest(client *http.Client, token, method, endpoint string, payl
 		}
 	}
 	return resp.StatusCode, nil
+}
+
+
+// ---------- error diagnosis ----------
+
+var sweepState struct {
+	sync.Mutex
+	last time.Time
+}
+
+// sweepArchives enforces "only the newest successful ZIP" at most once a
+// minute per instance; failures here never block the caller.
+func sweepArchives() {
+	sweepState.Lock()
+	if time.Since(sweepState.last) < time.Minute { sweepState.Unlock(); return }
+	sweepState.last = time.Now()
+	sweepState.Unlock()
+	if store, err := archive.New(); err == nil { _ = store.Sweep() }
+}
+
+func diagnosisStage(kind string, position int) string {
+	names := [4]string{"Simpan & ekstrak ZIP", "Uji build Vercel", "Dorong ke GitHub", "Onlinekan di Vercel"}
+	if kind == "self_update" { names[2], names[3] = "Perbarui GitHub", "Deployment production Vercel" }
+	if position < 1 || position > 4 { return "Tidak diketahui" }
+	return names[position-1]
+}
+
+// recordDiagnosis stores where the run failed and how to fix it, including
+// the offending code read from the uploaded ZIP while it still exists.
+func recordDiagnosis(id, kind, target string, position int, message, buildLog string) {
+	var zipBytes []byte
+	if store, err := archive.New(); err == nil {
+		if record, err := store.Get(id); err == nil { zipBytes, _ = store.Download(record) }
+	}
+	result := diagnose.Analyze(diagnose.Input{Kind: kind, Target: target, Stage: diagnosisStage(kind, position),
+		Message: message, BuildLog: buildLog, Zip: zipBytes})
+	encoded, err := json.Marshal(result)
+	if err != nil { return }
+	_, _ = d1.Query(`UPDATE deployment_jobs SET diagnosis = ? WHERE id = ?`, string(encoded), id)
+}
+
+// POST /api/diagnose -> {job_id} returns the stored diagnosis of a pipeline;
+// {kind, target, stage, message, build_log} analyses an error shown directly
+// in the browser (e.g. an upload rejected before the runner started).
+func handleDiagnose(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost { util.Error(w, http.StatusMethodNotAllowed, fmt.Errorf("gunakan POST")); return }
+	var input struct {
+		JobID    string `json:"job_id"`
+		Kind     string `json:"kind"`
+		Target   string `json:"target"`
+		Stage    string `json:"stage"`
+		Message  string `json:"message"`
+		BuildLog string `json:"build_log"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&input); err != nil {
+		util.Error(w, http.StatusBadRequest, fmt.Errorf("permintaan diagnosis tidak valid")); return
+	}
+	if input.JobID != "" {
+		if len(input.JobID) != 32 || strings.Trim(input.JobID, "0123456789abcdef") != "" {
+			util.Error(w, http.StatusBadRequest, fmt.Errorf("ID pipeline tidak valid")); return
+		}
+		if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		rows, err := d1.Query(`SELECT j.kind, j.target, j.stages, j.diagnosis, COALESCE(r.message, '') AS message
+			FROM deployment_jobs j LEFT JOIN deployment_runner r ON r.id = j.id WHERE j.id = ? LIMIT 1`, input.JobID)
+		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		if len(rows) == 0 { util.Error(w, http.StatusNotFound, fmt.Errorf("pipeline sudah tidak tersedia")); return }
+		if raw := rowText(rows[0], "diagnosis"); raw != "" && json.Valid([]byte(raw)) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write([]byte(raw))
+			return
+		}
+		input.Kind, input.Target = rowText(rows[0], "kind"), rowText(rows[0], "target")
+		if input.Message == "" { input.Message = rowText(rows[0], "message") }
+		var stages []deploymentStage
+		if json.Unmarshal([]byte(rowText(rows[0], "stages")), &stages) == nil {
+			for _, stage := range stages { if stage.Status == "Failed" { input.Stage = stage.Stage } }
+		}
+	}
+	if strings.TrimSpace(input.Message) == "" && strings.TrimSpace(input.BuildLog) == "" {
+		util.Error(w, http.StatusBadRequest, fmt.Errorf("pesan error kosong")); return
+	}
+	util.JSON(w, http.StatusOK, diagnose.Analyze(diagnose.Input{Kind: input.Kind, Target: input.Target, Stage: input.Stage,
+		Message: input.Message, BuildLog: input.BuildLog}))
 }

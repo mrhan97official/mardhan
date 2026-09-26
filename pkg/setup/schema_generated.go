@@ -7,7 +7,7 @@ var schemaStatements = []string{
   "CREATE TABLE IF NOT EXISTS overview_stats (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  active_projects INTEGER NOT NULL,\n  active_projects_change REAL NOT NULL,\n  deployments_today INTEGER NOT NULL,\n  deployments_change REAL NOT NULL,\n  uptime REAL NOT NULL,\n  uptime_change REAL NOT NULL,\n  open_incidents INTEGER NOT NULL,\n  incidents_change REAL NOT NULL,\n  updated_at TEXT DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE TABLE IF NOT EXISTS environments (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  name TEXT NOT NULL,\n  region TEXT NOT NULL,\n  version TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('Healthy', 'Online', 'Degraded', 'Down'))\n)",
   "CREATE TABLE IF NOT EXISTS deployment_pipeline (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  stage TEXT NOT NULL,\n  duration TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('Success', 'Running', 'Pending', 'Failed')),\n  position INTEGER NOT NULL\n)",
-  "CREATE TABLE IF NOT EXISTS deployment_jobs (\n  id TEXT PRIMARY KEY,\n  kind TEXT NOT NULL CHECK (kind IN ('new_app', 'update_app', 'self_update')),\n  target TEXT NOT NULL,\n  lock_key TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('Running', 'Success', 'Failed', 'Interrupted')),\n  stages TEXT NOT NULL,\n  lease_until TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+  "CREATE TABLE IF NOT EXISTS deployment_jobs (\n  id TEXT PRIMARY KEY,\n  kind TEXT NOT NULL CHECK (kind IN ('new_app', 'update_app', 'self_update')),\n  target TEXT NOT NULL,\n  lock_key TEXT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('Running', 'Success', 'Failed', 'Interrupted')),\n  stages TEXT NOT NULL,\n  lease_until TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  diagnosis TEXT NOT NULL DEFAULT ''\n)",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_deployment_jobs_running_target ON deployment_jobs (lock_key) WHERE status = 'Running'",
   "CREATE INDEX IF NOT EXISTS idx_deployment_jobs_updated ON deployment_jobs (updated_at DESC)",
   "CREATE TABLE IF NOT EXISTS deployment_runner (\n  id TEXT PRIMARY KEY,\n  phase TEXT NOT NULL,\n  ticket TEXT NOT NULL DEFAULT '',\n  branch TEXT NOT NULL DEFAULT '',\n  environment TEXT NOT NULL DEFAULT 'Production',\n  claim_until TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  attempts INTEGER NOT NULL DEFAULT 0,\n  message TEXT NOT NULL DEFAULT '',\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
@@ -53,13 +53,14 @@ var migrationStatements = []migrationStatement{
   {"005", "CREATE TABLE IF NOT EXISTS deployment_runner (\n  id TEXT PRIMARY KEY,\n  phase TEXT NOT NULL,\n  ticket TEXT NOT NULL DEFAULT '',\n  branch TEXT NOT NULL DEFAULT '',\n  environment TEXT NOT NULL DEFAULT 'Production',\n  claim_until TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  attempts INTEGER NOT NULL DEFAULT 0,\n  message TEXT NOT NULL DEFAULT '',\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)"},
   {"006", "ALTER TABLE app_promo_banner ADD COLUMN app_name TEXT NOT NULL DEFAULT ''"},
   {"006", "ALTER TABLE app_promo_banner ADD COLUMN app_url TEXT NOT NULL DEFAULT ''"},
+  {"007", "ALTER TABLE deployment_jobs ADD COLUMN diagnosis TEXT NOT NULL DEFAULT ''"},
 }
 
 var expectedColumns = map[string][]string{
   "overview_stats": {"id", "active_projects", "active_projects_change", "deployments_today", "deployments_change", "uptime", "uptime_change", "open_incidents", "incidents_change", "updated_at"},
   "environments": {"id", "name", "region", "version", "status"},
   "deployment_pipeline": {"id", "stage", "duration", "status", "position"},
-  "deployment_jobs": {"id", "kind", "target", "lock_key", "status", "stages", "lease_until", "created_at", "updated_at"},
+  "deployment_jobs": {"id", "kind", "target", "lock_key", "status", "stages", "lease_until", "created_at", "updated_at", "diagnosis"},
   "deployment_runner": {"id", "phase", "ticket", "branch", "environment", "claim_until", "attempts", "message", "updated_at"},
   "services": {"id", "name", "status", "uptime", "version", "repo", "branch", "app_url"},
   "activity_log": {"id", "title", "description", "icon", "created_at"},
@@ -86,7 +87,7 @@ var expectedTypes = map[string]map[string]string{
   "overview_stats": {"id": "INTEGER", "active_projects": "INTEGER", "active_projects_change": "REAL", "deployments_today": "INTEGER", "deployments_change": "REAL", "uptime": "REAL", "uptime_change": "REAL", "open_incidents": "INTEGER", "incidents_change": "REAL", "updated_at": "TEXT"},
   "environments": {"id": "INTEGER", "name": "TEXT", "region": "TEXT", "version": "TEXT", "status": "TEXT"},
   "deployment_pipeline": {"id": "INTEGER", "stage": "TEXT", "duration": "TEXT", "status": "TEXT", "position": "INTEGER"},
-  "deployment_jobs": {"id": "TEXT", "kind": "TEXT", "target": "TEXT", "lock_key": "TEXT", "status": "TEXT", "stages": "TEXT", "lease_until": "TEXT", "created_at": "TEXT", "updated_at": "TEXT"},
+  "deployment_jobs": {"id": "TEXT", "kind": "TEXT", "target": "TEXT", "lock_key": "TEXT", "status": "TEXT", "stages": "TEXT", "lease_until": "TEXT", "created_at": "TEXT", "updated_at": "TEXT", "diagnosis": "TEXT"},
   "deployment_runner": {"id": "TEXT", "phase": "TEXT", "ticket": "TEXT", "branch": "TEXT", "environment": "TEXT", "claim_until": "TEXT", "attempts": "INTEGER", "message": "TEXT", "updated_at": "TEXT"},
   "services": {"id": "INTEGER", "name": "TEXT", "status": "TEXT", "uptime": "REAL", "version": "TEXT", "repo": "TEXT", "branch": "TEXT", "app_url": "TEXT"},
   "activity_log": {"id": "INTEGER", "title": "TEXT", "description": "TEXT", "icon": "TEXT", "created_at": "TEXT"},

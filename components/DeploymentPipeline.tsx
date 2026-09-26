@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Loader2, X, Clock3 } from "lucide-react";
+import { Check, Loader2, X, Clock3, Stethoscope } from "lucide-react";
 import type { DeploymentJob, PipelineStage } from "@/lib/types";
 import { fallbackPipeline } from "@/lib/fallbackData";
 import NewDeploymentMenu from "@/components/deployment/NewDeploymentMenu";
+import ErrorDiagnosis from "@/components/deployment/ErrorDiagnosis";
 
 type StageStatus = PipelineStage["status"] | "Interrupted";
 
@@ -99,6 +100,7 @@ export default function DeploymentPipeline({
   error?: string | null;
 }) {
   const [now, setNow] = useState<number | null>(null);
+  const [openDiagnosis, setOpenDiagnosis] = useState<string | null>(null);
   const hasRunningJob = jobs.some((job) => job.status === "Running");
 
   useEffect(() => {
@@ -152,6 +154,17 @@ export default function DeploymentPipeline({
             </div>
             {job.message && <p className={`mt-2 text-xs ${job.status === "Failed" ? "text-red-400" : job.status === "Interrupted" ? "text-amber-400" : "text-slate-400"}`}>{job.message}</p>}
             <JobStages stages={job.stages} job={job} now={now} />
+            {(job.status === "Failed" || job.status === "Interrupted") && (
+              <div className="mt-3 space-y-2">
+                <button type="button" onClick={() => setOpenDiagnosis((current) => current === job.id ? null : job.id)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/40 px-2.5 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/10">
+                  <Stethoscope size={13} /> {openDiagnosis === job.id ? "Tutup diagnosis" : "Lihat letak error & saran perbaikan"}
+                </button>
+                {openDiagnosis === job.id && (
+                  <ErrorDiagnosis jobId={job.id} diagnosis={job.diagnosis} message={job.message} kind={job.kind} target={job.target} />
+                )}
+              </div>
+            )}
           </section>
         ))}
       </div>

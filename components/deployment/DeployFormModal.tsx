@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Circle, Loader2, UploadCloud, XCircle } from "lucide-react";
 import Modal from "./Modal";
+import ErrorDiagnosis from "./ErrorDiagnosis";
 import { useOfflineData } from "@/lib/useOfflineData";
 import { fallbackServices } from "@/lib/fallbackData";
 import type { Service } from "@/lib/types";
@@ -61,6 +62,7 @@ export default function DeployFormModal({
   const [result, setResult] = useState<DeployResponse | null>(null);
   const [archiveSaved, setArchiveSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [serverError, setServerError] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
@@ -107,6 +109,7 @@ export default function DeployFormModal({
     setArchiveSaved(false);
     setCompletedSteps([]);
     setFailedStep(null);
+    setServerError(null);
     setElapsedSeconds(0);
     let currentPhase: StepKey = "extract";
     let archiveID = "";
@@ -148,7 +151,9 @@ export default function DeployFormModal({
       }
     } catch (err) {
       if (!archiveID) setFailedStep(currentPhase);
-      setError(err instanceof Error ? err.message : "Terjadi kesalahan tak terduga.");
+      const message = err instanceof Error ? err.message : "Terjadi kesalahan tak terduga.";
+      setError(message);
+      setServerError(message);
     } finally {
       setActiveStep(null);
       setSubmitting(false);
@@ -271,7 +276,13 @@ export default function DeployFormModal({
           </a>
         )}
         {error && <p className="text-xs font-medium text-red-400">{error}</p>}
-        {archiveSaved && (
+        {result && !result.ok && !submitting && (
+          <ErrorDiagnosis jobId={result.archive_id} message={result.message} kind={mode} target={name.trim()} />
+        )}
+        {serverError && !submitting && !(result && !result.ok) && (
+          <ErrorDiagnosis message={serverError} kind={mode} target={name.trim()} stage="Simpan & ekstrak ZIP" />
+        )}
+        {archiveSaved && finished && (
           <Link href="/projects#zip-archives" className="text-xs font-medium text-accent-blue hover:underline">
             Lihat dan unduh ZIP tersimpan di Projects
           </Link>

@@ -240,6 +240,108 @@ func (s *Store) Fail(id string) error {
 	return err
 }
 
+// Retention: only the newest SUCCESSFUL ZIP of each app/self-update target
+// is kept. A failed deployment's ZIP is removed and the older successful ZIP
+// stays current. See Discard, Finalize and Sweep.
+
+func validArchiveKey(id, key string) bool {
+	return len(id) == 32 && strings.Trim(id, "0123456789abcdef") == "" && key == "archives/"+id+".zip"
+}
+
+func (s *Store) deleteObject(key string) error {
+	req, err := http.NewRequest(http.MethodDelete, s.objectURL(key), nil)
+	if err != nil { return err }
+	req.Header.Set("Authorization", "Bearer "+s.token)
+	resp, err := s.client.Do(req)
+	if err != nil { return err }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusNoContent { return nil }
+	if resp.StatusCode != http.StatusOK { return fmt.Errorf("gagal menghapus ZIP di R2 (HTTP %d)", resp.StatusCode) }
+	var result struct { Success bool `json:"success"` }
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result); err != nil || !result.Success {
+		return fmt.Errorf("R2 tidak mengonfirmasi penghapusan ZIP")
+	}
+	return nil
+}
+
+// deleteRecord removes the R2 object first, then its D1 row, so an
+// interrupted cleanup simply resumes on the next sweep.
+func (s *Store) deleteRecord(id, key string) error {
+	if !validArchiveKey(id, key) { return fmt.Errorf("kunci arsip tidak valid") }
+	if err := s.deleteObject(key); err != nil { return err }
+	_, err := s.query(`DELETE FROM zip_archives WHERE id = ?`, id)
+	return err
+}
+
+// Discard removes the ZIP of a deployment that did not succeed. If that ZIP
+// had already become current (update diri promotes before the production
+// check), the previous successful ZIP is restored as current first.
+func (s *Store) Discard(id string) error {
+	rows, err := s.query(`SELECT * FROM zip_archives WHERE id = ? LIMIT 1`, id)
+	if err != nil || len(rows) == 0 { return err }
+	rec := fromRow(rows[0])
+	if rec.Status == "current" {
+		previous, err := s.query(`SELECT id FROM zip_archives WHERE scope = ? AND target = ? AND status = 'previous'
+			ORDER BY created_at DESC, rowid DESC LIMIT 1`, rec.Scope, rec.Target)
+		if err != nil { return err }
+		if len(previous) > 0 {
+			previousID, _ := previous[0]["id"].(string)
+			if _, err := s.query(`UPDATE zip_archives SET status = 'current' WHERE id = ? AND status = 'previous'`, previousID); err != nil { return err }
+		}
+	}
+	return s.deleteRecord(rec.ID, rec.ObjectKey)
+}
+
+// Finalize runs once a deployment fully succeeded: the new ZIP stays current
+// and every older ZIP of the same target is deleted.
+func (s *Store) Finalize(id string) error {
+	rows, err := s.query(`SELECT scope, target, status FROM zip_archives WHERE id = ? LIMIT 1`, id)
+	if err != nil || len(rows) == 0 { return err }
+	if status, _ := rows[0]["status"].(string); status != "current" { return nil }
+	scope, _ := rows[0]["scope"].(string)
+	target, _ := rows[0]["target"].(string)
+	old, err := s.query(`SELECT id, object_key FROM zip_archives WHERE scope = ? AND target = ? AND id <> ? AND status <> 'pending'`, scope, target, id)
+	if err != nil { return err }
+	for _, row := range old {
+		oldID, _ := row["id"].(string)
+		key, _ := row["object_key"].(string)
+		if err := s.deleteRecord(oldID, key); err != nil { return err }
+	}
+	return nil
+}
+
+// Sweep enforces the retention rule for leftovers: failed or abandoned ZIPs,
+// versions superseded by a successful one, and ZIPs promoted by a job that
+// later failed. Jobs still running are never touched. Bounded per call.
+func (s *Store) Sweep() error {
+	broken, err := s.query(`SELECT a.id FROM zip_archives a JOIN deployment_jobs j ON j.id = a.id
+		WHERE j.status IN ('Failed', 'Interrupted') AND a.status IN ('pending', 'failed', 'current')
+		AND (j.diagnosis <> '' OR j.updated_at < datetime('now', '-10 minutes')) LIMIT 20`)
+	if err != nil { return err }
+	for _, row := range broken {
+		if id, _ := row["id"].(string); id != "" { if err := s.Discard(id); err != nil { return err } }
+	}
+	orphans, err := s.query(`SELECT a.id FROM zip_archives a
+		WHERE NOT EXISTS (SELECT 1 FROM deployment_jobs j WHERE j.id = a.id AND j.status = 'Running')
+		AND ((a.status = 'failed' AND NOT EXISTS (SELECT 1 FROM deployment_jobs j WHERE j.id = a.id))
+			OR (a.status IN ('pending', 'failed') AND a.created_at < datetime('now', '-2 hours'))) LIMIT 20`)
+	if err != nil { return err }
+	for _, row := range orphans {
+		if id, _ := row["id"].(string); id != "" { if err := s.Discard(id); err != nil { return err } }
+	}
+	superseded, err := s.query(`SELECT a.id, a.object_key FROM zip_archives a WHERE a.status = 'previous'
+		AND EXISTS (SELECT 1 FROM zip_archives c LEFT JOIN deployment_jobs j ON j.id = c.id
+			WHERE c.scope = a.scope AND c.target = a.target AND c.status = 'current'
+			AND (j.id IS NULL OR j.status = 'Success')) LIMIT 20`)
+	if err != nil { return err }
+	for _, row := range superseded {
+		id, _ := row["id"].(string)
+		key, _ := row["object_key"].(string)
+		if err := s.deleteRecord(id, key); err != nil { return err }
+	}
+	return nil
+}
+
 // Promote changes the current pointer and archives the previous version in one D1 statement.
 func (s *Store) Promote(id, scope, target string) error {
 	rows, err := s.query(`WITH candidate AS MATERIALIZED

@@ -84,8 +84,8 @@ export default function ZipArchivePanel() {
     switch (item.status) {
       case "current": return item.scope === "self" ? "Terakhir dikirim ke GitHub" : "Versi online terakhir";
       case "previous": return "Versi sebelumnya";
-      case "failed": return "Update gagal · ZIP tetap tersimpan";
-      default: return "Tersimpan · hasil update belum pasti";
+      case "failed": return "Gagal · akan dihapus otomatis";
+      default: return "Sedang diproses · disimpan hanya jika berhasil";
     }
   }
 
@@ -93,7 +93,7 @@ export default function ZipArchivePanel() {
     <section id="zip-archives" className="card space-y-4 p-4 sm:p-5">
       <div>
         <h2 className="text-base font-semibold text-white">Arsip ZIP aplikasi</h2>
-        <p className="mt-1 text-xs text-slate-400">Unduh ZIP asli dari perangkat mana pun. Kegagalan update tidak menghapus versi sebelumnya.</p>
+        <p className="mt-1 text-xs text-slate-400">Hanya ZIP terbaru yang berhasil online yang disimpan per aplikasi. ZIP yang gagal dibuang, dan versi sukses sebelumnya tetap aktif.</p>
       </div>
       <form onSubmit={(event) => { event.preventDefault(); void load(key); }} className="flex flex-col gap-2 sm:flex-row">
         <input type="password" autoComplete="off" aria-label="Kunci arsip" placeholder="Kunci arsip" value={key}

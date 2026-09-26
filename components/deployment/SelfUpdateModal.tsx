@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Circle, CheckCircle2, Loader2, RefreshCw, UploadCloud, XCircle } from "lucide-react";
 import Modal from "./Modal";
+import ErrorDiagnosis from "./ErrorDiagnosis";
 import { useOfflineData } from "@/lib/useOfflineData";
 import { fallbackGithubRepos } from "@/lib/fallbackData";
 import type { GithubRepo } from "@/lib/types";
@@ -52,6 +53,7 @@ export default function SelfUpdateModal({
   const [result, setResult] = useState<SelfUpdateResponse | null>(null);
   const [archiveSaved, setArchiveSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [serverError, setServerError] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState<StepKey | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
@@ -148,6 +150,7 @@ export default function SelfUpdateModal({
     setSubmitting(true);
     setResult(null);
     setArchiveSaved(false);
+    setServerError(null);
     setActiveStep("extract");
     setElapsedSeconds(0);
     try {
@@ -186,7 +189,9 @@ export default function SelfUpdateModal({
           message: final.message || "Update terhenti; periksa Pipeline, GitHub, dan Vercel." });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Terjadi kesalahan tak terduga.");
+      const message = err instanceof Error ? err.message : "Terjadi kesalahan tak terduga.";
+      setError(message);
+      setServerError(message);
     } finally {
       setActiveStep(null);
       setSubmitting(false);
@@ -352,11 +357,8 @@ export default function SelfUpdateModal({
             <p className={`text-xs font-medium ${result.ok ? result.status === "pending" ? "text-accent-blue" : "text-emerald-400" : "text-red-400"}`}>
               {result.message}{result.status === "pending" && ` · ${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`}
             </p>
-            {result.build_log && (
-              <div className="rounded-lg border border-red-500/30 bg-base-950 p-3">
-                <p className="mb-2 text-xs font-semibold text-red-300">Detail deployment Vercel</p>
-                <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-300">{result.build_log}</pre>
-              </div>
+            {!result.ok && !submitting && (
+              <ErrorDiagnosis jobId={result.archive_id} message={result.message} kind="self_update" target={repo.trim()} />
             )}
           </div>
         )}
@@ -364,7 +366,10 @@ export default function SelfUpdateModal({
           <p className="text-xs text-slate-500">ZIP sudah tersimpan. Laptop boleh ditutup; runner Cloudflare melanjutkan proses. Cek hasilnya di Pipeline.</p>
         )}
         {error && <p className="text-xs font-medium text-red-400">{error}</p>}
-        {archiveSaved && (
+        {serverError && !submitting && !(result && !result.ok) && (
+          <ErrorDiagnosis message={serverError} kind="self_update" target={repo.trim()} stage="Simpan & ekstrak ZIP" />
+        )}
+        {archiveSaved && finished && (
           <Link href="/projects#zip-archives" className="text-xs font-medium text-accent-blue hover:underline">
             Lihat dan unduh ZIP tersimpan di Projects
           </Link>

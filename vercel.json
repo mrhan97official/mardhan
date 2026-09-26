@@ -27,6 +27,7 @@
     { "source": "/api/project-thumbnails", "destination": "/api/gateway?resource=project-thumbnails" },
     { "source": "/api/app-promo", "destination": "/api/gateway?resource=app-promo" },
     { "source": "/api/github-branches", "destination": "/api/gateway?resource=github-branches" },
+    { "source": "/api/diagnose", "destination": "/api/gateway?resource=diagnose" },
     { "source": "/api/zip-archives", "destination": "/api/gateway?resource=zip-archives" }
   ],
   "headers": [

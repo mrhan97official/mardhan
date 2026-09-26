@@ -140,6 +140,28 @@ Alurnya setelah login admin (paket `pkg/autoconfig`, endpoint `/api/auto-setup`,
 
 Instalasi lama yang semua variabelnya sudah terisi tidak berubah perilakunya.
 
+## Diagnosis error & retensi ZIP
+
+Setiap kegagalan Aplikasi Baru, Update Aplikasi, dan Update Diri dianalisis otomatis (`pkg/diagnose`, tanpa layanan luar):
+
+- **Letak error**: tahap pipeline, file, baris, dan kolom. Diambil dari log build Vercel (Go, TypeScript, ESLint, webpack/Next.js, npm), lalu dicocokkan dengan isi ZIP.
+- **Potongan kode** di sekitar baris error, dibaca dari ZIP yang diunggah sebelum ZIP itu dibuang.
+- **Kategori, penyebab, dan saran perbaikan** konkret.
+- **Tombol "Salin prompt untuk AI"**: berisi error, lokasi, potongan kode, log, dan instruksi perbaikan patch-only. Tinggal ditempel ke AI.
+
+Diagnosis tampil di modal deployment dan di Pipeline ("Lihat letak error & saran perbaikan"). Pipeline yang gagal disimpan 24 jam, pipeline sukses 30 menit.
+
+Retensi arsip ZIP (`pkg/archive`: `Discard`, `Finalize`, `Sweep`):
+
+| Kejadian | Hasil |
+|---|---|
+| Aplikasi baru berhasil | ZIP disimpan sebagai satu-satunya versi |
+| Aplikasi baru gagal | ZIP dibuang, tidak ada yang disimpan |
+| Update aplikasi / update diri berhasil | ZIP baru disimpan, ZIP lama dihapus |
+| Update aplikasi / update diri gagal | ZIP baru dibuang, ZIP lama tetap aktif (juga bila update diri gagal setelah push GitHub) |
+
+Sisa arsip lama (status `previous` / `failed`) dibersihkan bertahap oleh pembersihan berkala.
+
 ## Deploy: GitHub → Vercel
 
 ### Deployment aplikasi dari dashboard
