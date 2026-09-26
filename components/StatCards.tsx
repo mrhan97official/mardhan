@@ -70,7 +70,7 @@ export default function StatCards({ stats }: { stats: OverviewStats }) {
   ];
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4 md:gap-3 xl:gap-4">
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-4">
       {cards.map((c) => (
         <div key={c.label} className="card p-4 md:p-3 xl:p-4">
           <div className="flex min-w-0 items-center gap-2.5 md:min-h-[3.75rem] md:gap-2 xl:min-h-0 xl:gap-3">

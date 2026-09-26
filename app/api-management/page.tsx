@@ -105,7 +105,7 @@ export default function ApiManagementPage() {
           </form>
           {!snapshot.projects.length && <p className="text-sm text-amber-300">Belum ada proyek dengan URL deployment di D1. Deploy aplikasi dahulu agar endpoint dapat didaftarkan.</p>}
           {!snapshot.apis.length && <p className="text-sm text-slate-400">Belum ada endpoint aplikasi yang didaftarkan.</p>}
-          <div className="grid gap-3 md:grid-cols-2">{snapshot.apis.map((api) => {
+          <div className="grid gap-2 md:grid-cols-2">{snapshot.apis.map((api) => {
             const check = snapshot.checks.find((item) => item.api_id === api.id);
             return <div key={api.id} className="rounded-xl border border-base-border bg-base-850 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold">{api.name}</h3><p className="mt-1 break-all text-xs text-slate-400">{api.project} · {api.environment} · {api.method} {api.path}</p></div>

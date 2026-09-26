@@ -72,7 +72,7 @@ export default function DatabasesPage() {
         {error && <p role="alert" className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
         {message && <p role="status" className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-300">{message}</p>}
         {!status && !error && <p className="text-sm text-slate-400">Membaca database…</p>}
-        {status && <div className="grid gap-3 sm:grid-cols-2">
+        {status && <div className="grid gap-2 sm:grid-cols-2">
           <div className="rounded-xl border border-base-border bg-base-850 p-4">
             <p className="text-xs text-slate-400">Cloudflare D1</p><p className="mt-1 font-semibold">{status.d1.ready ? "Skema siap" : `${missing.length} tabel perlu diperiksa`}</p>
             <p className="mt-1 text-xs text-slate-400">{status.d1.migrations.length} migrasi tercatat · {status.d1.missing_indexes.length} indeks kurang</p>
@@ -88,7 +88,7 @@ export default function DatabasesPage() {
       {status && <section className="card p-4 sm:p-6">
         <h2 className="flex items-center gap-2 text-base font-semibold"><ShieldCheck size={18} /> Tabel aplikasi</h2>
         <p className="mt-1 text-xs text-slate-400">Kolom tambahan pada database lama ditampilkan, tidak dihapus. Perubahan akan ditinjau sebelum tombol penyiapan dijalankan.</p>
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div className="mt-4 grid gap-2 md:grid-cols-3">
           {status.d1.tables.map((table) => <div key={table.name} className="min-w-0 rounded-xl border border-base-border bg-base-850 p-4">
             <div className="flex items-center justify-between gap-2"><span className="truncate font-mono text-xs text-slate-200">{table.name}</span>
               <span className={`text-xs ${table.exists && !table.missing.length && !table.mismatched.length ? "text-emerald-400" : "text-amber-400"}`}>

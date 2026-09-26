@@ -135,7 +135,7 @@ export default function DeploymentPipeline({
           {onDeployed && <button type="button" onClick={onDeployed} className="ml-2 font-semibold text-accent-blue hover:underline">Coba lagi</button>}
         </div>
       )}
-      <div className="mt-4 space-y-4">
+      <div className="mt-4 space-y-2">
         {visibleJobs.length === 0 && (
           <section className="flex min-h-[clamp(136px,10rem,160px)] flex-col justify-center rounded-xl border border-base-border bg-base-900 p-4" aria-label="Tahapan deployment">
             <JobStages stages={fallbackPipeline} inactive now={now} />

@@ -47,7 +47,7 @@ export default function InfraHealth({ metrics }: { metrics: InfraMetric[] }) {
         <span className="text-right text-[9px] text-slate-500">Go · {metrics.some((m) => m.source === "DevControl · API") ? "API" : "Cloudflare"}</span>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-3 xl:grid-cols-4 xl:gap-4">
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
         {metrics.map((m) => {
           const meta = META[m.metric];
           const hasSeries = Array.isArray(m.values) && m.values.length > 1 && m.current !== null;
