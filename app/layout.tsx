@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import DeploymentOverlayProvider from "@/components/deployment/DeploymentOverlayProvider";
 import AuthGate from "@/components/AuthGate";
+import ConfirmationCenter from "@/components/ConfirmationCenter";
 import BrandingProvider from "@/components/BrandingProvider";
 import ThemeProvider from "@/components/ThemeProvider";
 import "./globals.css";
@@ -38,7 +39,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: `try{if(localStorage.getItem("devcontrol-theme")==="light"){document.documentElement.classList.remove("dark");document.documentElement.classList.add("light");document.querySelector('meta[name="theme-color"]')?.setAttribute("content","#F8FCFF");document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')?.setAttribute("content","default")}}catch(e){}` }} />
       </head>
       <body className="font-sans antialiased min-h-screen bg-base-950 text-slate-100">
-        <ThemeProvider><AuthGate><BrandingProvider><DeploymentOverlayProvider>{children}</DeploymentOverlayProvider></BrandingProvider></AuthGate></ThemeProvider>
+        <ThemeProvider><AuthGate><BrandingProvider><DeploymentOverlayProvider>{children}<ConfirmationCenter /></DeploymentOverlayProvider></BrandingProvider></AuthGate></ThemeProvider>
       </body>
     </html>
   );

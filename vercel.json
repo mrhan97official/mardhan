@@ -7,6 +7,7 @@
     { "source": "/api/branding/icon", "destination": "/api/gateway?resource=branding-icon" },
     { "source": "/api/branding", "destination": "/api/gateway?resource=branding" },
     { "source": "/api/session", "destination": "/api/gateway?resource=session" },
+    { "source": "/api/auto-setup", "destination": "/api/gateway?resource=auto-setup" },
     { "source": "/api/databases", "destination": "/api/gateway?resource=databases" },
     { "source": "/api/api-management", "destination": "/api/gateway?resource=api-management" },
     { "source": "/api/overview", "destination": "/api/gateway?resource=overview" },

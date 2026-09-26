@@ -49,6 +49,7 @@ import (
 	"unicode/utf8"
 
 	"devcontrol/pkg/apimanagement"
+	"devcontrol/pkg/autoconfig"
 	"devcontrol/pkg/archive"
 	"devcontrol/pkg/branding"
 	"devcontrol/pkg/environmentstatus"
@@ -68,6 +69,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	if util.HandleCORSPreflight(w, r) {
 		return
 	}
+	// Fill in every setting derivable from the core variables before any
+	// handler (including the Cloudflare runner) reads os.Getenv.
+	autoconfig.Apply(r.Context())
 	resource := r.URL.Query().Get("resource")
 	if resource == "deployment-runner" {
 		if r.Method != http.MethodPost || !deploymentrunner.Authorized(r.Header.Get("Authorization")) {
@@ -85,8 +89,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if resource == "session" { auth.HandleSession(w, r); return }
+	if resource == "auto-setup" { autoconfig.Handle(w, r); return }
 	if resource != "zip-archives" {
-		if !auth.Configured() { util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("isi DEVCONTROL_ADMIN_PASSWORD dan DEVCONTROL_SESSION_SECRET di Vercel untuk mengaktifkan panel admin")); return }
+		if !auth.Configured() { util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("isi DEVCONTROL_ADMIN_PASSWORD (minimal 16 karakter) di Vercel untuk mengaktifkan panel admin; rahasia sesi dibuat otomatis")); return }
 		if !auth.Allowed(r, resource) { util.Error(w, http.StatusUnauthorized, fmt.Errorf("login admin atau API key dengan hak baca diperlukan")); return }
 	}
 	// Record only traffic handled by this authenticated Go API. CDN pages,

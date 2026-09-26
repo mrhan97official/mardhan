@@ -93,7 +93,7 @@ func Allowed(r *http.Request, resource string) bool {
 
 func HandleSession(w http.ResponseWriter, r *http.Request) {
   if !Configured() {
-    util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("konfigurasi admin belum lengkap: isi DEVCONTROL_ADMIN_PASSWORD (minimal 16 karakter) dan DEVCONTROL_SESSION_SECRET (minimal 32 karakter) di Vercel"))
+    util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("konfigurasi admin belum lengkap: isi DEVCONTROL_ADMIN_PASSWORD (minimal 16 karakter) di Vercel lalu Redeploy; DEVCONTROL_SESSION_SECRET kini dibuat otomatis"))
     return
   }
   switch r.Method {

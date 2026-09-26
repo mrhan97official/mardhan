@@ -37,6 +37,17 @@ func Prepare() error {
   return err
 }
 
+// IsCurrent is a single cheap query used by the auto-setup status poll.
+// A database without schema_migrations is simply not prepared yet.
+func IsCurrent() (bool, error) {
+  rows, err := d1.Query(`SELECT version FROM schema_migrations WHERE version = ? LIMIT 1`, appSchemaVersion)
+  if err != nil {
+    if strings.Contains(strings.ToLower(err.Error()), "no such table") { return false, nil }
+    return false, err
+  }
+  return len(rows) == 1, nil
+}
+
 func Inspect() (Status, error) {
   status := Status{Tables: []Table{}, MissingIndexes: []string{}, Migrations: []string{}}
   rows, err := d1.Query(`SELECT name, type FROM sqlite_schema WHERE type IN ('table', 'index')`)

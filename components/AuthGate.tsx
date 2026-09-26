@@ -1,10 +1,18 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { LockKeyhole, RefreshCw } from "lucide-react";
+import { CheckCircle2, AlertCircle, LockKeyhole, RefreshCw } from "lucide-react";
 import { cacheClear } from "@/lib/db";
 
 type State = "checking" | "authenticated" | "login";
+type CoreVariable = { key: string; set: boolean; required: boolean };
+
+const corePurpose: Record<string, string> = {
+  CF_API_TOKEN: "Token Cloudflare: akun, database D1, dan bucket R2 dideteksi/dibuat otomatis",
+  DEVCONTROL_ADMIN_PASSWORD: "Kata sandi masuk (minimal 16 karakter)",
+  GITHUB_TOKEN: "Opsional: fitur Aplikasi Baru / Update",
+  VERCEL_TOKEN: "Opsional: fitur deployment & metrik zona",
+};
 
 async function clearPrivateCaches() {
   await cacheClear().catch(() => {});
@@ -19,11 +27,17 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [core, setCore] = useState<CoreVariable[]>([]);
 
   async function check() {
     try {
       const response = await fetch("/api/session", { cache: "no-store", credentials: "same-origin" });
       const body = await response.json().catch(() => ({}));
+      if (response.status === 503) {
+        // Admin not configured yet: show which core variables are still empty.
+        const setup = await fetch("/api/auto-setup", { cache: "no-store", credentials: "same-origin" }).then((r) => r.json()).catch(() => ({}));
+        setCore(Array.isArray(setup.core) ? setup.core : []);
+      } else setCore([]);
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
       setState(body.authenticated ? "authenticated" : "login");
       if (!body.authenticated) void clearPrivateCaches();
@@ -84,6 +98,17 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           </form>
         )}
         {error && <p role="alert" className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
+        {core.length > 0 && (
+          <div className="space-y-2 rounded-xl border border-base-border p-3">
+            <p className="text-xs font-semibold text-slate-300">Cukup isi variabel inti ini di Vercel → Settings → Environment Variables, lalu Redeploy. Sisanya disiapkan otomatis.</p>
+            {core.map((item) => (
+              <div key={item.key} className="flex items-start gap-2 text-xs">
+                {item.set ? <CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-400" /> : <AlertCircle size={15} className={`mt-0.5 shrink-0 ${item.required ? "text-red-400" : "text-slate-500"}`} />}
+                <span><code className="font-mono text-slate-100">{item.key}</code><span className="block text-slate-400">{corePurpose[item.key] ?? ""}</span></span>
+              </div>
+            ))}
+          </div>
+        )}
         <button type="button" onClick={() => { setState("checking"); void check(); }} className="inline-flex items-center gap-2 text-xs text-slate-400 hover:text-white">
           <RefreshCw size={13} /> Periksa ulang koneksi
         </button>

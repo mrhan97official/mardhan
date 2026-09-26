@@ -118,6 +118,28 @@ npm run build
 npm run start
 ```
 
+## Setup kilat: cukup variabel inti
+
+Orang lain yang memasang DevControl hanya perlu mengisi variabel inti di Vercel → Settings → Environment Variables, lalu Redeploy:
+
+| Variabel | Wajib | Fungsi |
+|---|---|---|
+| `CF_API_TOKEN` | ya | Akun, database D1 `devcontrol-db`, dan bucket R2 dideteksi atau dibuat otomatis |
+| `DEVCONTROL_ADMIN_PASSWORD` | ya | Kata sandi admin (≥16 karakter); rahasia sesi & kunci arsip diturunkan darinya |
+| `GITHUB_TOKEN` | fitur deploy | Aplikasi Baru, Update Aplikasi, Update Diri |
+| `VERCEL_TOKEN` | fitur deploy | Build uji, deploy, penyimpanan `CF_ZONE_ID`; team dideteksi otomatis |
+
+Aktifkan juga **Automatically expose System Environment Variables** agar project dikenali.
+
+Alurnya setelah login admin (paket `pkg/autoconfig`, endpoint `/api/auto-setup`, komponen `ConfirmationCenter`):
+
+1. Nilai yang bisa dihitung atau dicari langsung diisi saat runtime; nilai yang Anda isi manual selalu menang.
+2. Langkah tanpa keputusan (buat D1, pasang tabel, buat bucket R2, aktifkan metrik API) dijalankan otomatis dengan panel progres.
+3. Bila perlu keputusan — token punya beberapa akun Cloudflare, atau zona Cloudflare cocok dengan domain aplikasi — jendela konfirmasi muncul saat itu juga (status dipantau tiap 5 detik selama setup belum tuntas). Jika aplikasi sedang di latar belakang dan notifikasi diizinkan, konfirmasi juga dikirim sebagai notifikasi.
+4. Sebelum login, halaman masuk menampilkan variabel inti mana yang masih kosong.
+
+Instalasi lama yang semua variabelnya sudah terisi tidak berubah perilakunya.
+
 ## Deploy: GitHub → Vercel
 
 ### Deployment aplikasi dari dashboard
