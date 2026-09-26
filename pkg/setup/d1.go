@@ -26,7 +26,7 @@ type Status struct {
   Migrations []string `json:"migrations"`
 }
 
-const appSchemaVersion = "app-1.0.33-promo-banner"
+const appSchemaVersion = "app-1.0.33-promo-banner-manual"
 
 // Prepare avoids replaying the full schema before every new deployment.
 // The Databases page always performs a fresh inspection and can repair drift.
@@ -103,7 +103,7 @@ func Ensure() (Status, error) {
   for _, statement := range migrationStatements {
     if strings.HasPrefix(statement.SQL, "ALTER TABLE") {
       parts := strings.Fields(statement.SQL)
-      if len(parts) < 7 || (parts[2] != "services" && parts[2] != "project_thumbnails") { return Status{}, fmt.Errorf("migrasi kolom tidak dikenal") }
+      if len(parts) < 7 || (parts[2] != "services" && parts[2] != "project_thumbnails" && parts[2] != "app_promo_banner") { return Status{}, fmt.Errorf("migrasi kolom tidak dikenal") }
       table := parts[2]
       column := parts[5]
       columns, err := d1.Query(`PRAGMA table_info(` + table + `)`)

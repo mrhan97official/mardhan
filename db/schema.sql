@@ -182,11 +182,13 @@ CREATE TABLE IF NOT EXISTS project_thumbnail_objects (
 );
 CREATE INDEX IF NOT EXISTS idx_project_thumbnail_objects_repo ON project_thumbnail_objects (repo);
 
--- One featured application promotion; its compressed banner image lives in
+-- One general or application promotion; its compressed banner image lives in
 -- R2 through the same verified upload flow as project thumbnails.
 CREATE TABLE IF NOT EXISTS app_promo_banner (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   target_repo TEXT NOT NULL,
+  app_name TEXT NOT NULL DEFAULT '',
+  app_url TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL,
   description TEXT NOT NULL,
   image_repo TEXT NOT NULL,

@@ -1422,17 +1422,11 @@ func validPromoImageRepo(repo string) bool {
 	return len(id) == 32 && strings.Trim(id, "0123456789abcdef") == ""
 }
 
-func validPromoTarget(repo string) bool {
-	parts := strings.Split(repo, "/")
-	if len(parts) != 2 { return false }
-	for _, part := range parts {
-		if part == "" || part == "." || part == ".." || len(part) > 100 { return false }
-		for _, ch := range part {
-			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-				(ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.') { return false }
-		}
-	}
-	return true
+func validPromoURL(raw string) bool {
+	if raw == "" { return true }
+	parsed, err := url.Parse(raw)
+	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") &&
+		parsed.Hostname() != "" && parsed.User == nil && !strings.ContainsAny(raw, "\r\n\t ")
 }
 
 // Banner text is stored in D1. Its image uses a separate verified R2 upload
@@ -1444,14 +1438,15 @@ func handleAppPromo(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := d1.Query(`SELECT target_repo AS repo, title, description, image_repo, version
+		rows, err := d1.Query(`SELECT target_repo AS repo, app_name, app_url, title, description, image_repo, version
 			FROM app_promo_banner WHERE id = 1 LIMIT 1`)
 		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
 		if len(rows) == 0 { util.JSON(w, http.StatusOK, nil); return }
 		util.JSON(w, http.StatusOK, rows[0])
 	case http.MethodPost:
 		var input struct {
-			Repo string `json:"repo"`
+			AppName string `json:"app_name"`
+			AppURL string `json:"app_url"`
 			Title string `json:"title"`
 			Description string `json:"description"`
 			ImageRepo string `json:"image_repo"`
@@ -1460,13 +1455,15 @@ func handleAppPromo(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&input); err != nil {
 			util.Error(w, http.StatusBadRequest, fmt.Errorf("data banner tidak valid")); return
 		}
-		input.Repo = strings.TrimSpace(input.Repo)
+		input.AppName = strings.TrimSpace(input.AppName)
+		input.AppURL = strings.TrimSpace(input.AppURL)
 		input.Title = strings.TrimSpace(input.Title)
 		input.Description = strings.TrimSpace(input.Description)
-		if !validPromoTarget(input.Repo) || input.Title == "" || utf8.RuneCountInString(input.Title) > 80 ||
+		if utf8.RuneCountInString(input.AppName) > 100 || len(input.AppURL) > 500 || !validPromoURL(input.AppURL) ||
+			utf8.RuneCountInString(input.Title) > 80 ||
 			utf8.RuneCountInString(input.Description) > 220 || !validPromoImageRepo(input.ImageRepo) ||
 			len(input.Version) != 32 || strings.Trim(input.Version, "0123456789abcdef") != "" {
-			util.Error(w, http.StatusBadRequest, fmt.Errorf("pilih aplikasi, isi judul maksimal 80 karakter, deskripsi maksimal 220 karakter, dan unggah gambar banner")); return
+			util.Error(w, http.StatusBadRequest, fmt.Errorf("nama aplikasi maksimal 100 karakter, judul 80 karakter, deskripsi 220 karakter, tautan harus HTTP(S), dan gambar banner wajib diunggah")); return
 		}
 		images, err := d1.Query(`SELECT version FROM project_thumbnails WHERE repo = ? LIMIT 1`, input.ImageRepo)
 		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
@@ -1475,12 +1472,12 @@ func handleAppPromo(w http.ResponseWriter, r *http.Request) {
 		}
 		previous, err := d1.Query(`SELECT image_repo FROM app_promo_banner WHERE id = 1 LIMIT 1`)
 		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
-		if _, err := d1.Query(`INSERT INTO app_promo_banner (id, target_repo, title, description, image_repo, version)
-			VALUES (1, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
-			target_repo = excluded.target_repo, title = excluded.title,
-			description = excluded.description, image_repo = excluded.image_repo,
+		if _, err := d1.Query(`INSERT INTO app_promo_banner (id, target_repo, app_name, app_url, title, description, image_repo, version)
+			VALUES (1, '', ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+			target_repo = '', app_name = excluded.app_name, app_url = excluded.app_url,
+			title = excluded.title, description = excluded.description, image_repo = excluded.image_repo,
 			version = excluded.version, updated_at = CURRENT_TIMESTAMP`,
-			input.Repo, input.Title, input.Description, input.ImageRepo, input.Version); err != nil {
+			input.AppName, input.AppURL, input.Title, input.Description, input.ImageRepo, input.Version); err != nil {
 			util.Error(w, http.StatusBadGateway, err); return
 		}
 		if len(previous) == 1 {
