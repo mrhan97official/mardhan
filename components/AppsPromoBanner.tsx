@@ -41,7 +41,7 @@ export default function AppsPromoBanner({ apps }: { apps: ProjectEntry[] }) {
             ) : <p role="alert" className="flex h-full items-center justify-center text-sm text-slate-600">Gambar banner belum dapat ditampilkan.</p>}
           </div>
         ) : (
-          <div className="flex min-h-[150px] items-center justify-center bg-gradient-to-r from-sky-50 to-white px-5 text-center text-slate-700 sm:aspect-[16/5]">
+          <div className="flex min-h-[150px] items-center justify-center bg-gradient-to-r from-sky-50 to-white px-2 text-center text-slate-700 sm:aspect-[16/5]">
             <div>
               <p className="text-base font-semibold">Banner promosi belum diatur</p>
               <a href="/settings#promo-banner" className="mt-2 inline-block text-sm font-medium text-blue-700 underline underline-offset-2">Atur banner di Pengaturan</a>
@@ -49,7 +49,7 @@ export default function AppsPromoBanner({ apps }: { apps: ProjectEntry[] }) {
           </div>
         )}
         {banner && hasCaption && (
-          <div className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:px-6">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-2 py-2">
             <div className="min-w-0">
               {appName && <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">{appName}</p>}
               {banner.title && <h2 className="mt-0.5 text-lg font-semibold text-slate-900 sm:text-xl">{banner.title}</h2>}

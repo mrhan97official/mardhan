@@ -90,7 +90,7 @@ export default function ZipArchivePanel() {
   }
 
   return (
-    <section id="zip-archives" className="card space-y-4 p-4 sm:p-5">
+    <section id="zip-archives" className="card space-y-2 p-2">
       <div>
         <h2 className="text-base font-semibold text-white">Arsip ZIP aplikasi</h2>
         <p className="mt-1 text-xs text-slate-400">Hanya ZIP terbaru yang berhasil online yang disimpan per aplikasi. ZIP yang gagal dibuang, dan versi sukses sebelumnya tetap aktif.</p>
@@ -108,7 +108,7 @@ export default function ZipArchivePanel() {
         <>
           <div className="space-y-2">
             {items.map((item) => (
-              <div key={item.id} className="flex flex-col gap-2 rounded-xl border border-base-border bg-base-850/60 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div key={item.id} className="flex flex-col gap-2 rounded-xl border border-base-border bg-base-850/60 p-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-slate-200">{item.filename}</p>
                   <p className="mt-1 text-xs text-slate-400">{item.scope === "self" ? "Update Diri" : "Aplikasi"} · {item.target} · {label(item)}</p>

@@ -59,8 +59,8 @@ export default function DatabasesPage() {
   const missing = status?.d1.tables.filter((table) => !table.exists || table.missing.length || table.mismatched.length) || [];
   return (
     <AppShell title="Databases" subtitle="Data tabel D1, pemeriksaan skema, dan penyimpanan R2">
-      <section className="card space-y-4 p-4 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <section className="card space-y-2 p-2">
+        <div className="flex flex-wrap items-start justify-between gap-2">
           <div><h2 className="flex items-center gap-2 text-lg font-bold"><Database size={19} /> Kesiapan penyimpanan</h2>
             <p className="mt-1 text-sm text-slate-400">Kredensial tetap di server. Tindakan penyiapan hanya menambah struktur yang tercatat di kode.</p></div>
           <div className="flex gap-2">
@@ -69,15 +69,15 @@ export default function DatabasesPage() {
               className="rounded-lg bg-accent-blue px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Menyiapkan…" : "Siapkan D1 + R2"}</button>
           </div>
         </div>
-        {error && <p role="alert" className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
-        {message && <p role="status" className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-300">{message}</p>}
+        {error && <p role="alert" className="rounded-lg bg-red-500/10 p-2 text-sm text-red-300">{error}</p>}
+        {message && <p role="status" className="rounded-lg bg-emerald-500/10 p-2 text-sm text-emerald-300">{message}</p>}
         {!status && !error && <p className="text-sm text-slate-400">Membaca database…</p>}
         {status && <div className="grid gap-2 sm:grid-cols-2">
-          <div className="rounded-xl border border-base-border bg-base-850 p-4">
+          <div className="rounded-xl border border-base-border bg-base-850 p-2">
             <p className="text-xs text-slate-400">Cloudflare D1</p><p className="mt-1 font-semibold">{status.d1.ready ? "Skema siap" : `${missing.length} tabel perlu diperiksa`}</p>
             <p className="mt-1 text-xs text-slate-400">{status.d1.migrations.length} migrasi tercatat · {status.d1.missing_indexes.length} indeks kurang</p>
           </div>
-          <div className="rounded-xl border border-base-border bg-base-850 p-4">
+          <div className="rounded-xl border border-base-border bg-base-850 p-2">
             <p className="text-xs text-slate-400">Arsip Cloudflare R2</p>
             <p className="mt-1 font-semibold">{status.r2_exists ? "Bucket tersedia" : "Bucket belum siap"}</p>
             <p className="mt-1 text-xs text-slate-400">{status.r2_error || "Uji baca/tulis dilakukan saat penyiapan atau awal deployment."}</p>
@@ -85,11 +85,11 @@ export default function DatabasesPage() {
         </div>}
       </section>
       {status?.d1.connected && <D1DataBrowser />}
-      {status && <section className="card p-4 sm:p-6">
+      {status && <section className="card p-2">
         <h2 className="flex items-center gap-2 text-base font-semibold"><ShieldCheck size={18} /> Tabel aplikasi</h2>
         <p className="mt-1 text-xs text-slate-400">Kolom tambahan pada database lama ditampilkan, tidak dihapus. Perubahan akan ditinjau sebelum tombol penyiapan dijalankan.</p>
-        <div className="mt-4 grid gap-2 md:grid-cols-3">
-          {status.d1.tables.map((table) => <div key={table.name} className="min-w-0 rounded-xl border border-base-border bg-base-850 p-4">
+        <div className="mt-2 grid gap-2 md:grid-cols-3">
+          {status.d1.tables.map((table) => <div key={table.name} className="min-w-0 rounded-xl border border-base-border bg-base-850 p-2">
             <div className="flex items-center justify-between gap-2"><span className="truncate font-mono text-xs text-slate-200">{table.name}</span>
               <span className={`text-xs ${table.exists && !table.missing.length && !table.mismatched.length ? "text-emerald-400" : "text-amber-400"}`}>
                 {table.exists ? table.missing.length || table.mismatched.length ? "Perlu diperiksa" : "Siap" : "Belum ada"}</span></div>
@@ -99,7 +99,7 @@ export default function DatabasesPage() {
             {table.extra.length > 0 && <p className="mt-1 break-words text-xs text-slate-400">Kolom tambahan: {table.extra.join(", ")}</p>}
           </div>)}
         </div>
-        {status.d1.missing_indexes.length > 0 && <p className="mt-4 text-xs text-amber-300">Indeks yang perlu dibuat: {status.d1.missing_indexes.join(", ")}</p>}
+        {status.d1.missing_indexes.length > 0 && <p className="mt-2 text-xs text-amber-300">Indeks yang perlu dibuat: {status.d1.missing_indexes.join(", ")}</p>}
       </section>}
     </AppShell>
   );

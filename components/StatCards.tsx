@@ -72,8 +72,8 @@ export default function StatCards({ stats }: { stats: OverviewStats }) {
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-4">
       {cards.map((c) => (
-        <div key={c.label} className="card p-4 md:p-3 xl:p-4">
-          <div className="flex min-w-0 items-center gap-2.5 md:min-h-[3.75rem] md:gap-2 xl:min-h-0 xl:gap-3">
+        <div key={c.label} className="card p-2">
+          <div className="flex min-w-0 items-center gap-2 md:min-h-[3.75rem] md:gap-2 xl:min-h-0">
             <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl md:h-8 md:w-8 xl:h-9 xl:w-9 ${c.iconBg}`}>
               <c.icon size={18} />
             </div>
@@ -82,7 +82,7 @@ export default function StatCards({ stats }: { stats: OverviewStats }) {
               <p className="mt-0.5 block whitespace-nowrap text-2xl font-bold leading-none tabular-nums text-white md:text-[22px] xl:text-[28px]">{c.value}</p>
             </div>
           </div>
-          <div className="mt-3 flex min-w-0 items-center gap-1.5 md:mt-2">
+          <div className="mt-2 flex min-w-0 items-center gap-1.5 md:mt-2">
             <div className="flex min-w-0 flex-1 items-center gap-1">
               <ChangeTag value={c.change} invert={c.invert} />
               <span className="min-w-0 truncate text-[11px] text-slate-500 md:text-[10px] xl:text-xs">{c.sub}</span>

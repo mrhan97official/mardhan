@@ -84,9 +84,9 @@ export default function CloudflareZoneSettings() {
 
   const choice = state?.zones.find((zone) => zone.id === selected);
   return (
-    <section className="card max-w-3xl space-y-4 p-5 sm:p-6" aria-labelledby="zone-approval-title">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
+    <section className="card max-w-3xl space-y-2 p-2" aria-labelledby="zone-approval-title">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-start gap-2">
           <CloudCog className="mt-1 shrink-0 text-accent-blue" size={21} />
           <div>
             <h3 id="zone-approval-title" className="text-lg font-semibold text-white">Monitoring otomatis</h3>
@@ -96,24 +96,24 @@ export default function CloudflareZoneSettings() {
         <button type="button" aria-label="Segarkan daftar zona" title="Segarkan" disabled={loading || saving} onClick={() => void refresh()} className="rounded-lg border border-base-border p-2 text-slate-300 hover:bg-base-800 disabled:opacity-50"><RefreshCw size={16} /></button>
       </div>
 
-      {state?.mode === "api" && <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200"><Check size={15} className="mr-1 inline-block" /> Aktif: monitoring API DevControl. Network menunjukkan byte respons API dan Requests menunjukkan jumlah panggilan API, bukan seluruh trafik CDN Vercel.</p>}
+      {state?.mode === "api" && <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-sm text-emerald-200"><Check size={15} className="mr-1 inline-block" /> Aktif: monitoring API DevControl. Network menunjukkan byte respons API dan Requests menunjukkan jumlah panggilan API, bukan seluruh trafik CDN Vercel.</p>}
       {state?.approved && state.mode !== "api" && (
-        <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">
+        <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-sm text-emerald-200">
           <Check size={15} className="mr-1 inline-block" /> Aktif: <strong>{state.approved.zone_name}</strong> · Vercel {state.approved.vercel_synced ? "tersimpan" : "belum tersinkron; setujui kembali untuk mencoba"}
         </p>
       )}
-      {!state?.approved && state?.mode !== "api" && state?.active_zone_id && <p className="rounded-lg border border-base-border bg-base-800/50 p-3 text-sm text-slate-300">Zona dari environment Vercel saat ini: <code>{state.active_zone_id}</code></p>}
+      {!state?.approved && state?.mode !== "api" && state?.active_zone_id && <p className="rounded-lg border border-base-border bg-base-800/50 p-2 text-sm text-slate-300">Zona dari environment Vercel saat ini: <code>{state.active_zone_id}</code></p>}
 
       <button type="button" disabled={!state || loading || saving} onClick={() => void activateAutomatically()} className="rounded-xl bg-accent-blue px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">{saving ? "Mengecek sumber dan mengaktifkan…" : state?.mode ? "Periksa ulang sumber otomatis" : "Aktifkan monitoring satu klik"}</button>
       {state && !loading && state.zones.length === 0 && <p className="text-xs text-slate-400">{state.project.domain || "Domain Vercel"} belum memiliki zona Cloudflare yang tersedia. Tombol di atas tetap bisa mengaktifkan pemantauan Go API tanpa domain tambahan.</p>}
-      {error && <p role="alert" className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
-      {message && <p role="status" className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-200">{message}</p>}
+      {error && <p role="alert" className="rounded-lg bg-red-500/10 p-2 text-sm text-red-300">{error}</p>}
+      {message && <p role="status" className="rounded-lg bg-emerald-500/10 p-2 text-sm text-emerald-200">{message}</p>}
 
-      <details className="rounded-xl border border-base-border p-3 sm:p-4">
+      <details className="rounded-xl border border-base-border p-2">
         <summary className="cursor-pointer text-sm font-medium text-slate-200">Pilih zona Cloudflare secara manual (opsional)</summary>
-        <div className="mt-4 space-y-3">
-      {state?.project_error && <p role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">Vercel: {state.project_error}</p>}
-      {state?.zone_error && <p role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">Cloudflare: {state.zone_error}</p>}
+        <div className="mt-2 space-y-2">
+      {state?.project_error && <p role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200">Vercel: {state.project_error}</p>}
+      {state?.zone_error && <p role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200">Cloudflare: {state.zone_error}</p>}
       {state?.project.id && <p className="text-xs text-slate-400">Project tujuan: <strong className="text-slate-200">{state.project.name}</strong>{state.project.domain && <> · domain produksi {state.project.domain}</>}</p>}
       {loading && <p className="text-sm text-slate-400">Mencari zona dari akun Cloudflare…</p>}
       {state && !loading && state.zones.length === 0 && <p className="text-sm text-slate-400">Belum ada zona untuk dipilih. Domain vercel.app tidak bisa diaktifkan sebagai zona Cloudflare milik Anda.</p>}
@@ -121,8 +121,8 @@ export default function CloudflareZoneSettings() {
         <fieldset className="space-y-2" disabled={loading || saving}>
           <legend className="mb-2 text-sm font-medium text-slate-200">Pilih zona yang ingin dipantau</legend>
           {state.zones.map((zone) => (
-            <label key={zone.id} className={`flex cursor-pointer items-center justify-between gap-3 rounded-xl border p-3 text-sm transition-colors ${selected === zone.id ? "border-accent-blue bg-accent-blue/10" : "border-base-border hover:bg-base-800/60"}`}>
-              <span className="flex min-w-0 items-center gap-3">
+            <label key={zone.id} className={`flex cursor-pointer items-center justify-between gap-2 rounded-xl border p-2 text-sm transition-colors ${selected === zone.id ? "border-accent-blue bg-accent-blue/10" : "border-base-border hover:bg-base-800/60"}`}>
+              <span className="flex min-w-0 items-center gap-2">
                 <input type="radio" name="cloudflare-zone" value={zone.id} checked={selected === zone.id} onChange={() => { setSelected(zone.id); setMessage(""); }} className="accent-blue-500" />
                 <span className="min-w-0"><strong className="block break-all text-slate-100">{zone.name}</strong><span className="break-all text-xs text-slate-500">{zone.id}</span></span>
               </span>

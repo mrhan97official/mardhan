@@ -172,13 +172,13 @@ export default function ProjectsPage() {
       </div>
 
       {repos.error && (
-        <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+        <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-2 py-2 text-sm text-amber-200">
           Gagal membaca repo GitHub: {repos.error}. Periksa GITHUB_TOKEN di Vercel dan akses token ke repo tersebut.
           {repos.data.length > 0 && " Menampilkan daftar yang tersimpan sebelumnya."}
         </div>
       )}
       {services.error && (
-        <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+        <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-2 py-2 text-sm text-amber-200">
           Data deployment D1 belum tersedia: {services.error}. Repo GitHub tetap ditampilkan tanpa URL aplikasi.
         </div>
       )}
@@ -216,18 +216,18 @@ export default function ProjectsPage() {
       )}
       <ZipArchivePanel key={archiveRefresh} />
       {target && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deleting) setTarget(null); }}>
-          <div role="dialog" aria-modal="true" aria-labelledby="delete-project-title" className="w-full max-w-md rounded-2xl border border-red-500/30 bg-base-900 p-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-3">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-2" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deleting) setTarget(null); }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="delete-project-title" className="w-full max-w-md rounded-2xl border border-red-500/30 bg-base-900 p-2 shadow-2xl">
+            <div className="flex items-start justify-between gap-2">
               <h2 id="delete-project-title" className="flex items-center gap-2 text-base font-bold text-white"><Trash2 size={18} className="text-red-400" /> Hapus aplikasi</h2>
               <button type="button" aria-label="Tutup" disabled={deleting} onClick={() => setTarget(null)} className="text-slate-400 hover:text-white disabled:opacity-50"><X size={18} /></button>
             </div>
-            <p className="mt-3 break-all text-sm font-medium text-white">{target}</p>
+            <p className="mt-2 break-all text-sm font-medium text-white">{target}</p>
             <p className="mt-2 text-sm text-slate-400">Tindakan ini menghapus repo GitHub, project Vercel beserta deployment dan domainnya, arsip ZIP aplikasi, serta data terkait di DevControl. Tidak dapat dibatalkan.</p>
-            <label htmlFor="confirm-project-delete" className="mt-5 block text-xs font-medium text-slate-300">Ketik <span className="select-all font-bold text-white">{target}</span> untuk mengonfirmasi</label>
+            <label htmlFor="confirm-project-delete" className="mt-2 block text-xs font-medium text-slate-300">Ketik <span className="select-all font-bold text-white">{target}</span> untuk mengonfirmasi</label>
             <input id="confirm-project-delete" autoFocus type="text" autoComplete="off" spellCheck={false} value={confirmation} disabled={deleting} onChange={(event) => setConfirmation(event.target.value)} className="mt-2 w-full rounded-xl border border-base-border bg-base-850 px-3 py-2 text-sm text-white focus:border-red-400 focus:outline-none" />
-            {deleteError && <p role="alert" className="mt-3 text-xs text-red-300">{deleteError}</p>}
-            <div className="mt-5 flex justify-end gap-2">
+            {deleteError && <p role="alert" className="mt-2 text-xs text-red-300">{deleteError}</p>}
+            <div className="mt-2 flex justify-end gap-2">
               <button type="button" disabled={deleting} onClick={() => setTarget(null)} className="rounded-xl border border-base-border px-4 py-2 text-sm text-slate-300 disabled:opacity-50">Batal</button>
               <button type="button" disabled={deleting || confirmation !== target} onClick={() => void deleteProject()} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50">{deleting ? "Menghapus..." : "Hapus permanen"}</button>
             </div>

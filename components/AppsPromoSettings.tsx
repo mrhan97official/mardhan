@@ -187,8 +187,8 @@ export default function AppsPromoSettings() {
     : "";
 
   return (
-    <section id="promo-banner" className="card max-w-3xl scroll-mt-6 space-y-4 p-5 sm:p-6" aria-labelledby="promo-title">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section id="promo-banner" className="card max-w-3xl scroll-mt-6 space-y-2 p-2" aria-labelledby="promo-title">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h3 id="promo-title" className="text-lg font-semibold text-white">Banner halaman Aplikasi</h3>
           <p className="mt-1 text-sm text-slate-400">Gambar ditampilkan bersih dengan rasio 1440 × 450. Nama aplikasi, tautan, judul, dan deskripsi boleh kosong untuk banner umum.</p>
@@ -204,8 +204,8 @@ export default function AppsPromoSettings() {
         </div>
       )}
       {promotion.error && <p role="alert" className="text-xs text-amber-300">Banner belum dapat dimuat: {promotion.error}</p>}
-      {editing && <form onSubmit={(event) => void save(event)} className="space-y-4 border-t border-base-border pt-4">
-        <div className="grid gap-4 md:grid-cols-2">
+      {editing && <form onSubmit={(event) => void save(event)} className="space-y-2 border-t border-base-border pt-2">
+        <div className="grid gap-2 md:grid-cols-2">
           <label className="block text-xs font-medium text-slate-300">Nama aplikasi yang dipromosikan (opsional)
             <input maxLength={100} value={appName} disabled={busy} onChange={(event) => setAppName(event.target.value)} placeholder="Contoh: DevControl" className="mt-1.5 w-full rounded-lg border border-base-border bg-base-900 px-3 py-2.5 text-sm text-white" />
           </label>
@@ -219,12 +219,12 @@ export default function AppsPromoSettings() {
         <label className="block text-xs font-medium text-slate-300">Deskripsi singkat (opsional)
           <textarea maxLength={220} rows={2} value={description} disabled={busy} onChange={(event) => setDescription(event.target.value)} placeholder="Kosongkan jika pesan sudah ada pada gambar" className="mt-1.5 w-full resize-y rounded-lg border border-base-border bg-base-900 px-3 py-2.5 text-sm text-white" />
         </label>
-        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-base-700">
+        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-base-border bg-base-800 px-2 py-2 text-xs font-medium text-slate-200 hover:bg-base-700">
           <ImagePlus size={15} /> {prepared ? "Ganti gambar pilihan" : promotion.data ? "Ganti gambar banner" : "Pilih gambar banner"}
           <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy || preparing} className="sr-only" onChange={(event) => { void chooseImage(event.target.files?.[0]); event.target.value = ""; }} />
         </label>
         {preparing && <p role="status" className="text-xs text-slate-400">Mengolah dan mengompres gambar…</p>}
-        {prepared && <div className="flex flex-wrap items-center gap-3">
+        {prepared && <div className="flex flex-wrap items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={prepared.preview} alt="Pratinjau gambar banner" className="aspect-[16/5] w-48 rounded-lg border border-base-border bg-white object-cover" />
           <div className="text-xs text-slate-400">
@@ -235,7 +235,7 @@ export default function AppsPromoSettings() {
           </div>
         </div>}
         {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-base-border pt-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-base-border pt-2">
           <p className="text-[11px] text-slate-500">Gunakan gambar 1440 × 450. JPG, PNG, atau WebP hingga 30 MB; gambar lain dipotong tengah dan hasilnya dikompres bila lebih ringan.</p>
           <div className="flex gap-2">
             {promotion.data && <button type="button" disabled={busy || preparing} onClick={() => void remove()} className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs font-medium text-red-300 disabled:opacity-50"><Trash2 size={14} /> Hapus</button>}

@@ -31,7 +31,7 @@ export default function LiveLogs({ logs }: { logs: LiveLog[] }) {
   const visible = logs.filter((l) => matches(filter, l.level));
 
   return (
-    <div className="card flex min-w-0 flex-col p-4 sm:p-6">
+    <div className="card flex min-w-0 flex-col p-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-bold text-white sm:text-lg">Live Logs</h2>
         <button className="rounded-lg border border-base-border bg-base-850 p-1.5 text-slate-400 hover:text-slate-200">
@@ -39,7 +39,7 @@ export default function LiveLogs({ logs }: { logs: LiveLog[] }) {
         </button>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1 rounded-lg border border-base-border bg-base-850 p-1">
           {FILTERS.map((f) => (
             <button
@@ -58,7 +58,7 @@ export default function LiveLogs({ logs }: { logs: LiveLog[] }) {
         </button>
       </div>
 
-      <div className="scroll-x mt-3 max-h-64 flex-1 overflow-y-auto rounded-xl bg-base-950/60 p-3 font-mono text-xs leading-relaxed">
+      <div className="scroll-x mt-2 max-h-64 flex-1 overflow-y-auto rounded-xl bg-base-950/60 p-2 font-mono text-xs leading-relaxed">
         {visible.length === 0 && (
           <p className="text-slate-600">Tidak ada log untuk filter ini.</p>
         )}

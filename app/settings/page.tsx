@@ -129,12 +129,12 @@ export default function SettingsPage() {
 
   return (
     <AppShell title="Settings" subtitle="Workspace and account preferences">
-      <div className="flex items-center gap-3">
-        <div className="rounded-xl bg-accent-blue/15 p-2.5 text-accent-blue"><Settings size={19} /></div>
+      <div className="flex items-center gap-2">
+        <div className="rounded-xl bg-accent-blue/15 p-2 text-accent-blue"><Settings size={19} /></div>
         <div><h2 className="font-semibold text-white">Identitas aplikasi</h2><p className="text-sm text-slate-400">Atur logo DevControl untuk sidebar dan ikon aplikasi.</p></div>
       </div>
 
-      <section className="card max-w-3xl space-y-5 p-5 sm:p-6" aria-labelledby="logo-title">
+      <section className="card max-w-3xl space-y-2 p-2" aria-labelledby="logo-title">
         <div>
           <h3 id="logo-title" className="text-lg font-semibold text-white">Logo aplikasi</h3>
           <p className="mt-1 text-sm text-slate-400">Unggah PNG atau JPG, lalu pilih latar ikon untuk browser dan PWA. Untuk latar bening, gunakan PNG transparan.</p>
@@ -147,7 +147,7 @@ export default function SettingsPage() {
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap items-center gap-6">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="space-y-2 text-center">
             <div className="logo-transparency-bg flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl border border-base-border">
               {version ? <img src={`/api/branding/icon?size=512&v=${version}`} alt="Logo aplikasi saat ini" className="h-full w-full object-contain" /> : <Cloud size={37} className="text-accent-blue" />}
@@ -160,7 +160,7 @@ export default function SettingsPage() {
               <p className="max-w-28 truncate text-xs text-slate-400">Pratinjau</p>
             </div>
           )}
-          <div className="min-w-0 flex-1 space-y-3">
+          <div className="min-w-0 flex-1 space-y-2">
             <input ref={picker} type="file" accept="image/png,image/jpeg" onChange={(event) => void chooseLogo(event)} className="sr-only" aria-label="Pilih file logo" />
             <button type="button" disabled={busy} onClick={() => picker.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-base-border bg-base-800 px-4 py-2.5 text-sm font-medium text-slate-100 hover:bg-base-700 disabled:opacity-50">
               <ImagePlus size={16} /> {busy ? "Memproses…" : version ? "Pilih logo baru" : "Pilih logo"}
@@ -168,14 +168,14 @@ export default function SettingsPage() {
             {prepared && <p className="truncate text-xs text-slate-400">{prepared.filename}</p>}
           </div>
         </div>
-        <div className="flex flex-wrap gap-3 border-t border-base-border pt-4">
+        <div className="flex flex-wrap gap-2 border-t border-base-border pt-2">
           <button type="button" disabled={!prepared || busy} onClick={() => void saveLogo()} className="inline-flex items-center gap-2 rounded-xl bg-accent-blue px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
             <Save size={16} /> Simpan logo
           </button>
           {version && <button type="button" disabled={busy} onClick={() => void resetLogo()} className="inline-flex items-center gap-2 rounded-xl border border-base-border px-4 py-2.5 text-sm text-slate-300 hover:bg-base-800 disabled:opacity-50"><RotateCcw size={16} /> Kembalikan bawaan</button>}
         </div>
-        {error && <p role="alert" className="rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
-        {message && <p role="status" className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-300">{message}</p>}
+        {error && <p role="alert" className="rounded-lg bg-red-500/10 p-2 text-sm text-red-300">{error}</p>}
+        {message && <p role="status" className="rounded-lg bg-emerald-500/10 p-2 text-sm text-emerald-300">{message}</p>}
         <p className="text-xs text-slate-500">Untuk menghilangkan latar hitam pada logo lama, pilih lagi file PNG asli yang transparan sebelum menyimpan.</p>
       </section>
 
@@ -183,7 +183,7 @@ export default function SettingsPage() {
 
       <CloudflareZoneSettings />
 
-      <aside className="max-w-3xl rounded-xl border border-base-border bg-base-900/60 p-4 text-sm text-slate-300">
+      <aside className="max-w-3xl rounded-xl border border-base-border bg-base-900/60 p-2 text-sm text-slate-300">
         <p className="font-medium text-white">Ikon aplikasi yang sudah dipasang</p>
         <p className="mt-1">Logo di dalam aplikasi berubah otomatis. Untuk mengganti ikon di Layar Utama iPad atau iPhone yang sudah terpasang, hapus ikon lama, buka alamat aplikasi di Safari, lalu pilih Bagikan → Tambahkan ke Layar Utama. Pembaruan ikon yang sudah terpasang pada perangkat lain bergantung pada browser; pasang ulang jika ikon lamanya masih terlihat.</p>
       </aside>

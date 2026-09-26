@@ -50,7 +50,7 @@ export default function ApiPerformancePanel({ perf, onRangeChange, range }: { pe
   ];
 
   return (
-    <div className="card min-w-0 p-4 sm:p-6">
+    <div className="card min-w-0 p-2">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-white sm:text-lg">Hasil Pemeriksaan API</h2>
         {onRangeChange ? <select aria-label="Rentang pemeriksaan" value={range || perf.range || "24h"} onChange={(event) => onRangeChange(event.target.value as "24h" | "7d" | "30d")}
@@ -58,10 +58,10 @@ export default function ApiPerformancePanel({ perf, onRangeChange, range }: { pe
           <option value="24h">24 jam</option><option value="7d">7 hari</option><option value="30d">30 hari</option>
         </select> : <span className="text-xs text-slate-400">24 jam</span>}
       </div>
-      {perf.request_volume === 0 && <p className="mt-4 text-sm text-slate-400">Belum ada uji endpoint dalam rentang ini. Grafik tidak memakai data contoh.</p>}
-      {perf.request_volume > 0 && <div className="mt-4 divide-y divide-base-border/70">
+      {perf.request_volume === 0 && <p className="mt-2 text-sm text-slate-400">Belum ada uji endpoint dalam rentang ini. Grafik tidak memakai data contoh.</p>}
+      {perf.request_volume > 0 && <div className="mt-2 divide-y divide-base-border/70">
         {rows.map((r) => (
-          <div key={r.label} className="flex items-center gap-3 py-3.5 first:pt-0 last:pb-0">
+          <div key={r.label} className="flex items-center gap-2 py-2 first:pt-0 last:pb-0">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-base-800 text-slate-300">
               <r.icon size={16} />
             </div>
@@ -78,7 +78,7 @@ export default function ApiPerformancePanel({ perf, onRangeChange, range }: { pe
           </div>
         ))}
       </div>}
-      <p className="mt-4 text-xs text-slate-500">Metrik ini berasal dari tombol Uji API yang dijalankan DevControl; bukan total trafik aplikasi lain.</p>
+      <p className="mt-2 text-xs text-slate-500">Metrik ini berasal dari tombol Uji API yang dijalankan DevControl; bukan total trafik aplikasi lain.</p>
     </div>
   );
 }

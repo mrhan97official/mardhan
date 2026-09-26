@@ -67,7 +67,7 @@ function JobStages({ stages, job, inactive = false, now }: {
   now: number | null;
 }) {
   return (
-    <div className={`grid grid-cols-2 gap-4 sm:grid-cols-4 ${inactive ? "opacity-60" : "mt-5"}`}>
+    <div className={`grid grid-cols-2 gap-2 sm:grid-cols-4 ${inactive ? "opacity-60" : "mt-2"}`}>
       {stages.map((stage) => {
         const status: StageStatus = job?.status === "Interrupted" && stage.status === "Running" ? "Interrupted" : stage.status;
         return (
@@ -123,26 +123,26 @@ export default function DeploymentPipeline({
 
   const visibleJobs = limit ? jobs.slice(0, limit) : jobs;
   return (
-    <div className="card min-w-0 p-4 sm:p-6">
-      <div className="flex items-center justify-between gap-3">
+    <div className="card min-w-0 p-2">
+      <div className="flex items-center justify-between gap-2">
         <h2 className="text-base font-bold text-white sm:text-lg">Deployment Pipeline</h2>
         <NewDeploymentMenu />
       </div>
 
       {error && (
-        <div role="status" className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+        <div role="status" className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-2 text-xs text-amber-200">
           Gagal memuat status terbaru: {error}.
           {onDeployed && <button type="button" onClick={onDeployed} className="ml-2 font-semibold text-accent-blue hover:underline">Coba lagi</button>}
         </div>
       )}
-      <div className="mt-4 space-y-2">
+      <div className="mt-2 space-y-2">
         {visibleJobs.length === 0 && (
-          <section className="flex min-h-[clamp(136px,10rem,160px)] flex-col justify-center rounded-xl border border-base-border bg-base-900 p-4" aria-label="Tahapan deployment">
+          <section className="flex min-h-[clamp(136px,10rem,160px)] flex-col justify-center rounded-xl border border-base-border bg-base-900 p-2" aria-label="Tahapan deployment">
             <JobStages stages={fallbackPipeline} inactive now={now} />
           </section>
         )}
         {visibleJobs.map((job) => (
-          <section key={job.id} className="min-h-[clamp(136px,10rem,160px)] rounded-xl border border-base-border bg-base-900 p-4" aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
+          <section key={job.id} className="min-h-[clamp(136px,10rem,160px)] rounded-xl border border-base-border bg-base-900 p-2" aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-100">{KIND_TEXT[job.kind]} · <span className="break-all">{job.target}</span></p>
@@ -155,7 +155,7 @@ export default function DeploymentPipeline({
             {job.message && <p className={`mt-2 text-xs ${job.status === "Failed" ? "text-red-400" : job.status === "Interrupted" ? "text-amber-400" : "text-slate-400"}`}>{job.message}</p>}
             <JobStages stages={job.stages} job={job} now={now} />
             {(job.status === "Failed" || job.status === "Interrupted") && (
-              <div className="mt-3 space-y-2">
+              <div className="mt-2 space-y-2">
                 <button type="button" onClick={() => setOpenDiagnosis((current) => current === job.id ? null : job.id)}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/40 px-2.5 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/10">
                   <Stethoscope size={13} /> {openDiagnosis === job.id ? "Tutup diagnosis" : "Lihat letak error & saran perbaikan"}

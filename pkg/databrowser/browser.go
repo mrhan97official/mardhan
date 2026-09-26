@@ -7,7 +7,6 @@ package databrowser
 import (
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -59,25 +58,37 @@ func toInt(value interface{}) int64 {
 	return 0
 }
 
+// countRows avoids compound SELECT (UNION ALL), which D1 limits to a few
+// terms. It reads up to 10 counts per query as plain scalar subqueries:
+//   SELECT (SELECT COUNT(*) FROM "a") AS c0, (SELECT COUNT(*) FROM "b") AS c1
+// and falls back to one query per table if a batch is rejected.
+func countRows(names []string) map[string]int64 {
+	counts := make(map[string]int64, len(names))
+	for start := 0; start < len(names); start += 10 {
+		end := start + 10
+		if end > len(names) { end = len(names) }
+		batch := names[start:end]
+		parts := make([]string, 0, len(batch))
+		for index, name := range batch { parts = append(parts, fmt.Sprintf(`(SELECT COUNT(*) FROM %s) AS c%d`, quote(name), index)) }
+		rows, err := d1.Query(`SELECT ` + strings.Join(parts, ", "))
+		if err == nil && len(rows) == 1 {
+			for index, name := range batch { counts[name] = toInt(rows[0][fmt.Sprintf("c%d", index)]) }
+			continue
+		}
+		for _, name := range batch {
+			single, singleErr := d1.Query(`SELECT COUNT(*) AS n FROM ` + quote(name))
+			if singleErr == nil && len(single) == 1 { counts[name] = toInt(single[0]["n"]) } else { counts[name] = -1 }
+		}
+	}
+	return counts
+}
+
 func listTables(w http.ResponseWriter) {
 	names, err := tableNames()
 	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	counts := countRows(names)
 	result := make([]tableCount, 0, len(names))
-	if len(names) > 0 {
-		parts := make([]string, 0, len(names))
-		params := make([]interface{}, 0, len(names))
-		for index, name := range names {
-			parts = append(parts, fmt.Sprintf(`SELECT ?%d AS name, (SELECT COUNT(*) FROM %s) AS n`, index+1, quote(name)))
-			params = append(params, name)
-		}
-		rows, err := d1.Query(strings.Join(parts, " UNION ALL "), params...)
-		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
-		for _, row := range rows {
-			name, _ := row["name"].(string)
-			result = append(result, tableCount{Name: name, Rows: toInt(row["n"])})
-		}
-		sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
-	}
+	for _, name := range names { result = append(result, tableCount{Name: name, Rows: counts[name]}) }
 	util.JSON(w, http.StatusOK, map[string]interface{}{"tables": result})
 }
 

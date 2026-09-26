@@ -117,7 +117,7 @@ export default function D1DataBrowser() {
   }, [page]);
 
   return (
-    <section className="card min-w-0 space-y-3 p-3 sm:p-4" aria-labelledby="data-browser-title">
+    <section className="card min-w-0 space-y-2 p-2" aria-labelledby="data-browser-title">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 id="data-browser-title" className="flex items-center gap-2 text-base font-semibold"><Table2 size={18} /> Data tabel D1</h2>
@@ -134,13 +134,13 @@ export default function D1DataBrowser() {
         <>
           <select value={table} onChange={(event) => pickTable(event.target.value)} aria-label="Pilih tabel"
             className="w-full rounded-lg border border-base-border bg-base-900 p-2 font-mono text-sm sm:hidden">
-            {tables.map((item) => <option key={item.name} value={item.name}>{item.name} ({item.rows})</option>)}
+            {tables.map((item) => <option key={item.name} value={item.name}>{item.name} ({item.rows < 0 ? "?" : item.rows})</option>)}
           </select>
           <div className="hidden flex-wrap gap-1.5 sm:flex" role="tablist" aria-label="Tabel">
             {tables.map((item) => (
               <button key={item.name} type="button" role="tab" aria-selected={item.name === table} onClick={() => pickTable(item.name)}
                 className={`rounded-lg border px-2.5 py-1 font-mono text-xs ${item.name === table ? "border-accent-blue bg-accent-blue/15 text-accent-blue" : "border-base-border text-slate-300 hover:bg-base-800"}`}>
-                {item.name} <span className="text-slate-500">{item.rows.toLocaleString("id-ID")}</span>
+                {item.name} <span className="text-slate-500">{item.rows < 0 ? "?" : item.rows.toLocaleString("id-ID")}</span>
               </button>
             ))}
           </div>
@@ -163,7 +163,7 @@ export default function D1DataBrowser() {
         </>
       )}
 
-      {error && <p role="alert" className="rounded-lg bg-red-500/10 p-2.5 text-sm text-red-300">{error}</p>}
+      {error && <p role="alert" className="rounded-lg bg-red-500/10 p-2 text-sm text-red-300">{error}</p>}
 
       {page && (
         <div className="relative overflow-x-auto rounded-lg border border-base-border">
@@ -218,8 +218,8 @@ export default function D1DataBrowser() {
       {detail && page && (
         <div className="fixed inset-0 z-[60] flex items-end justify-center p-2 sm:items-center" role="dialog" aria-modal="true" aria-label="Detail baris">
           <button aria-label="Tutup" onClick={() => setDetail(null)} className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
-          <div className="card relative max-h-[85vh] w-full max-w-2xl overflow-y-auto p-4">
-            <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="card relative max-h-[85vh] w-full max-w-2xl overflow-y-auto p-2">
+            <div className="mb-2 flex items-center justify-between gap-2">
               <h3 className="font-mono text-sm font-bold text-white">{page.table}</h3>
               <div className="flex items-center gap-1">
                 <button type="button" onClick={() => void copyRow()} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold text-accent-blue hover:bg-base-800">

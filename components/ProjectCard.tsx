@@ -88,7 +88,7 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
   }, [actionsOpen]);
 
   return (
-    <div className={`card relative flex min-w-0 flex-col gap-3 p-4 sm:p-5 ${actionsOpen ? "z-30" : "z-0"}`}>
+    <div className={`card relative flex min-w-0 flex-col gap-2 p-2 ${actionsOpen ? "z-30" : "z-0"}`}>
       <div className="relative aspect-[4/3] rounded-xl border border-base-border bg-base-800">
         <div className="absolute inset-0 overflow-hidden rounded-xl">
           <div className="absolute inset-0 bg-gradient-to-br from-blue-500/25 via-base-800 to-violet-500/20" aria-hidden="true">
@@ -163,7 +163,7 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
         {repo.description || "Tidak ada deskripsi."}
       </p>
 
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-slate-500">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-slate-500">
         {repo.language && (
           <span className="flex items-center gap-1.5">
             <span className={`h-2 w-2 rounded-full ${languageDot}`} />
@@ -188,7 +188,7 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
         )}
       </div>
 
-      <div className="mt-1 flex flex-wrap items-center justify-between gap-2 border-t border-base-border/70 pt-3">
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-2 border-t border-base-border/70 pt-2">
         <span className="text-[11px] text-slate-500">{pushed ? `Diperbarui ${pushed}` : linked ? "Tercatat di deployment" : "Repo GitHub"}</span>
         {repo.html_url && (
           <a href={repo.html_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs text-slate-300 hover:underline">

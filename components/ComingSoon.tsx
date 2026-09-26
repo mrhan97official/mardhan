@@ -10,7 +10,7 @@ export default function ComingSoon({
   description: string;
 }) {
   return (
-    <div className="card flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+    <div className="card flex flex-col items-center justify-center gap-2 px-2 py-2 text-center">
       <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent-blue/15 text-accent-blue">
         <Icon size={22} />
       </div>

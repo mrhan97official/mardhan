@@ -41,19 +41,19 @@ export default function InfraHealth({ metrics }: { metrics: InfraMetric[] }) {
   }, [metrics]);
 
   return (
-    <div className="card min-w-0 p-4 md:p-3 xl:p-6">
+    <div className="card min-w-0 p-2">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-bold text-white sm:text-base">Infrastructure Health</h2>
         <span className="text-right text-[9px] text-slate-500">Go · {metrics.some((m) => m.source === "DevControl · API") ? "API" : "Cloudflare"}</span>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
         {metrics.map((m) => {
           const meta = META[m.metric];
           const hasSeries = Array.isArray(m.values) && m.values.length > 1 && m.current !== null;
           const sparkValues = hasSeries ? m.values : history[m.metric]?.length > 1 ? history[m.metric] : m.current !== null ? [m.current, m.current] : null;
           return (
-            <div key={m.metric} className="min-w-0 rounded-xl border border-base-border/70 p-3 md:p-2 xl:p-3">
+            <div key={m.metric} className="min-w-0 rounded-xl border border-base-border/70 p-2 md:p-2">
               <div className="flex items-center justify-between gap-1 md:flex-wrap xl:flex-nowrap">
                 <span className="flex min-w-0 items-center gap-1 text-xs font-medium text-slate-300 md:text-[9px] xl:text-xs">
                   <span style={{ color: meta.color }}>{meta.icon}</span>
@@ -63,7 +63,7 @@ export default function InfraHealth({ metrics }: { metrics: InfraMetric[] }) {
                   {formatValue(m)}
                 </span>
               </div>
-              <div className="mt-3 flex h-14 items-center">
+              <div className="mt-2 flex h-14 items-center">
                 {sparkValues
                   ? <Sparkline values={sparkValues} color={meta.color} height={56} width={220} />
                   : <span className="text-[11px] text-slate-500 md:text-[8px] xl:text-[11px]">Belum tersedia</span>}

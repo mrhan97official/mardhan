@@ -94,7 +94,7 @@ export default function ErrorDiagnosis({
   }
 
   return (
-    <section className="space-y-3 rounded-xl border border-red-500/30 bg-red-500/[0.04] p-3.5" aria-label="Diagnosis error">
+    <section className="space-y-2 rounded-xl border border-red-500/30 bg-red-500/[0.04] p-2" aria-label="Diagnosis error">
       <div className="flex flex-wrap items-center gap-2">
         <Stethoscope size={16} className="text-red-300" />
         <h3 className="text-sm font-bold text-white">Diagnosis error</h3>
@@ -111,13 +111,13 @@ export default function ErrorDiagnosis({
       </dl>
 
       {diagnosis.snippet && (
-        <pre className="max-h-64 overflow-auto rounded-lg border border-base-border bg-base-950 p-2.5 font-mono text-[11px] leading-relaxed text-slate-300">{diagnosis.snippet}</pre>
+        <pre className="max-h-64 overflow-auto rounded-lg border border-base-border bg-base-950 p-2 font-mono text-[11px] leading-relaxed text-slate-300">{diagnosis.snippet}</pre>
       )}
 
       <div className="space-y-1.5">
         <p className="text-xs text-slate-300"><span className="font-semibold text-slate-100">Penyebab: </span>{diagnosis.cause}</p>
         <p className="text-xs font-semibold text-slate-100">Saran perbaikan</p>
-        <ol className="list-decimal space-y-1 pl-5 text-xs text-slate-300">
+        <ol className="list-decimal space-y-1 pl-2 text-xs text-slate-300">
           {diagnosis.fixes.map((fix, index) => <li key={index}>{fix}</li>)}
         </ol>
         {diagnosis.retryable && (
@@ -130,11 +130,11 @@ export default function ErrorDiagnosis({
           <button type="button" onClick={() => setShowLog((value) => !value)} className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-white">
             <ChevronDown size={14} className={showLog ? "rotate-180 transition-transform" : "transition-transform"} /> {showLog ? "Sembunyikan log" : "Lihat log build"}
           </button>
-          {showLog && <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-base-950 p-2.5 text-[11px] text-slate-300">{diagnosis.log_excerpt}</pre>}
+          {showLog && <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-base-950 p-2 text-[11px] text-slate-300">{diagnosis.log_excerpt}</pre>}
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-base-border pt-3">
+      <div className="flex flex-wrap items-center gap-2 border-t border-base-border pt-2">
         <button type="button" onClick={() => void copyPrompt()}
           className="inline-flex items-center gap-1.5 rounded-lg bg-accent-blue px-3 py-2 text-xs font-semibold text-white">
           {copied === "ok" ? <Check size={14} /> : <Copy size={14} />}

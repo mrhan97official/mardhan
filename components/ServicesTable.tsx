@@ -14,7 +14,7 @@ const ICON_BY_NAME: Record<string, JSX.Element> = {
 
 export default function ServicesTable({ services }: { services: Service[] }) {
   return (
-    <div className="card min-w-0 p-4 sm:p-6">
+    <div className="card min-w-0 p-2">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-white sm:text-lg">Services</h2>
         <button className="flex items-center gap-1 text-sm font-medium text-accent-blue hover:text-blue-400">
@@ -22,7 +22,7 @@ export default function ServicesTable({ services }: { services: Service[] }) {
         </button>
       </div>
 
-      <div className="scroll-x mt-4">
+      <div className="scroll-x mt-2">
         <table className="w-full min-w-[420px] text-left text-sm">
           <thead>
             <tr className="text-xs uppercase tracking-wide text-slate-500">

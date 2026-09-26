@@ -23,7 +23,7 @@ export default function EnvironmentStatus({ environments, loading, error, update
   const visible = viewAll ? environments.slice(0, 3) : environments;
 
   return (
-    <div className="card min-w-0 p-4 sm:p-6">
+    <div className="card min-w-0 p-2">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-base font-bold text-white sm:text-lg">Environment Status</h2>
         {viewAll ? (
@@ -38,12 +38,12 @@ export default function EnvironmentStatus({ environments, loading, error, update
       </div>
       <p className="mt-1 text-xs text-slate-500">Status build terbaru dari Vercel · bukan pemantauan uptime</p>
       {error && (
-        <p role="alert" className="mt-3 rounded-lg bg-amber-400/10 px-3 py-2 text-xs text-amber-300">
+        <p role="alert" className="mt-2 rounded-lg bg-amber-400/10 px-2 py-2 text-xs text-amber-300">
           {environments.length ? "Data tersimpan; status terbaru belum terverifikasi. " : "Status tidak tersedia. "}{error}
         </p>
       )}
 
-      <div className="scroll-x mt-4">
+      <div className="scroll-x mt-2">
         <table className="w-full min-w-[420px] text-left text-sm">
           <thead>
             <tr className="text-xs uppercase tracking-wide text-slate-500">
