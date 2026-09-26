@@ -123,7 +123,7 @@ export default function Header({
 
   return (
     <header className="app-header relative z-30 shrink-0 bg-base-950/85 backdrop-blur">
-      <div className="border-y border-base-border px-4 py-3 sm:px-6">
+      <div className="border-y border-base-border px-2 py-3">
         <div className="flex items-center gap-3">
         <div className="md:hidden">
           <SidebarLogo expanded={false} onClick={onMenuClick} label="Buka menu" />

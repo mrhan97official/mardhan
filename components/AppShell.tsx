@@ -35,7 +35,7 @@ export default function AppShell({
           subtitle={subtitle}
         />
 
-        <main className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-y-contain p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:space-y-6 sm:p-6">
+        <main className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:space-y-3">
           {children}
         </main>
       </div>
