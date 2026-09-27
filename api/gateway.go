@@ -66,6 +66,7 @@ import (
 	"devcontrol/pkg/history"
 	"devcontrol/pkg/setup"
 	"devcontrol/pkg/util"
+	"devcontrol/pkg/vercelapp"
 	"devcontrol/pkg/vercelenv"
 )
 
@@ -1018,7 +1019,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	if phase == "vercel-test" {
 		updateDeploymentStage(archiveID, 2, "Running")
-		id, previewURL, tempProject, testErr := createVercelTestDeployment(vercelToken, name, files)
+		id, previewURL, tempProject, framework, testErr := createVercelTestDeployment(vercelToken, name, files)
 		if testErr != nil {
 			_ = store.Fail(archiveID)
 			cleanupTestProject(vercelToken, tempProject)
@@ -1031,13 +1032,16 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		ticket, ticketErr := signBuildTicket(vercelToken, buildTicket{
 			Stage: "app-test", Mode: deployType, Name: name, DeploymentID: id,
 			Project: tempProject, URL: previewURL, ZipSHA: zipDigest(zipBytes), ArchiveID: archiveID,
+			Framework: framework, Probe: vercelapp.ExpectsHomePage(toVercelFiles(files)),
 		})
 		if ticketErr != nil {
 			cleanupTestProject(vercelToken, tempProject)
 			util.Error(w, http.StatusInternalServerError, ticketErr)
 			return
 		}
-		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: true, Status: "pending", Ticket: ticket, ArchiveID: archiveID, Message: "Build uji Vercel dimulai; menunggu hasil build..."})
+		startMessage := "Build uji Vercel dimulai; menunggu hasil build..."
+		if framework != "" { startMessage = "Build uji Vercel (" + framework + ") dimulai; menunggu hasil build..." }
+		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: true, Status: "pending", Ticket: ticket, ArchiveID: archiveID, Message: startMessage})
 		return
 	}
 
@@ -1082,6 +1086,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	repoFullName := owner + "/" + repoName
 	var testProjectToCleanup string
+	var phaseTicket buildTicket
 	if phase == "github" || phase == "vercel-live" {
 		ticket, ticketErr := verifyBuildTicket(vercelToken, r.FormValue("ticket"))
 		expectedStage := "app-push"
@@ -1092,6 +1097,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusBadRequest, fmt.Errorf("sesi deployment tidak valid; mulai lagi dari tahap uji build"))
 			return
 		}
+		phaseTicket = ticket
 		if phase == "github" { testProjectToCleanup = ticket.Project }
 	}
 	if testProjectToCleanup != "" { defer cleanupTestProject(vercelToken, testProjectToCleanup) }
@@ -1100,7 +1106,23 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		updateDeploymentStage(archiveID, 4, "Running")
 		// Use a stable, account-scoped Vercel project for every update.
 		project := vercelAppProjectName(owner, repoName)
-		id, deploymentURL, deployErr := createVercelDeployment(vercelToken, project, "production", files)
+		var id, deploymentURL, source string
+		var deployErr error
+		if phaseTicket.Linked {
+			// Connected to GitHub: build the pushed commit, the same way a
+			// manual import deploys, so Vercel shows the repo and commit.
+			deployment, gitErr := vercelapp.New(vercelToken).CreateGitDeployment(project, owner, repoName, branch, phaseTicket.CommitSHA, phaseTicket.Framework)
+			if gitErr == nil {
+				id, deploymentURL, source = deployment.ID, deployment.URL, "GitHub "+repoFullName+"@"+branch
+			} else {
+				logLiveLog("WARN", label+": deployment dari GitHub gagal dimulai ("+gitErr.Error()+"); memakai unggahan ZIP")
+				setSyncNote(archiveID, "Deployment dari GitHub gagal dimulai; aplikasi dionlinekan dari ZIP: "+gitErr.Error())
+			}
+		}
+		if id == "" {
+			id, deploymentURL, _, deployErr = createVercelDeployment(vercelToken, project, "production", files, phaseTicket.Framework)
+			source = "ZIP"
+		}
 		if deployErr != nil {
 			_ = store.Fail(archiveID)
 			msg := "[Onlinekan di Vercel] " + deployErr.Error()
@@ -1113,12 +1135,13 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 			Stage: "app-live", Mode: deployType, Name: name, DeploymentID: id,
 			URL: deploymentURL, Repo: repoFullName, Branch: branch, Environment: environment,
 			ArchiveID: archiveID, ZipSHA: zipDigest(zipBytes),
+			Framework: phaseTicket.Framework, Probe: phaseTicket.Probe, Linked: phaseTicket.Linked,
 		})
 		if ticketErr != nil {
 			util.Error(w, http.StatusInternalServerError, ticketErr)
 			return
 		}
-		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: true, Status: "pending", Ticket: ticket, Repo: repoFullName, Message: "Deployment production dimulai; menunggu aplikasi online..."})
+		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: true, Status: "pending", Ticket: ticket, Repo: repoFullName, Message: "Deployment production dari " + source + " dimulai; menunggu aplikasi online..."})
 		return
 	}
 
@@ -1134,7 +1157,26 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, pushPlan, err := pushFilesToGitHub(githubToken, owner, repoName, branch, files, githubPushOptions{})
+	// An existing Vercel project is connected to the repo (and receives the
+	// .env values) BEFORE the push: once connected, the push itself starts
+	// Vercel's build, which must already see those values.
+	vercelClient := vercelapp.New(vercelToken)
+	project := vercelAppProjectName(owner, repoName)
+	envVars := vercelapp.EnvFromFiles(toVercelFiles(files))
+	gitState, envErr := prepareExistingVercelProject(vercelClient, project, owner, repoName, phaseTicket.Framework, envVars)
+	if envErr != nil {
+		_ = store.Fail(archiveID)
+		msg := "[GitHub] Variabel .env dari ZIP belum dapat disalin ke Vercel, jadi tidak ada yang didorong (build dari GitHub akan kehilangan nilainya): " + envErr.Error()
+		logLiveLog("ERROR", label+": "+msg)
+		updateDeploymentStage(archiveID, 3, "Failed")
+		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg, Repo: repoFullName})
+		return
+	}
+
+	// A connected project builds exactly what is in the repo, so files the
+	// ZIP dropped are removed in this same commit instead of after going
+	// online (reposync keeps lockfiles, CI files and secrets rules).
+	commitSHA, pushPlan, err := pushFilesToGitHub(githubToken, owner, repoName, branch, files, githubPushOptions{DeleteStale: gitState.Linked})
 	setSyncNote(archiveID, pushPlan.SecretsNote())
 	if err != nil {
 		_ = store.Fail(archiveID)
@@ -1144,24 +1186,135 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg, Repo: repoFullName})
 		return
 	}
+	if !gitState.Found {
+		// First deployment: create the project connected to the repo that
+		// now has its first commit (like "Import Git Repository").
+		gitState = createVercelGitProject(vercelClient, project, owner, repoName, phaseTicket.Framework, envVars)
+	}
+	for _, note := range gitState.Notes {
+		setSyncNote(archiveID, note)
+		logLiveLog("INFO", label+": "+note)
+	}
 
 	updateDeploymentStage(archiveID, 3, "Success")
 	updateDeploymentStage(archiveID, 4, "Running")
 	logLiveLog("INFO", fmt.Sprintf("%s: %q didorong ke %s@%s", label, name, repoFullName, branch))
 	nextTicket, ticketErr := signBuildTicket(vercelToken, buildTicket{
 		Stage: "app-live-start", Mode: deployType, Name: name, ZipSHA: zipDigest(zipBytes),
-		Repo: repoFullName, Branch: branch, ArchiveID: archiveID,
+		Repo: repoFullName, Branch: branch, ArchiveID: archiveID, CommitSHA: commitSHA,
+		Framework: phaseTicket.Framework, Probe: phaseTicket.Probe, Linked: gitState.Linked,
 	})
 	if ticketErr != nil {
 		util.Error(w, http.StatusInternalServerError, ticketErr)
 		return
 	}
 
+	connection := "Vercel belum terhubung ke GitHub; production memakai ZIP"
+	if gitState.Linked { connection = "Vercel terhubung ke GitHub" }
 	util.JSON(w, http.StatusOK, deployResult{
 		Step: phase, OK: true,
-		Message: fmt.Sprintf("Berhasil didorong ke %s@%s; menyiapkan Vercel.", repoFullName, branch),
+		Message: fmt.Sprintf("Berhasil didorong ke %s@%s; %s.", repoFullName, branch, connection),
 		Repo:    repoFullName, Ticket: nextTicket, ArchiveID: archiveID,
 	})
+}
+
+// vercelGitState: the app's Vercel project and whether production is built
+// from its GitHub repo. Notes are shown in the deployment history.
+type vercelGitState struct {
+	ID     string
+	Found  bool
+	Linked bool
+	Notes  []string
+}
+
+func vercelGitAccessNote(repo string, err error) string {
+	return "Vercel belum dapat mengakses repo " + repo + " (" + err.Error() + "). Izinkan repo ini untuk aplikasi Vercel di GitHub (Settings → Applications → Vercel → Repository access); sampai itu, production tetap dionlinekan dari ZIP."
+}
+
+func syncVercelEnv(client *vercelapp.Client, projectID string, env []vercelapp.EnvVar) (string, error) {
+	if len(env) == 0 { return "", nil }
+	added, failed, err := client.AddMissingEnv(projectID, env)
+	if err != nil { return "", err }
+	parts := []string{}
+	if len(added) > 0 { parts = append(parts, fmt.Sprintf("%d variabel .env disalin ke Environment Variables Vercel (%s)", len(added), strings.Join(added, ", "))) }
+	if len(failed) > 0 { parts = append(parts, "ditolak Vercel: "+strings.Join(failed, ", ")) }
+	return strings.Join(parts, "; "), nil
+}
+
+// prepareExistingVercelProject runs before the push. Found=false means the
+// project does not exist yet (first deployment). An error is returned only
+// when a connected project cannot receive the ZIP's .env values; nothing has
+// been pushed at that point, so production is untouched.
+func prepareExistingVercelProject(client *vercelapp.Client, project, owner, repo, framework string, env []vercelapp.EnvVar) (vercelGitState, error) {
+	state := vercelGitState{}
+	info, found, err := client.GetProject(project)
+	if err != nil {
+		// Unknown state: never create a second project, deploy from the ZIP.
+		state.Found = true
+		state.Notes = append(state.Notes, "Status project Vercel tidak terbaca ("+err.Error()+"); production dionlinekan dari ZIP")
+		return state, nil
+	}
+	if !found { return state, nil }
+	state.Found, state.ID = true, info.ID
+	if framework != "" && info.Framework == "" {
+		// Projects created by older versions have no framework: that is the
+		// 404 NOT_FOUND after a "successful" deployment.
+		if setErr := client.SetFramework(info.ID, framework); setErr != nil {
+			state.Notes = append(state.Notes, "Framework project Vercel belum dapat disimpan: "+setErr.Error())
+		} else {
+			state.Notes = append(state.Notes, "Framework project Vercel diatur ke "+framework)
+		}
+	}
+	full := owner + "/" + repo
+	switch {
+	case info.LinkedTo(owner, repo):
+		state.Linked = true
+	case info.LinkType != "":
+		state.Notes = append(state.Notes, "Project Vercel terhubung ke repo lain; koneksi Git-nya tidak diubah dan production dionlinekan dari ZIP")
+	default:
+		if linkErr := client.LinkProject(info.ID, full); linkErr != nil {
+			state.Notes = append(state.Notes, vercelGitAccessNote(full, linkErr))
+		} else {
+			state.Linked = true
+			state.Notes = append(state.Notes, "Project Vercel dihubungkan ke GitHub "+full)
+		}
+	}
+	if state.Linked {
+		note, envErr := syncVercelEnv(client, info.ID, env)
+		if envErr != nil { return state, envErr }
+		if note != "" { state.Notes = append(state.Notes, note) }
+	}
+	return state, nil
+}
+
+// createVercelGitProject creates the app's project connected to its repo.
+// Without repo access it still creates the project with the right framework
+// and production is deployed from the ZIP, as before.
+func createVercelGitProject(client *vercelapp.Client, project, owner, repo, framework string, env []vercelapp.EnvVar) vercelGitState {
+	state := vercelGitState{Found: true}
+	full := owner + "/" + repo
+	info, gitErr := client.CreateProject(project, framework, full)
+	if gitErr != nil {
+		plain, plainErr := client.CreateProject(project, framework, "")
+		if plainErr != nil {
+			state.Notes = append(state.Notes, "Project Vercel dibuat oleh deployment ZIP ("+plainErr.Error()+")")
+			return state
+		}
+		state.ID = plain.ID
+		state.Notes = append(state.Notes, vercelGitAccessNote(full, gitErr))
+		return state
+	}
+	state.ID, state.Linked = info.ID, true
+	state.Notes = append(state.Notes, "Project Vercel dibuat dan terhubung ke GitHub "+full)
+	note, envErr := syncVercelEnv(client, info.ID, env)
+	if envErr != nil {
+		// The ZIP upload carries the .env files, so it stays correct.
+		state.Linked = false
+		state.Notes = append(state.Notes, "Variabel .env belum dapat disalin ke Vercel ("+envErr.Error()+"); production kali ini dionlinekan dari ZIP")
+		return state
+	}
+	if note != "" { state.Notes = append(state.Notes, note) }
+	return state
 }
 
 // Each status request performs one Vercel API call, keeping the Go function
@@ -1216,9 +1369,26 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: msg, Repo: ticket.Repo, BuildLog: buildLog})
 		return
 	}
+	if step == "vercel-test" && ticket.Probe {
+		// READY only means the build finished. Open the test page itself:
+		// Vercel's own 404 there means the app would be unreachable online.
+		if protectErr := vercelapp.New(token).DisableProtection(ticket.Project); protectErr != nil {
+			logLiveLog("WARN", "Proteksi project uji tidak dapat dilepas; pemeriksaan halaman bisa dilewati: "+protectErr.Error())
+		}
+		if vercelapp.MissingHomePage(ticket.URL) {
+			_ = store.Fail(ticket.ArchiveID)
+			cleanupTestProject(token, ticket.Project)
+			msg := missingHomePageMessage("Uji Build Vercel", ticket.Framework) + " Tidak ada yang didorong ke GitHub dan production tidak berubah."
+			updateDeploymentStage(ticket.ArchiveID, 2, "Failed")
+			logLiveLog("ERROR", msg)
+			util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: msg})
+			return
+		}
+	}
 	if step == "vercel-test" {
 		next, signErr := signBuildTicket(token, buildTicket{
 			Stage: "app-push", Mode: mode, Name: name, ZipSHA: ticket.ZipSHA, Project: ticket.Project, ArchiveID: ticket.ArchiveID,
+			Framework: ticket.Framework, Probe: ticket.Probe,
 		})
 		if signErr != nil { util.Error(w, http.StatusInternalServerError, signErr); return }
 		updateDeploymentStage(ticket.ArchiveID, 2, "Success")
@@ -1229,6 +1399,16 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		return
 	}
 	if liveURL == "" { liveURL = ticket.URL }
+	if ticket.Probe && vercelapp.MissingHomePage(liveURL) {
+		// Never report an app as online while visitors get Vercel's 404.
+		_ = store.Fail(ticket.ArchiveID)
+		msg := missingHomePageMessage("Onlinekan di Vercel", ticket.Framework) +
+			" Aplikasi tidak dicatat sebagai online; kembalikan versi sebelumnya lewat Vercel → Deployments → Promote atau arsip ZIP bila perlu."
+		updateDeploymentStage(ticket.ArchiveID, 4, "Failed")
+		logLiveLog("ERROR", msg)
+		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: msg, Repo: ticket.Repo, AppURL: liveURL})
+		return
+	}
 	if mode == "update_app" {
 		_, err = d1.Query(`UPDATE services SET repo = ?, branch = ?, app_url = ?, status = 'Healthy' WHERE name = ?`, ticket.Repo, ticket.Branch, liveURL, name)
 	} else {
@@ -1253,6 +1433,14 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 	logActivity(fmt.Sprintf("Deployment %s berhasil", label), fmt.Sprintf("%s (%s@%s) → %s", name, ticket.Repo, ticket.Branch, ticket.Environment), icon)
 	logLiveLog("INFO", fmt.Sprintf("%s: %q sudah online di %s", label, name, liveURL))
 	util.JSON(w, http.StatusOK, deployResult{Step: "done", OK: true, Status: "ready", Message: "Aplikasi sudah online di Vercel", Repo: ticket.Repo, AppURL: liveURL})
+}
+
+func missingHomePageMessage(stage, framework string) string {
+	preset := framework
+	if preset == "" { preset = "tidak terdeteksi" }
+	return "[" + stage + "] Build Vercel selesai, tetapi halaman utama menampilkan 404 NOT_FOUND dari Vercel (framework: " + preset +
+		"): hasil build tidak berada di folder yang disajikan Vercel. Pastikan package.json berada di akar ZIP dan memuat framework-nya " +
+		"(mis. vite, react-scripts, next) serta script \"build\", atau tambahkan vercel.json berisi \"outputDirectory\" yang sesuai (mis. \"dist\")."
 }
 
 // An existing app predates ZIP history: preserve the current GitHub branch
@@ -1968,7 +2156,7 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	updateDeploymentStage(archiveID, 2, "Running")
 	logLiveLog("INFO", fmt.Sprintf("Self-update: mengekstrak %d file dari zip untuk %s/%s", len(files), owner, repoName))
 
-	deploymentID, previewURL, tempProject, err := createVercelTestDeployment(vercelToken, repoName, files)
+	deploymentID, previewURL, tempProject, _, err := createVercelTestDeployment(vercelToken, repoName, files)
 	if err != nil {
 		_ = store.Fail(archiveID)
 		updateDeploymentStage(archiveID, 2, "Failed")
@@ -2245,52 +2433,18 @@ func stripCommonRootDir(files []selfUpdateFile) {
 	}
 }
 
-type vercelDeployFileInput struct {
-	File     string `json:"file"`
-	Data     string `json:"data"`
-	Encoding string `json:"encoding"`
-}
-
-type vercelDeployRequest struct {
-	Name            string                  `json:"name"`
-	Files           []vercelDeployFileInput `json:"files"`
-	Target          string                  `json:"target,omitempty"`
-	ProjectSettings map[string]interface{}  `json:"projectSettings,omitempty"`
-	// An empty target omits the field and creates a preview build for testing;
-	// production deployments explicitly set target to "production".
-}
-
-// A new Vercel project needs an actual framework setting. An empty object
-// does not count and returns missing_project_settings. For other source ZIPs,
-// let Vercel detect the framework with its documented confirmation flag.
-func vercelProjectSettings(files []selfUpdateFile) (map[string]interface{}, bool) {
-	for _, file := range files {
-		if file.path != "package.json" {
-			continue
-		}
-		var pkg struct {
-			Dependencies    map[string]json.RawMessage `json:"dependencies"`
-			DevDependencies map[string]json.RawMessage `json:"devDependencies"`
-		}
-		if json.Unmarshal(file.data, &pkg) == nil {
-			if _, found := pkg.Dependencies["next"]; found {
-				return map[string]interface{}{"framework": "nextjs"}, false
-			}
-			if _, found := pkg.DevDependencies["next"]; found {
-				return map[string]interface{}{"framework": "nextjs"}, false
-			}
-		}
-		break
-	}
-	return nil, true
-}
-
 type vercelDeployResponse struct {
 	ID    string `json:"id"`
 	URL   string `json:"url"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+func toVercelFiles(files []selfUpdateFile) []vercelapp.File {
+	out := make([]vercelapp.File, 0, len(files))
+	for _, file := range files { out = append(out, vercelapp.File{Path: file.path, Data: file.data}) }
+	return out
 }
 
 // createVercelTestDeployment uploads the extracted files inline (base64)
@@ -2301,73 +2455,23 @@ type vercelDeployResponse struct {
 // so a self-update test run can never show up in a real project's
 // deployment history. The returned tempProject name is what the caller
 // must delete afterwards via deleteVercelProject once the test is done.
-func createVercelTestDeployment(token, repoName string, files []selfUpdateFile) (id string, previewURL string, tempProject string, err error) {
+// framework is the preset the build really used, for the production step.
+func createVercelTestDeployment(token, repoName string, files []selfUpdateFile) (id string, previewURL string, tempProject string, framework string, err error) {
 	tempProject = temporaryVercelProjectName(repoName)
-	id, previewURL, err = createVercelDeployment(token, tempProject, "", files)
-	if err != nil { return "", "", tempProject, err }
-	return id, previewURL, tempProject, nil
+	id, previewURL, framework, err = createVercelDeployment(token, tempProject, "", files, vercelapp.DetectFramework(toVercelFiles(files)))
+	if err != nil { return "", "", tempProject, "", err }
+	return id, previewURL, tempProject, framework, nil
 }
 
-// createVercelDeployment starts either an isolated test or a real production deployment.
-func createVercelDeployment(token, project, target string, files []selfUpdateFile) (id string, deploymentURL string, err error) {
-	reqFiles := make([]vercelDeployFileInput, 0, len(files))
-	for _, f := range files {
-		reqFiles = append(reqFiles, vercelDeployFileInput{
-			File: f.path,
-			Data: base64.StdEncoding.EncodeToString(f.data),
-			Encoding: "base64",
-		})
-	}
-
-	settings, autoDetect := vercelProjectSettings(files)
-	payload := vercelDeployRequest{
-		Name: project, Files: reqFiles, Target: target,
-		ProjectSettings: settings,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", "", err
-	}
-
-	endpoint := "https://api.vercel.com/v13/deployments"
-	query := url.Values{}
-	if team := os.Getenv("VERCEL_TEAM_ID"); team != "" {
-		query.Set("teamId", team)
-	}
-	if autoDetect {
-		query.Set("skipAutoDetectionConfirmation", "1")
-	}
-	if len(query) > 0 {
-		endpoint += "?" + query.Encode()
-	}
-
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-
-	var out vercelDeployResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", "", err
-	}
-	if resp.StatusCode >= 300 {
-		if out.Error != nil && out.Error.Message != "" {
-			return "", "", fmt.Errorf("%s", out.Error.Message)
-		}
-		return "", "", fmt.Errorf("HTTP %d dari Vercel", resp.StatusCode)
-	}
-	if out.ID == "" || out.URL == "" { return "", "", fmt.Errorf("Vercel tidak mengembalikan ID atau URL deployment") }
-	return out.ID, "https://" + out.URL, nil
+// createVercelDeployment starts either an isolated test or a real production
+// deployment from the ZIP files. The framework preset is always explicit
+// (package.json, or the one Vercel itself detects): skipping detection left
+// Vite/CRA apps in a project without a framework, which served the source
+// folder instead of dist/ and showed Vercel's 404 NOT_FOUND to visitors.
+func createVercelDeployment(token, project, target string, files []selfUpdateFile, framework string) (id string, deploymentURL string, usedFramework string, err error) {
+	deployment, used, err := vercelapp.New(token).CreateFileDeployment(project, target, toVercelFiles(files), framework)
+	if err != nil { return "", "", "", err }
+	return deployment.ID, deployment.URL, used, nil
 }
 
 // deleteVercelProject removes a Vercel project (and every deployment under
@@ -2559,6 +2663,12 @@ type buildTicket struct {
 	Environment string `json:"environment,omitempty"`
 	CreatedAt int64 `json:"created_at,omitempty"`
 	Expires int64 `json:"expires"`
+	// App deployments: framework preset proven by the test build, whether the
+	// home page must be checked, and whether production is built from the
+	// GitHub commit (project connected to the repo) instead of the ZIP upload.
+	Framework string `json:"framework,omitempty"`
+	Probe bool `json:"probe,omitempty"`
+	Linked bool `json:"linked,omitempty"`
 }
 
 func zipDigest(data []byte) string { return fmt.Sprintf("%x", sha256.Sum256(data)) }
