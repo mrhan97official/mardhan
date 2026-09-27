@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Loader2, X, Clock3, Stethoscope } from "lucide-react";
+import { Check, Loader2, X, Clock3, Stethoscope, XCircle } from "lucide-react";
 import type { DeploymentJob, PipelineStage } from "@/lib/types";
 import { fallbackPipeline } from "@/lib/fallbackData";
 import NewDeploymentMenu from "@/components/deployment/NewDeploymentMenu";
@@ -146,7 +146,29 @@ export default function DeploymentPipeline({
     return () => window.removeEventListener("deployment:changed", onDeployed);
   }, [onDeployed]);
 
-  const visibleJobs = limit ? jobs.slice(0, limit) : jobs;
+  const [dismissed, setDismissed] = useState<string[]>([]);
+  const [confirmClose, setConfirmClose] = useState<string | null>(null);
+  const [closing, setClosing] = useState<string | null>(null);
+  const [closeError, setCloseError] = useState<{ id: string; message: string } | null>(null);
+  const activeJobs = jobs.filter((job) => !dismissed.includes(job.id));
+  const visibleJobs = limit ? activeJobs.slice(0, limit) : activeJobs;
+
+  // Remove a failed run from the pipeline. The server discards its ZIP too
+  // (the last successful ZIP stays), so nothing half-finished lingers.
+  async function closeJob(id: string) {
+    setClosing(id);
+    setCloseError(null);
+    try {
+      const response = await fetch(`/api/deployments?id=${id}`, { method: "DELETE", credentials: "same-origin" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((body as { error?: string }).error || `HTTP ${response.status}`);
+      setDismissed((current) => [...current, id]);
+      setConfirmClose(null);
+      onDeployed?.();
+    } catch (reason) {
+      setCloseError({ id, message: reason instanceof Error ? reason.message : "Proses gagal ditutup." });
+    } finally { setClosing(null); }
+  }
   const scrolling = scroll && visibleJobs.length > 1;
   const firstJobId = visibleJobs[0]?.id;
 
@@ -210,10 +232,28 @@ export default function DeploymentPipeline({
             <JobStages stages={job.stages} job={job} now={now} />
             {(job.status === "Failed" || job.status === "Interrupted") && (
               <div className="mt-2 space-y-2">
-                <button type="button" onClick={() => setOpenDiagnosis((current) => current === job.id ? null : job.id)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/40 px-2.5 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/10">
-                  <Stethoscope size={13} /> {openDiagnosis === job.id ? "Tutup diagnosis" : "Lihat letak error & saran perbaikan"}
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={() => setOpenDiagnosis((current) => current === job.id ? null : job.id)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/40 px-2.5 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/10">
+                    <Stethoscope size={13} /> {openDiagnosis === job.id ? "Tutup diagnosis" : "Lihat letak error & saran perbaikan"}
+                  </button>
+                  {confirmClose === job.id ? (
+                    <span className="inline-flex flex-wrap items-center gap-1.5 text-xs text-slate-300">
+                      Hapus dari pipeline?
+                      <button type="button" disabled={closing === job.id} onClick={() => void closeJob(job.id)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-red-500/80 px-2.5 py-1.5 font-semibold text-white hover:bg-red-500 disabled:opacity-50">
+                        {closing === job.id && <Loader2 size={12} className="animate-spin" />} Ya, tutup
+                      </button>
+                      <button type="button" onClick={() => setConfirmClose(null)} className="rounded-lg px-2 py-1.5 text-slate-400 hover:bg-base-800">Batal</button>
+                    </span>
+                  ) : (
+                    <button type="button" onClick={() => { setConfirmClose(job.id); setCloseError(null); }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-base-border px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:bg-base-800">
+                      <XCircle size={13} /> Tutup proses
+                    </button>
+                  )}
+                </div>
+                {closeError?.id === job.id && <p role="alert" className="text-xs text-red-300">{closeError.message}</p>}
                 {openDiagnosis === job.id && (
                   <ErrorDiagnosis jobId={job.id} diagnosis={job.diagnosis} message={job.message} kind={job.kind} target={job.target} />
                 )}

@@ -29,6 +29,7 @@
     { "source": "/api/github-branches", "destination": "/api/gateway?resource=github-branches" },
     { "source": "/api/diagnose", "destination": "/api/gateway?resource=diagnose" },
     { "source": "/api/deploy-history", "destination": "/api/gateway?resource=deploy-history" },
+    { "source": "/api/vercel-env", "destination": "/api/gateway?resource=vercel-env" },
     { "source": "/api/zip-archives", "destination": "/api/gateway?resource=zip-archives" }
   ],
   "headers": [

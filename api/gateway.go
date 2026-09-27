@@ -65,6 +65,7 @@ import (
 	"devcontrol/pkg/history"
 	"devcontrol/pkg/setup"
 	"devcontrol/pkg/util"
+	"devcontrol/pkg/vercelenv"
 )
 
 // Handler is the sole entrypoint for the whole API surface.
@@ -144,6 +145,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		handleDiagnose(w, r)
 	case "deploy-history":
 		handleDeployHistory(w, r)
+	case "vercel-env":
+		vercelenv.Handle(w, r)
 	case "databases":
 		handleDatabases(w, r)
 	case "api-management":
@@ -246,6 +249,7 @@ func pruneDeploymentJobs() error {
 // GET /api/deployments -> independent recent pipelines.
 func handleDeployments(w http.ResponseWriter, r *http.Request) {
 	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	if r.Method == http.MethodDelete { dismissDeployment(w, r); return }
 	sweepArchives()
 	if err := pruneDeploymentJobs(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	rows, err := d1.Query(`SELECT j.id, j.kind, j.target, j.status, j.stages, j.created_at, j.updated_at,
@@ -3037,4 +3041,24 @@ func handleDeployHistory(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, entry)
 	}
 	util.JSON(w, http.StatusOK, map[string]interface{}{"entries": entries, "success_count": successes, "update_count": updates, "total": len(entries)})
+}
+
+
+// DELETE /api/deployments?id=<job>: remove a failed/interrupted pipeline
+// from the list. Its ZIP is discarded (the last successful ZIP stays
+// current); the update history entry is kept.
+func dismissDeployment(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" { util.Error(w, http.StatusBadRequest, fmt.Errorf("ID pipeline tidak valid")); return }
+	rows, err := d1.Query(`SELECT status FROM deployment_jobs WHERE id = ? LIMIT 1`, id)
+	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	if len(rows) == 0 { util.JSON(w, http.StatusOK, map[string]bool{"ok": true}); return }
+	status := rowText(rows[0], "status")
+	if status == "Running" { util.Error(w, http.StatusConflict, fmt.Errorf("proses masih berjalan; tunggu sampai selesai atau gagal")); return }
+	if status != "Failed" && status != "Interrupted" { util.Error(w, http.StatusConflict, fmt.Errorf("hanya proses yang gagal yang bisa ditutup")); return }
+	if store, err := archive.New(); err == nil { _ = store.Discard(id) }
+	if _, err := d1.Query(`DELETE FROM deployment_runner WHERE id = ?`, id); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	if _, err := d1.Query(`DELETE FROM deployment_jobs WHERE id = ? AND status IN ('Failed', 'Interrupted')`, id); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	_, _ = d1.Query(`INSERT INTO admin_audit_log (action, target) VALUES ('dismiss_deployment', ?)`, id)
+	util.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
