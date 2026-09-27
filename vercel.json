@@ -1,55 +1,194 @@
 {
   "functions": {
-    "api/gateway.go": { "maxDuration": 60 }
+    "api/gateway.go": {
+      "maxDuration": 60
+    }
   },
   "rewrites": [
-    { "source": "/manifest.json", "destination": "/api/gateway?resource=branding-manifest" },
-    { "source": "/api/branding/icon", "destination": "/api/gateway?resource=branding-icon" },
-    { "source": "/api/branding", "destination": "/api/gateway?resource=branding" },
-    { "source": "/api/session", "destination": "/api/gateway?resource=session" },
-    { "source": "/api/auto-setup", "destination": "/api/gateway?resource=auto-setup" },
-    { "source": "/api/databases", "destination": "/api/gateway?resource=databases" },
-    { "source": "/api/api-management", "destination": "/api/gateway?resource=api-management" },
-    { "source": "/api/overview", "destination": "/api/gateway?resource=overview" },
-    { "source": "/api/deployments", "destination": "/api/gateway?resource=deployments" },
-    { "source": "/api/deployment-runner", "destination": "/api/gateway?resource=deployment-runner" },
-    { "source": "/api/environments", "destination": "/api/gateway?resource=environments" },
-    { "source": "/api/health", "destination": "/api/gateway?resource=health" },
-    { "source": "/api/zone-approval", "destination": "/api/gateway?resource=zone-approval" },
-    { "source": "/api/performance", "destination": "/api/gateway?resource=performance" },
-    { "source": "/api/services", "destination": "/api/gateway?resource=services" },
-    { "source": "/api/activity", "destination": "/api/gateway?resource=activity" },
-    { "source": "/api/logs", "destination": "/api/gateway?resource=logs" },
-    { "source": "/api/deploy", "destination": "/api/gateway?resource=trigger-deployment" },
-    { "source": "/api/self-update", "destination": "/api/gateway?resource=self-update" },
-    { "source": "/api/github-repos", "destination": "/api/gateway?resource=github-repos" },
-    { "source": "/api/project", "destination": "/api/gateway?resource=project" },
-    { "source": "/api/project-thumbnails", "destination": "/api/gateway?resource=project-thumbnails" },
-    { "source": "/api/app-promo", "destination": "/api/gateway?resource=app-promo" },
-    { "source": "/api/github-branches", "destination": "/api/gateway?resource=github-branches" },
-    { "source": "/api/diagnose", "destination": "/api/gateway?resource=diagnose" },
-    { "source": "/api/deploy-history", "destination": "/api/gateway?resource=deploy-history" },
-    { "source": "/api/vercel-env", "destination": "/api/gateway?resource=vercel-env" },
-    { "source": "/api/zip-archives", "destination": "/api/gateway?resource=zip-archives" }
+    {
+      "source": "/api/members",
+      "destination": "/api/gateway?resource=members"
+    },
+    {
+      "source": "/manifest.json",
+      "destination": "/api/gateway?resource=branding-manifest"
+    },
+    {
+      "source": "/api/branding/icon",
+      "destination": "/api/gateway?resource=branding-icon"
+    },
+    {
+      "source": "/api/branding",
+      "destination": "/api/gateway?resource=branding"
+    },
+    {
+      "source": "/api/session",
+      "destination": "/api/gateway?resource=session"
+    },
+    {
+      "source": "/api/auto-setup",
+      "destination": "/api/gateway?resource=auto-setup"
+    },
+    {
+      "source": "/api/databases",
+      "destination": "/api/gateway?resource=databases"
+    },
+    {
+      "source": "/api/api-management",
+      "destination": "/api/gateway?resource=api-management"
+    },
+    {
+      "source": "/api/overview",
+      "destination": "/api/gateway?resource=overview"
+    },
+    {
+      "source": "/api/deployments",
+      "destination": "/api/gateway?resource=deployments"
+    },
+    {
+      "source": "/api/deployment-runner",
+      "destination": "/api/gateway?resource=deployment-runner"
+    },
+    {
+      "source": "/api/environments",
+      "destination": "/api/gateway?resource=environments"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/gateway?resource=health"
+    },
+    {
+      "source": "/api/zone-approval",
+      "destination": "/api/gateway?resource=zone-approval"
+    },
+    {
+      "source": "/api/performance",
+      "destination": "/api/gateway?resource=performance"
+    },
+    {
+      "source": "/api/services",
+      "destination": "/api/gateway?resource=services"
+    },
+    {
+      "source": "/api/activity",
+      "destination": "/api/gateway?resource=activity"
+    },
+    {
+      "source": "/api/logs",
+      "destination": "/api/gateway?resource=logs"
+    },
+    {
+      "source": "/api/deploy",
+      "destination": "/api/gateway?resource=trigger-deployment"
+    },
+    {
+      "source": "/api/self-update",
+      "destination": "/api/gateway?resource=self-update"
+    },
+    {
+      "source": "/api/github-repos",
+      "destination": "/api/gateway?resource=github-repos"
+    },
+    {
+      "source": "/api/project",
+      "destination": "/api/gateway?resource=project"
+    },
+    {
+      "source": "/api/project-thumbnails",
+      "destination": "/api/gateway?resource=project-thumbnails"
+    },
+    {
+      "source": "/api/app-promo",
+      "destination": "/api/gateway?resource=app-promo"
+    },
+    {
+      "source": "/api/github-branches",
+      "destination": "/api/gateway?resource=github-branches"
+    },
+    {
+      "source": "/api/diagnose",
+      "destination": "/api/gateway?resource=diagnose"
+    },
+    {
+      "source": "/api/deploy-history",
+      "destination": "/api/gateway?resource=deploy-history"
+    },
+    {
+      "source": "/api/vercel-env",
+      "destination": "/api/gateway?resource=vercel-env"
+    },
+    {
+      "source": "/api/zip-archives",
+      "destination": "/api/gateway?resource=zip-archives"
+    }
   ],
   "headers": [
     {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+        },
+        {
+          "key": "Cross-Origin-Opener-Policy",
+          "value": "same-origin"
+        },
+        {
+          "key": "Cross-Origin-Resource-Policy",
+          "value": "same-origin"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'; frame-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+        }
+      ]
+    },
+    {
       "source": "/sw.js",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
       ]
     },
     {
       "source": "/manifest.json",
       "headers": [
-        { "key": "Cache-Control", "value": "no-store" },
-        { "key": "Content-Type", "value": "application/manifest+json" }
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/manifest+json"
+        }
       ]
     },
     {
       "source": "/api/(.*)",
       "headers": [
-        { "key": "Cache-Control", "value": "no-store" }
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
       ]
     }
   ]

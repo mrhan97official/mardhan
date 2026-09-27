@@ -270,3 +270,33 @@ CREATE TABLE IF NOT EXISTS deployment_history (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_deployment_history_repo ON deployment_history (repo, created_at DESC);
+
+-- Members sign in with a long random token; only its SHA-256 hash is kept.
+-- epoch invalidates every session of the member when bumped.
+CREATE TABLE IF NOT EXISTS members (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  role TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  token_prefix TEXT NOT NULL DEFAULT '',
+  ip_allowlist TEXT NOT NULL DEFAULT '[]',
+  epoch INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_login_at TEXT,
+  last_ip TEXT,
+  revoked_at TEXT
+);
+
+-- Failed sign-in counter per client IP (lockout after 5 failures).
+CREATE TABLE IF NOT EXISTS auth_attempts (
+  ip TEXT PRIMARY KEY,
+  failures INTEGER NOT NULL DEFAULT 0,
+  locked_until TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- owner_epoch: bumping it signs the owner out on every device.
+CREATE TABLE IF NOT EXISTS auth_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);

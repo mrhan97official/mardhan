@@ -162,6 +162,25 @@ Retensi arsip ZIP (`pkg/archive`: `Discard`, `Finalize`, `Sweep`):
 
 Sisa arsip lama (status `previous` / `failed`) dibersihkan bertahap oleh pembersihan berkala.
 
+## Member, role akses & keamanan
+
+Menu **Member & Akses** (`/team`, khusus owner, `pkg/auth/members.go`):
+
+| Role | Boleh |
+|---|---|
+| Owner | Kata sandi admin. Semua fitur + kelola member |
+| Admin | Semua fitur kecuali kelola member |
+| Operator | Lihat dashboard, Aplikasi Baru/Update Aplikasi, tutup proses gagal |
+| Viewer | Hanya melihat |
+
+- Member masuk dengan token `dcm_…` (256-bit acak). Server hanya menyimpan hash SHA-256-nya, dan token ditampilkan sekali saja.
+- Opsional: kunci member ke IP/CIDR tertentu. Kunci ini dicek saat login dan di setiap request.
+- Role, pencabutan akses, dan ganti token berlaku dalam ≤15 detik tanpa menunggu cookie kedaluwarsa (epoch per member). Tombol "Keluarkan semua sesi" me-logout semua orang, termasuk owner.
+- Login: 5 kali gagal per IP → IP dikunci bertahap 1 → 60 menit, ditambah jeda 0,6 detik per kegagalan. Pesan error tidak membedakan kata sandi dan token. Semua login tercatat di audit log.
+- Cookie sesi: `__Host-`, HttpOnly, Secure, SameSite=Strict, ditandatangani HMAC, berlaku 12 jam. Mutasi wajib same-origin.
+- Header keamanan global di `vercel.json`: CSP, HSTS, X-Frame-Options DENY, nosniff, Referrer-Policy, Permissions-Policy, COOP/CORP.
+- Unduh arsip ZIP butuh sesi owner/admin **dan** kunci arsip.
+
 ## Deploy: GitHub → Vercel
 
 ### Deployment aplikasi dari dashboard

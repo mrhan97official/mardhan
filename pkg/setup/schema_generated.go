@@ -43,6 +43,9 @@ var schemaStatements = []string{
   "CREATE INDEX IF NOT EXISTS idx_admin_audit_time ON admin_audit_log (created_at DESC)",
   "CREATE TABLE IF NOT EXISTS deployment_history (\n  id TEXT PRIMARY KEY,\n  repo TEXT NOT NULL,\n  kind TEXT NOT NULL,\n  target TEXT NOT NULL,\n  status TEXT NOT NULL,\n  file_name TEXT NOT NULL DEFAULT '',\n  size_bytes INTEGER NOT NULL DEFAULT 0,\n  sha256 TEXT NOT NULL DEFAULT '',\n  changes TEXT NOT NULL DEFAULT '',\n  message TEXT NOT NULL DEFAULT '',\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE INDEX IF NOT EXISTS idx_deployment_history_repo ON deployment_history (repo, created_at DESC)",
+  "CREATE TABLE IF NOT EXISTS members (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  role TEXT NOT NULL,\n  token_hash TEXT NOT NULL UNIQUE,\n  token_prefix TEXT NOT NULL DEFAULT '',\n  ip_allowlist TEXT NOT NULL DEFAULT '[]',\n  epoch INTEGER NOT NULL DEFAULT 0,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  last_login_at TEXT,\n  last_ip TEXT,\n  revoked_at TEXT\n)",
+  "CREATE TABLE IF NOT EXISTS auth_attempts (\n  ip TEXT PRIMARY KEY,\n  failures INTEGER NOT NULL DEFAULT 0,\n  locked_until TEXT,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+  "CREATE TABLE IF NOT EXISTS auth_settings (\n  key TEXT PRIMARY KEY,\n  value TEXT NOT NULL\n)",
 }
 
 var migrationStatements = []migrationStatement{
@@ -84,6 +87,9 @@ var expectedColumns = map[string][]string{
   "api_check_metrics": {"id", "api_id", "status_code", "latency_ms", "checked_at"},
   "admin_audit_log": {"id", "action", "target", "created_at"},
   "deployment_history": {"id", "repo", "kind", "target", "status", "file_name", "size_bytes", "sha256", "changes", "message", "created_at"},
+  "members": {"id", "name", "role", "token_hash", "token_prefix", "ip_allowlist", "epoch", "created_at", "last_login_at", "last_ip", "revoked_at"},
+  "auth_attempts": {"ip", "failures", "locked_until", "updated_at"},
+  "auth_settings": {"key", "value"},
 }
 
 var expectedTypes = map[string]map[string]string{
@@ -112,6 +118,9 @@ var expectedTypes = map[string]map[string]string{
   "api_check_metrics": {"id": "TEXT", "api_id": "TEXT", "status_code": "INTEGER", "latency_ms": "INTEGER", "checked_at": "TEXT"},
   "admin_audit_log": {"id": "INTEGER", "action": "TEXT", "target": "TEXT", "created_at": "TEXT"},
   "deployment_history": {"id": "TEXT", "repo": "TEXT", "kind": "TEXT", "target": "TEXT", "status": "TEXT", "file_name": "TEXT", "size_bytes": "INTEGER", "sha256": "TEXT", "changes": "TEXT", "message": "TEXT", "created_at": "TEXT"},
+  "members": {"id": "TEXT", "name": "TEXT", "role": "TEXT", "token_hash": "TEXT", "token_prefix": "TEXT", "ip_allowlist": "TEXT", "epoch": "INTEGER", "created_at": "TEXT", "last_login_at": "TEXT", "last_ip": "TEXT", "revoked_at": "TEXT"},
+  "auth_attempts": {"ip": "TEXT", "failures": "INTEGER", "locked_until": "TEXT", "updated_at": "TEXT"},
+  "auth_settings": {"key": "TEXT", "value": "TEXT"},
 }
 
 var expectedIndexes = []string{"idx_deployment_jobs_running_target", "idx_deployment_jobs_updated", "idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_project_thumbnail_uploads_repo", "idx_project_thumbnail_uploads_time", "idx_project_thumbnail_objects_repo", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time", "idx_deployment_history_repo"}

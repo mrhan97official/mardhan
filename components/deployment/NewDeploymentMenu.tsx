@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, FolderPlus, Plus, RefreshCw, UploadCloud, type LucideIcon } from "lucide-react";
 import { useDeploymentOverlay, type ModalKey } from "./DeploymentOverlayProvider";
+import { canDeploy, isAdminRole, useSession } from "@/lib/session";
 
 const MENU_ITEMS: { key: ModalKey; label: string; description: string; icon: LucideIcon }[] = [
   { key: "new_app", label: "Aplikasi Baru", description: "Uji build, simpan di GitHub, lalu online di Vercel", icon: FolderPlus },
@@ -24,6 +25,9 @@ export default function NewDeploymentMenu() {
   const [open, setOpen] = useState(false);
   const openModal = useDeploymentOverlay();
   const containerRef = useRef<HTMLDivElement>(null);
+  const { role } = useSession();
+  // Operators deploy apps; only owner/admin may run Update Diri.
+  const items = MENU_ITEMS.filter((item) => item.key !== "self_update" || isAdminRole(role));
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -35,6 +39,7 @@ export default function NewDeploymentMenu() {
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
+  if (!canDeploy(role)) return null;
   return (
     <div ref={containerRef} className="relative">
       <button
@@ -56,7 +61,7 @@ export default function NewDeploymentMenu() {
         >
           {/* Pointer toward the button's chevron, like the profile dropdown. */}
           <span aria-hidden="true" className="pointer-events-none absolute -top-[5px] right-[14px] h-2.5 w-2.5 rotate-45 border-l border-t border-base-border bg-base-850" />
-          {MENU_ITEMS.map(({ key, label, description, icon: Icon }) => (
+          {items.map(({ key, label, description, icon: Icon }) => (
             <button
               key={key}
               role="menuitem"

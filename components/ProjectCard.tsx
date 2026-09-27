@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Archive, ExternalLink, FileArchive, GitBranch, History, ImagePlus, Lock, MoreVertical, Star, Trash2, X } from "lucide-react";
 import { UpdateHistoryDialog, ZipArchiveDialog } from "@/components/ProjectDialogs";
+import { isAdminRole, useSession } from "@/lib/session";
 import type { GithubRepo } from "@/lib/types";
 
 const LANGUAGE_COLORS: Record<string, string> = {
@@ -61,6 +62,8 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
   const menuRef = useRef<HTMLDivElement>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [dialog, setDialog] = useState<"zip" | "history" | null>(null);
+  const { role } = useSession();
+  const admin = isAdminRole(role);
   const [failedVersion, setFailedVersion] = useState<string | null>(null);
   const name = repo.full_name.split("/")[1] ?? repo.full_name;
   const languageDot = repo.language ? LANGUAGE_COLORS[repo.language] ?? "bg-slate-400" : null;
@@ -121,15 +124,19 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
           {actionsOpen && (
             <div role="menu" aria-label={`Aksi proyek ${repo.full_name}`} className="absolute right-0 top-full z-30 mt-2 w-44 rounded-xl border border-base-border bg-base-900 p-1.5 text-sm shadow-2xl">
               <span aria-hidden="true" className="pointer-events-none absolute -top-[5px] right-2.5 h-2.5 w-2.5 rotate-45 border-l border-t border-base-border bg-base-900" />
+              {admin && <>
               <button type="button" role="menuitem" disabled={uploading} onClick={() => { setActionsOpen(false); inputRef.current?.click(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800 disabled:opacity-50">
                 <ImagePlus size={14} /> {thumbnailVersion ? "Ganti thumbnail" : "Tambah thumbnail"}
               </button>
               {thumbnailVersion && <button type="button" role="menuitem" disabled={uploading} onClick={() => { setActionsOpen(false); onRemoveThumbnail(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-300 hover:bg-base-800 disabled:opacity-50"><X size={14} /> Hapus gambar</button>}
               <div className="my-1 border-t border-base-border" />
-              <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("zip"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><FileArchive size={14} /> Arsip ZIP</button>
+              </>}
+              {admin && <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("zip"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><FileArchive size={14} /> Arsip ZIP</button>}
               <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("history"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><History size={14} /> Riwayat update</button>
+              {admin && <>
               <div className="my-1 border-t border-base-border" />
               <button type="button" role="menuitem" disabled={uploading} onClick={() => { setActionsOpen(false); onDelete(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-red-400 hover:bg-red-500/10 disabled:opacity-50"><Trash2 size={14} /> Hapus aplikasi</button>
+              </>}
             </div>
           )}
         </div>

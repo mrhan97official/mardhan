@@ -1,17 +1,17 @@
 "use client";
 
 import AppShell from "@/components/AppShell";
-import RecentActivity from "@/components/RecentActivity";
-import { useOfflineData } from "@/lib/useOfflineData";
-import { fallbackActivity } from "@/lib/fallbackData";
-import type { ActivityItem } from "@/lib/types";
+import MembersManager from "@/components/MembersManager";
+import { useSession } from "@/lib/session";
 
 export default function TeamPage() {
-  const activity = useOfflineData<ActivityItem[]>("activity", "/api/activity", fallbackActivity, 30000);
+  const { role } = useSession();
 
   return (
-    <AppShell title="Team" subtitle="Recent team and account activity" isOffline={activity.isOffline}>
-      <RecentActivity items={activity.data} />
+    <AppShell title="Member & Akses" subtitle="Siapa boleh masuk dan apa yang boleh dilakukan" isOffline={false}>
+      {role === "owner" ? <MembersManager /> : (
+        <section className="card p-2 text-sm text-slate-400">Halaman ini hanya untuk owner.</section>
+      )}
     </AppShell>
   );
 }

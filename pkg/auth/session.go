@@ -4,18 +4,14 @@ package auth
 
 import (
   "crypto/hmac"
-  "crypto/rand"
   "crypto/sha256"
-  "crypto/subtle"
   "encoding/base64"
   "encoding/hex"
-  "encoding/json"
   "fmt"
   "net"
   "net/http"
   "net/url"
   "os"
-  "strconv"
   "strings"
   "time"
 
@@ -23,7 +19,6 @@ import (
   "devcontrol/pkg/util"
 )
 
-const cookieName = "devcontrol_session"
 const sessionLifetime = 12 * time.Hour
 
 func Configured() bool {
@@ -47,20 +42,21 @@ func SameOrigin(r *http.Request) bool {
 
 func signature(payload string) string {
   mac := hmac.New(sha256.New, []byte(os.Getenv("DEVCONTROL_SESSION_SECRET")))
-  _, _ = mac.Write([]byte(payload))
+  _, _ = mac.Write([]byte("v2|" + payload))
   return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
+// IsAdmin is true for the owner (admin password) and for members with the
+// "admin" role. Existing admin-only handlers keep using it unchanged.
 func IsAdmin(r *http.Request) bool {
-  if !Configured() { return false }
-  cookie, err := r.Cookie(cookieName)
-  if err != nil { return false }
-  parts := strings.Split(cookie.Value, ".")
-  if len(parts) != 3 || len(parts[1]) < 20 { return false }
-  expiry, err := strconv.ParseInt(parts[0], 10, 64)
-  if err != nil || expiry <= time.Now().Unix() || expiry > time.Now().Add(sessionLifetime).Unix() { return false }
-  expected := signature(parts[0]+"."+parts[1])
-  return subtle.ConstantTimeCompare([]byte(parts[2]), []byte(expected)) == 1
+  p := Current(r)
+  return p != nil && (p.Role == RoleOwner || p.Role == RoleAdmin)
+}
+
+// IsOwner is true only for the admin-password session.
+func IsOwner(r *http.Request) bool {
+  p := Current(r)
+  return p != nil && p.Role == RoleOwner
 }
 
 var readScopes = map[string]string{
@@ -78,7 +74,7 @@ func ReadScopes() []string {
 }
 
 func Allowed(r *http.Request, resource string) bool {
-  if IsAdmin(r) { return true }
+  if p := Current(r); p != nil { return Can(p.Role, resource, r.Method) }
   scope, ok := readScopes[resource]
   if !ok || r.Method != http.MethodGet { return false }
   bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -92,32 +88,20 @@ func Allowed(r *http.Request, resource string) bool {
 }
 
 func HandleSession(w http.ResponseWriter, r *http.Request) {
+  w.Header().Set("Cache-Control", "no-store")
   if !Configured() {
     util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("konfigurasi admin belum lengkap: isi DEVCONTROL_ADMIN_PASSWORD (minimal 16 karakter) di Vercel lalu Redeploy; DEVCONTROL_SESSION_SECRET kini dibuat otomatis"))
     return
   }
   switch r.Method {
   case http.MethodGet:
-    util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": IsAdmin(r), "role": "admin"})
+    p := Current(r)
+    if p == nil { util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": false}); return }
+    util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": true, "role": p.Role, "name": p.Name, "subject": p.Subject})
   case http.MethodPost:
-    var body struct { Password string `json:"password"` }
-    if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
-      util.Error(w, http.StatusBadRequest, fmt.Errorf("form login tidak valid")); return
-    }
-    got, want := sha256.Sum256([]byte(body.Password)), sha256.Sum256([]byte(os.Getenv("DEVCONTROL_ADMIN_PASSWORD")))
-    if subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
-      util.Error(w, http.StatusUnauthorized, fmt.Errorf("kata sandi admin salah")); return
-    }
-    nonce := make([]byte, 24)
-    if _, err := rand.Read(nonce); err != nil { util.Error(w, http.StatusInternalServerError, err); return }
-    payload := fmt.Sprintf("%d.%s", time.Now().Add(sessionLifetime).Unix(), base64.RawURLEncoding.EncodeToString(nonce))
-    http.SetCookie(w, &http.Cookie{Name: cookieName, Value: payload+"."+signature(payload), Path: "/",
-      HttpOnly: true, Secure: secureCookie(r), SameSite: http.SameSiteStrictMode,
-      MaxAge: int(sessionLifetime.Seconds())})
-    util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": true, "role": "admin"})
+    login(w, r)
   case http.MethodDelete:
-    http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", HttpOnly: true,
-      Secure: secureCookie(r), SameSite: http.SameSiteStrictMode, MaxAge: -1})
+    clearSession(w, r)
     util.JSON(w, http.StatusOK, map[string]bool{"authenticated": false})
   default:
     util.Error(w, http.StatusMethodNotAllowed, fmt.Errorf("metode tidak didukung"))

@@ -5,6 +5,7 @@ import Link from "next/link";
 import SidebarLogo from "@/components/SidebarLogo";
 import { useTheme } from "@/components/ThemeProvider";
 import type { DeploymentJob } from "@/lib/types";
+import { ROLE_LABEL, isAdminRole, useSession } from "@/lib/session";
 import {
   Bell,
   Check,
@@ -42,6 +43,8 @@ export default function Header({
   title?: string;
   subtitle?: string;
 }) {
+  const session = useSession();
+  const roleLabel = ROLE_LABEL[session.role] ?? "Member";
   const { theme, setTheme } = useTheme();
   const [profileOpen, setProfileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -198,29 +201,29 @@ export default function Header({
           }}>
             <button
               type="button"
-              aria-label={`Profil Admin, ${isOffline ? "offline" : "online"}`}
+              aria-label={`Profil ${session.name || roleLabel}, ${isOffline ? "offline" : "online"}`}
               aria-expanded={profileOpen}
               aria-haspopup="menu"
               onClick={() => { setNotificationsOpen(false); setProfileError(""); setProfileOpen((open) => !open); }}
               className="flex items-center gap-2 px-1 py-1 text-slate-200 transition-colors hover:text-white"
             >
               <span className="relative flex h-7 w-7 items-center justify-center rounded-full bg-accent-blue/20 text-xs font-semibold text-accent-blue">
-                A
+                {(session.name || roleLabel).charAt(0).toUpperCase()}
                 <span aria-hidden="true" title={isOffline ? "Offline" : "Online"} className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-base-950 ${isOffline ? "bg-amber-400" : "bg-emerald-400"}`} />
               </span>
-              <span className="hidden text-sm font-medium sm:inline md:hidden xl:inline">Admin</span>
+              <span className="hidden text-sm font-medium sm:inline md:hidden xl:inline">{roleLabel}</span>
               <ChevronDown size={14} className={`transition-transform ${profileOpen ? "rotate-180" : ""}`} />
             </button>
             {profileOpen && (
               <div role="menu" aria-label="Menu profil" className="absolute right-0 top-full z-40 mt-2 w-56 rounded-xl border border-base-border bg-base-900 p-1.5 text-sm shadow-2xl">
                 <span aria-hidden="true" className="pointer-events-none absolute -top-[5px] right-9 h-2.5 w-2.5 rotate-45 border-l border-t border-base-border bg-base-900 sm:right-[4.75rem] md:right-9 xl:right-[4.75rem]" />
                 <div className="border-b border-base-border px-3 py-2.5">
-                  <p className="font-semibold text-white">Admin</p>
-                  <p className="text-xs text-slate-400">Administrator</p>
+                  <p className="truncate font-semibold text-white">{session.name || roleLabel}</p>
+                  <p className="text-xs text-slate-400">Role: {roleLabel}</p>
                 </div>
-                <Link href="/settings" role="menuitem" onClick={() => setProfileOpen(false)} className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-slate-200 hover:bg-base-800">
+                {isAdminRole(session.role) && <Link href="/settings" role="menuitem" onClick={() => setProfileOpen(false)} className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-slate-200 hover:bg-base-800">
                   <Settings size={16} /> Pengaturan
-                </Link>
+                </Link>}
                 <div role="group" aria-label="Mode tampilan" className="border-t border-base-border px-2.5 py-2">
                   <p className="mb-1.5 px-1 text-xs text-slate-400">Mode tampilan</p>
                   <div className="grid grid-cols-2 gap-1 rounded-lg bg-base-800/70 p-1">

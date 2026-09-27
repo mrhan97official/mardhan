@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import SidebarLogo from "@/components/SidebarLogo";
+import { useSession, type Role } from "@/lib/session";
 import {
   Boxes,
   Cpu,
@@ -16,6 +17,7 @@ import {
   ScrollText,
   Settings,
   ShieldCheck,
+  UserCog,
   Users,
   X,
 } from "lucide-react";
@@ -30,9 +32,17 @@ const NAV_ITEMS = [
   { label: "Containers", icon: Boxes, href: "/containers" },
   { label: "Logs", icon: ScrollText, href: "/logs" },
   { label: "Monitoring", icon: Gauge, href: "/monitoring" },
-  { label: "Team", icon: Users, href: "/team" },
+  { label: "Member & Akses", icon: UserCog, href: "/team" },
   { label: "Settings", icon: Settings, href: "/settings" },
 ];
+
+// Pages a role cannot use are hidden; the API enforces the same rules.
+const ADMIN_ONLY = new Set(["/api-management", "/databases", "/settings"]);
+function visibleFor(role: Role, href: string): boolean {
+  if (href === "/team") return role === "owner";
+  if (ADMIN_ONLY.has(href)) return role === "owner" || role === "admin";
+  return true;
+}
 
 export default function Sidebar({
   open,
@@ -45,6 +55,7 @@ export default function Sidebar({
   onToggle: () => void;
   expanded: boolean;
 }) {
+  const { role } = useSession();
   const pathname = usePathname();
   const [touchLabel, setTouchLabel] = useState<string | null>(null);
   const labelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -97,7 +108,7 @@ export default function Sidebar({
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2 md:overflow-visible">
-          {NAV_ITEMS.map(({ label, icon: Icon, href }) => {
+          {NAV_ITEMS.filter((item) => visibleFor(role, item.href)).map(({ label, icon: Icon, href }) => {
             const active = href === "/" ? pathname === "/" : pathname === href || pathname?.startsWith(`${href}/`);
             return (
               <Link

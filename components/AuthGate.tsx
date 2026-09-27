@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { CheckCircle2, AlertCircle, LockKeyhole, RefreshCw } from "lucide-react";
 import { cacheClear } from "@/lib/db";
+import { SessionContext, type Role, type Session } from "@/lib/session";
 
 type State = "checking" | "authenticated" | "login";
 type CoreVariable = { key: string; set: boolean; required: boolean };
@@ -25,6 +26,7 @@ async function clearPrivateCaches() {
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<State>("checking");
   const [password, setPassword] = useState("");
+  const [session, setSession] = useState<Session>({ role: "viewer", name: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [core, setCore] = useState<CoreVariable[]>([]);
@@ -39,6 +41,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         setCore(Array.isArray(setup.core) ? setup.core : []);
       } else setCore([]);
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      if (body.authenticated) setSession({ role: (body.role as Role) || "viewer", name: body.name || "" });
       setState(body.authenticated ? "authenticated" : "login");
       if (!body.authenticated) void clearPrivateCaches();
       setError("");
@@ -64,31 +67,32 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     try {
       const response = await fetch("/api/session", {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
-        body: JSON.stringify({ password }), cache: "no-store",
+        body: JSON.stringify({ credential: password.trim() }), cache: "no-store",
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
       await clearPrivateCaches();
       setPassword("");
+      setSession({ role: (body.role as Role) || "viewer", name: body.name || "" });
       setState("authenticated");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Login gagal.");
     } finally { setBusy(false); }
   }
 
-  if (state === "authenticated") return <>{children}</>;
+  if (state === "authenticated") return <SessionContext.Provider value={session}>{children}</SessionContext.Provider>;
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
       <div className="card w-full max-w-md space-y-5 p-6 sm:p-8">
         <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent-blue/15 text-accent-blue"><LockKeyhole size={23} /></div>
         <div>
           <h1 className="text-xl font-bold">Masuk ke DevControl</h1>
-          <p className="mt-1 text-sm text-slate-400">Aksi deployment, database, dan API memerlukan sesi admin.</p>
+          <p className="mt-1 text-sm text-slate-400">Owner memakai kata sandi admin. Member memakai token akses (dcm_…) yang diberikan owner.</p>
         </div>
         {state === "checking" ? <p role="status" className="text-sm text-slate-400">Memeriksa sesi…</p> : (
           <form onSubmit={(event) => void login(event)} className="space-y-4">
-            <label className="block text-sm text-slate-300">Kata sandi admin
-              <input type="password" autoComplete="current-password" required value={password}
+            <label className="block text-sm text-slate-300">Kata sandi admin atau token akses
+              <input type="password" autoComplete="current-password" required value={password} maxLength={512} spellCheck={false}
                 onChange={(event) => setPassword(event.target.value)}
                 className="mt-2 w-full rounded-xl border border-base-border bg-base-850 p-3 text-slate-100" />
             </label>

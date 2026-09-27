@@ -3,16 +3,18 @@
 import AppShell from "@/components/AppShell";
 import EnvironmentStatus from "@/components/EnvironmentStatus";
 import VercelEnvManager from "@/components/VercelEnvManager";
+import { isAdminRole, useSession } from "@/lib/session";
 import { useOfflineData } from "@/lib/useOfflineData";
 import type { Environment } from "@/lib/types";
 
 export default function EnvironmentsPage() {
+  const { role } = useSession();
   const environments = useOfflineData<Environment[]>("vercel-environments-v30", "/api/environments", [], 30000);
 
   return (
     <AppShell title="Environments" subtitle="Status deployment dan environment variable Vercel" isOffline={environments.isOffline}>
       <EnvironmentStatus environments={environments.data} loading={environments.loading} error={environments.error} updatedAt={environments.updatedAt} onRefresh={environments.reload} />
-      <VercelEnvManager />
+      {isAdminRole(role) && <VercelEnvManager />}
     </AppShell>
   );
 }

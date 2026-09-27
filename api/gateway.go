@@ -92,11 +92,20 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		branding.HandlePublic(w, r, resource)
 		return
 	}
-	if resource == "session" { auth.HandleSession(w, r); return }
+	if resource == "session" {
+		// Sign-in needs the lockout tables; create them before the first login.
+		if r.Method == http.MethodPost && os.Getenv("CF_D1_DATABASE_ID") != "" { _ = setup.Prepare() }
+		auth.HandleSession(w, r); return
+	}
 	if resource == "auto-setup" { autoconfig.Handle(w, r); return }
+	// ZIP downloads need both the archive key and an owner/admin session.
+	if resource == "zip-archives" && !auth.IsAdmin(r) { util.Error(w, http.StatusForbidden, fmt.Errorf("arsip ZIP hanya untuk owner/admin")); return }
 	if resource != "zip-archives" {
 		if !auth.Configured() { util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("isi DEVCONTROL_ADMIN_PASSWORD (minimal 16 karakter) di Vercel untuk mengaktifkan panel admin; rahasia sesi dibuat otomatis")); return }
-		if !auth.Allowed(r, resource) { util.Error(w, http.StatusUnauthorized, fmt.Errorf("login admin atau API key dengan hak baca diperlukan")); return }
+		if !auth.Allowed(r, resource) {
+			if auth.Current(r) != nil { util.Error(w, http.StatusForbidden, fmt.Errorf("role Anda tidak memiliki akses ke fitur ini")); return }
+			util.Error(w, http.StatusUnauthorized, fmt.Errorf("login atau API key dengan hak baca diperlukan")); return
+		}
 	}
 	// Record only traffic handled by this authenticated Go API. CDN pages,
 	// images and static files do not pass through this function.
@@ -147,6 +156,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		handleDeployHistory(w, r)
 	case "vercel-env":
 		vercelenv.Handle(w, r)
+	case "members":
+		if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		auth.HandleMembers(w, r)
 	case "databases":
 		handleDatabases(w, r)
 	case "api-management":
@@ -1494,7 +1506,8 @@ func validPromoURL(raw string) bool {
 // slot for each replacement, so a failed save cannot remove the live image.
 func handleAppPromo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	if !auth.IsAdmin(r) { util.Error(w, http.StatusForbidden, fmt.Errorf("sesi admin diperlukan")); return }
+	// Every signed-in role may read the banner; only owner/admin change it.
+	if (r.Method != http.MethodGet && !auth.IsAdmin(r)) || auth.Current(r) == nil { util.Error(w, http.StatusForbidden, fmt.Errorf("sesi admin diperlukan")); return }
 	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 
 	switch r.Method {
