@@ -165,6 +165,27 @@ html.light :is(.bg-accent-blue, .bg-red-600).text-white,
   outline-offset: 2px;
 }
 
+/* Deployment pipeline: finished (green) -> blue -> running (purple),
+   with a light pulse travelling toward the stage in progress. */
+.pipeline-flow {
+  background-image: linear-gradient(90deg, #34d399 0%, #3b82f6 50%, #a855f7 100%);
+  box-shadow: 0 0 8px rgba(96, 165, 250, 0.55);
+}
+.pipeline-flow::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.85), transparent);
+  animation: pipeline-flow 1.4s ease-in-out infinite;
+}
+@keyframes pipeline-flow {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(240%); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;

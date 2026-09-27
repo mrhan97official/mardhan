@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Circle, CheckCircle2, Loader2, RefreshCw, UploadCloud, XCircle } from "lucide-react";
+import { Circle, CheckCircle2, Loader2, Lock, LockOpen, RefreshCw, UploadCloud, XCircle } from "lucide-react";
 import Modal from "./Modal";
 import ErrorDiagnosis from "./ErrorDiagnosis";
 import { useOfflineData } from "@/lib/useOfflineData";
 import { fallbackGithubRepos } from "@/lib/fallbackData";
 import type { GithubRepo } from "@/lib/types";
+
+const LOCK_KEY = "devcontrol-self-update-target";
 import { pollDeploymentJob } from "@/lib/pollDeploymentJob";
 import Link from "next/link";
 
@@ -48,6 +50,10 @@ export default function SelfUpdateModal({
   const repos = useOfflineData<GithubRepo[]>("github-repos", "/api/github-repos", fallbackGithubRepos);
   const [repo, setRepo] = useState("");
   const [branch, setBranch] = useState("main");
+  // Update Diri always targets DevControl's own repo, so it is locked by
+  // default and the user only picks the ZIP.
+  const [locked, setLocked] = useState(false);
+  const [targetSource, setTargetSource] = useState<"saved" | "vercel" | "">("");
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<SelfUpdateResponse | null>(null);
@@ -108,6 +114,44 @@ export default function SelfUpdateModal({
       cancelled = true;
     };
   }, [repo, branchesReloadKey]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(LOCK_KEY) || "null") as { repo?: string; branch?: string } | null;
+      if (saved?.repo && saved.repo.includes("/")) {
+        setRepo(saved.repo);
+        if (saved.branch) setBranch(saved.branch);
+        setLocked(true);
+        setTargetSource("saved");
+        return;
+      }
+    } catch { /* ignore broken storage */ }
+    let cancelled = false;
+    fetch("/api/self-update", { cache: "no-store", credentials: "same-origin" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { repo?: string; branch?: string } | null) => {
+        if (cancelled || !body?.repo || !body.repo.includes("/")) return;
+        setRepo(body.repo);
+        if (body.branch) setBranch(body.branch);
+        setLocked(true);
+        setTargetSource("vercel");
+      })
+      .catch(() => { /* manual selection stays available */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  function lockTarget() {
+    if (!repo.includes("/") || !branch.trim()) return;
+    try { localStorage.setItem(LOCK_KEY, JSON.stringify({ repo: repo.trim(), branch: branch.trim() })); } catch { /* storage disabled */ }
+    setLocked(true);
+    setTargetSource("saved");
+  }
+
+  function unlockTarget() {
+    try { localStorage.removeItem(LOCK_KEY); } catch { /* storage disabled */ }
+    setLocked(false);
+    setTargetSource("");
+  }
 
   function handleRepoSelect(fullName: string) {
     setRepo(fullName);
@@ -208,6 +252,23 @@ export default function SelfUpdateModal({
           Versi sebelumnya tetap dapat diunduh jika update gagal.
         </p>
 
+        {locked ? (
+          <div className="flex items-center gap-2 rounded-xl border border-base-border bg-base-850 px-3 py-2.5">
+            <Lock size={16} className="shrink-0 text-emerald-400" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-mono text-sm text-slate-100">{repo}</p>
+              <p className="truncate text-xs text-slate-500">
+                Branch <span className="font-mono text-slate-300">{branch}</span> · {targetSource === "vercel" ? "terdeteksi dari deployment ini" : "terkunci"}
+              </p>
+            </div>
+            {!(submitting || finished) && (
+              <button type="button" onClick={unlockTarget} className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-accent-blue hover:bg-base-800">
+                <LockOpen size={13} /> Ubah
+              </button>
+            )}
+          </div>
+        ) : (
+          <>
         <div>
           <div className="mb-1.5 flex items-center justify-between">
             <label className="block text-xs font-medium text-slate-400">Repo GitHub</label>
@@ -305,6 +366,17 @@ export default function SelfUpdateModal({
             <p className="mt-1.5 text-xs text-slate-500">Tidak ada branch terbaca; ketik nama branch secara manual.</p>
           )}
         </div>
+
+            <button
+              type="button"
+              onClick={lockTarget}
+              disabled={submitting || finished || !repo.includes("/") || !branch.trim()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-base-border px-3 py-2 text-xs font-medium text-slate-200 hover:bg-base-800 disabled:opacity-50"
+            >
+              <Lock size={13} /> Kunci repo & branch
+            </button>
+          </>
+        )}
 
         <div>
           <label className="mb-1.5 block text-xs font-medium text-slate-400">File .zip</label>

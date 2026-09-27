@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Loader2, X, Clock3, Stethoscope } from "lucide-react";
 import type { DeploymentJob, PipelineStage } from "@/lib/types";
 import { fallbackPipeline } from "@/lib/fallbackData";
@@ -60,6 +60,17 @@ function stageTime(stage: PipelineStage, job: DeploymentJob, now: number | null)
   return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
 }
 
+// Line between two stages. A finished stage flowing into a running one gets
+// an animated green -> blue -> purple gradient (see .pipeline-flow).
+function connectorClass(from: StageStatus, to: StageStatus): string {
+  if (from !== "Success") return "bg-slate-600/40";
+  if (to === "Success") return "bg-emerald-400/80";
+  if (to === "Running") return "pipeline-flow";
+  if (to === "Failed") return "bg-gradient-to-r from-emerald-400 to-red-400";
+  if (to === "Interrupted") return "bg-gradient-to-r from-emerald-400 to-amber-400";
+  return "bg-gradient-to-r from-emerald-400/70 to-slate-600/40";
+}
+
 function JobStages({ stages, job, inactive = false, now }: {
   stages: PipelineStage[];
   job?: DeploymentJob;
@@ -67,16 +78,23 @@ function JobStages({ stages, job, inactive = false, now }: {
   now: number | null;
 }) {
   return (
-    <div className={`grid grid-cols-2 gap-2 sm:grid-cols-4 ${inactive ? "opacity-60" : "mt-2"}`}>
-      {stages.map((stage) => {
-        const status: StageStatus = job?.status === "Interrupted" && stage.status === "Running" ? "Interrupted" : stage.status;
+    <div className={`grid grid-cols-4 gap-2 ${inactive ? "opacity-60" : "mt-2"}`}>
+      {stages.map((stage, index) => {
+        const statusOf = (item: PipelineStage): StageStatus => job?.status === "Interrupted" && item.status === "Running" ? "Interrupted" : item.status;
+        const status = statusOf(stage);
+        const next = stages[index + 1];
         return (
-          <div key={stage.id} aria-label={`${stage.stage}: ${status}`} className="flex items-start gap-2 sm:flex-col sm:items-center sm:text-center">
-            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 bg-base-850 ${RING_BY_STATUS[status]}`}>
+          <div key={stage.id} aria-label={`${stage.stage}: ${status}`} className="relative flex min-w-0 flex-col items-center text-center">
+            {next && (
+              // From just past this circle to just before the next one (circle 36px, gap 8px).
+              <span aria-hidden="true" className={`absolute top-[16.5px] h-[3px] overflow-hidden rounded-full ${connectorClass(status, statusOf(next))}`}
+                style={{ left: "calc(50% + 22px)", width: "calc(100% - 36px)" }} />
+            )}
+            <div className={`relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 bg-base-850 ${RING_BY_STATUS[status]}`}>
               {ICON_BY_STATUS[status]}
             </div>
-            <div className="min-w-0 sm:mt-2">
-              <p className="text-xs font-semibold text-slate-100">{stage.stage}</p>
+            <div className="mt-2 min-w-0">
+              <p className="text-[11px] font-semibold leading-tight text-slate-100 sm:text-xs">{stage.stage}</p>
               <time aria-live="off" className={`mt-1 block font-mono text-xs tabular-nums ${status === "Failed" ? "text-red-400" : status === "Interrupted" ? "text-amber-400" : status === "Running" ? "text-purple-400" : "text-slate-500"}`}>
                 {job ? stageTime(stage, job, now) : "0m 0s"}
               </time>
@@ -93,14 +111,18 @@ export default function DeploymentPipeline({
   limit,
   onDeployed,
   error = null,
+  scroll = false,
 }: {
   jobs: DeploymentJob[];
   limit?: number;
+  scroll?: boolean;
   onDeployed?: () => void;
   error?: string | null;
 }) {
   const [now, setNow] = useState<number | null>(null);
   const [openDiagnosis, setOpenDiagnosis] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [firstHeight, setFirstHeight] = useState<number | null>(null);
   const hasRunningJob = jobs.some((job) => job.status === "Running");
 
   useEffect(() => {
@@ -122,6 +144,20 @@ export default function DeploymentPipeline({
   }, [onDeployed]);
 
   const visibleJobs = limit ? jobs.slice(0, limit) : jobs;
+  const scrolling = scroll && visibleJobs.length > 1;
+  const firstJobId = visibleJobs[0]?.id;
+
+  // With more than one job, show exactly one and scroll to the others so the
+  // card never grows taller than a single job.
+  useEffect(() => {
+    const first = listRef.current?.firstElementChild as HTMLElement | null;
+    if (!scrolling || !first) { setFirstHeight(null); return; }
+    const measure = () => setFirstHeight(first.offsetHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(first);
+    return () => observer.disconnect();
+  }, [scrolling, firstJobId]);
   return (
     <div className="card min-w-0 p-2">
       <div className="flex items-center justify-between gap-2">
@@ -135,14 +171,16 @@ export default function DeploymentPipeline({
           {onDeployed && <button type="button" onClick={onDeployed} className="ml-2 font-semibold text-accent-blue hover:underline">Coba lagi</button>}
         </div>
       )}
-      <div className="mt-2 space-y-2">
+      {scrolling && <p className="mt-1 text-[11px] text-slate-500">{visibleJobs.length} proses · gulir untuk melihat lainnya</p>}
+      <div ref={listRef} className={`mt-2 space-y-2 ${scrolling ? "snap-y snap-mandatory overflow-y-auto overscroll-contain pr-1" : ""}`}
+        style={scrolling && firstHeight ? { maxHeight: firstHeight } : undefined}>
         {visibleJobs.length === 0 && (
           <section className="flex min-h-[clamp(136px,10rem,160px)] flex-col justify-center rounded-xl border border-base-border bg-base-900 p-2" aria-label="Tahapan deployment">
             <JobStages stages={fallbackPipeline} inactive now={now} />
           </section>
         )}
         {visibleJobs.map((job) => (
-          <section key={job.id} className="min-h-[clamp(136px,10rem,160px)] rounded-xl border border-base-border bg-base-900 p-2" aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
+          <section key={job.id} className="min-h-[clamp(136px,10rem,160px)] snap-start rounded-xl border border-base-border bg-base-900 p-2" aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-100">{KIND_TEXT[job.kind]} · <span className="break-all">{job.target}</span></p>

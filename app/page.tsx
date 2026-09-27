@@ -48,7 +48,7 @@ export default function OverviewPage() {
       <StatCards stats={overview.data} />
 
       <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <DeploymentPipeline jobs={pipeline.data} limit={3} onDeployed={pipeline.reload} error={pipeline.error} />
+        <DeploymentPipeline jobs={pipeline.data} limit={3} scroll onDeployed={pipeline.reload} error={pipeline.error} />
         <EnvironmentStatus environments={environments.data} loading={environments.loading} error={environments.error} updatedAt={environments.updatedAt} viewAll />
       </div>
 

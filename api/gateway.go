@@ -1729,6 +1729,16 @@ type selfUpdateResult struct {
 // ZIP bytes are uploaded again for the GitHub stage; a signed ticket checks
 // that they are exactly the bytes whose build was approved.
 func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
+	// GET: DevControl's own repo and branch, read from Vercel's system env,
+	// so the Update Diri form can lock them and only ask for the ZIP.
+	if r.Method == http.MethodGet {
+		w.Header().Set("Cache-Control", "no-store")
+		owner, slug := strings.TrimSpace(os.Getenv("VERCEL_GIT_REPO_OWNER")), strings.TrimSpace(os.Getenv("VERCEL_GIT_REPO_SLUG"))
+		repo := ""
+		if owner != "" && slug != "" { repo = owner + "/" + slug }
+		util.JSON(w, http.StatusOK, map[string]string{"repo": repo, "branch": strings.TrimSpace(os.Getenv("VERCEL_GIT_COMMIT_REF"))})
+		return
+	}
 	if r.Method != http.MethodPost {
 		util.Error(w, http.StatusMethodNotAllowed, fmt.Errorf("use POST"))
 		return
