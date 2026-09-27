@@ -351,6 +351,28 @@ type deploymentResponse struct {
 	URL string `json:"url"`
 }
 
+// DeploymentIDForURL resolves a public alias to its current deployment. An
+// alias can move after READY, so a healthy page alone may belong to an older
+// build. The immutable URL from a creation response needs no such lookup.
+func (c *Client) DeploymentIDForURL(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Hostname() == "" || parsed.Scheme != "https" {
+		return "", fmt.Errorf("alias deployment tidak valid")
+	}
+	lookup := *c
+	httpClient := *c.http
+	if httpClient.Timeout == 0 || httpClient.Timeout > 8*time.Second {
+		httpClient.Timeout = 8 * time.Second
+	}
+	lookup.http = &httpClient
+	var out deploymentResponse
+	if err := lookup.Do(http.MethodGet, "/v13/deployments/"+url.PathEscape(parsed.Hostname()), nil, nil, &out); err != nil {
+		return "", err
+	}
+	if out.ID == "" { return "", fmt.Errorf("Vercel tidak mengembalikan ID deployment untuk alias") }
+	return out.ID, nil
+}
+
 func (c *Client) createDeployment(body map[string]interface{}, confirm bool) (Deployment, error) {
 	query := url.Values{}
 	if confirm {
@@ -370,7 +392,7 @@ func (c *Client) createDeployment(body map[string]interface{}, confirm bool) (De
 // use ("" = let Vercel decide). The returned string is the framework the
 // deployment was really created with ("" when the project's saved settings
 // were used).
-func (c *Client) CreateFileDeployment(project, target string, files []File, framework string) (Deployment, string, error) {
+func (c *Client) CreateFileDeployment(project, target string, files []File, framework string, projectID ...string) (Deployment, string, error) {
 	inline := make([]map[string]string, 0, len(files))
 	for _, file := range files {
 		inline = append(inline, map[string]string{
@@ -379,6 +401,9 @@ func (c *Client) CreateFileDeployment(project, target string, files []File, fram
 	}
 	post := func(settings map[string]interface{}, confirm bool) (Deployment, error) {
 		body := map[string]interface{}{"name": project, "files": inline}
+		if len(projectID) > 0 && projectID[0] != "" {
+			body["project"] = projectID[0]
+		}
 		if target != "" {
 			body["target"] = target
 		}
@@ -419,22 +444,32 @@ func (c *Client) CreateFileDeployment(project, target string, files []File, fram
 
 // CreateGitDeployment deploys a commit of the connected GitHub repo to
 // production, exactly like a push-triggered build.
-func (c *Client) CreateGitDeployment(project, org, repo, ref, sha string) (Deployment, error) {
+func (c *Client) CreateGitDeployment(project, projectID, org, repo, ref, sha string) (Deployment, error) {
 	source := map[string]interface{}{"type": "github", "org": org, "repo": repo, "ref": ref}
 	if sha != "" {
 		source["sha"] = sha
 	}
 	body := map[string]interface{}{"name": project, "target": "production", "gitSource": source}
+	if projectID != "" {
+		body["project"] = projectID
+	}
 	// The linked project already has its framework. Sending only a framework
 	// here can replace the build/output settings used by a working manual
-	// deployment. Keep the project's complete saved settings for Git builds.
-	return c.createDeployment(body, true)
+	// deployment. Keep the project's complete saved settings for Git builds,
+	// and let Vercel reject a detected framework mismatch instead of silently
+	// turning off its framework confirmation.
+	return c.createDeployment(body, false)
 }
 
 // Project is the part of a Vercel project DevControl needs.
 type Project struct {
 	ID        string
+	Name      string
 	Framework string
+	RootDirectory string
+	OutputDirectory string
+	BuildCommand string
+	InstallCommand string
 	LinkType  string
 	LinkOrg   string
 	LinkRepo  string
@@ -453,7 +488,12 @@ func (p Project) LinkedTo(owner, repo string) bool {
 
 type projectResponse struct {
 	ID        string  `json:"id"`
+	Name      string  `json:"name"`
 	Framework *string `json:"framework"`
+	RootDirectory *string `json:"rootDirectory"`
+	OutputDirectory *string `json:"outputDirectory"`
+	BuildCommand *string `json:"buildCommand"`
+	InstallCommand *string `json:"installCommand"`
 	Link      *struct {
 		Type string `json:"type"`
 		Org  string `json:"org"`
@@ -462,10 +502,14 @@ type projectResponse struct {
 }
 
 func (r projectResponse) project() Project {
-	out := Project{ID: r.ID}
+	out := Project{ID: r.ID, Name: r.Name}
 	if r.Framework != nil {
 		out.Framework = *r.Framework
 	}
+	if r.RootDirectory != nil { out.RootDirectory = *r.RootDirectory }
+	if r.OutputDirectory != nil { out.OutputDirectory = *r.OutputDirectory }
+	if r.BuildCommand != nil { out.BuildCommand = *r.BuildCommand }
+	if r.InstallCommand != nil { out.InstallCommand = *r.InstallCommand }
 	if r.Link != nil {
 		out.LinkType, out.LinkOrg, out.LinkRepo = r.Link.Type, r.Link.Org, r.Link.Repo
 	}
@@ -487,6 +531,54 @@ func (c *Client) GetProject(nameOrID string) (Project, bool, error) {
 		return Project{}, false, fmt.Errorf("Vercel tidak mengembalikan ID project")
 	}
 	return out.project(), true, nil
+}
+
+// FindLinkedProjects locates existing Git imports, including projects whose
+// names differ from the name DevControl would choose for a new project.
+// The API's repo filter is only a hint: verify the link on every result.
+func (c *Client) FindLinkedProjects(owner, repo string) ([]Project, error) {
+	query := url.Values{"repo": {owner + "/" + repo}, "limit": {"100"}}
+	projects := []Project{}
+	seen := map[string]bool{}
+	for page := 0; page < 10; page++ {
+		var data json.RawMessage
+		if err := c.Do(http.MethodGet, "/v10/projects", query, nil, &data); err != nil {
+			return nil, err
+		}
+		data = bytes.TrimSpace(data)
+		var result struct {
+			Projects []projectResponse `json:"projects"`
+			Pagination struct { Next json.RawMessage `json:"next"` } `json:"pagination"`
+		}
+		if len(data) > 0 && data[0] == '[' {
+			if err := json.Unmarshal(data, &result.Projects); err != nil { return nil, err }
+			if len(result.Projects) >= 100 { return nil, fmt.Errorf("daftar project Vercel mungkin terpotong") }
+		} else if err := json.Unmarshal(data, &result); err != nil {
+			return nil, err
+		}
+		if result.Projects == nil {
+			return nil, fmt.Errorf("Vercel tidak mengembalikan daftar project")
+		}
+		for _, entry := range result.Projects {
+			project := entry.project()
+			if project.ID != "" && project.Name != "" && project.LinkedTo(owner, repo) && !seen[project.ID] {
+				projects = append(projects, project)
+				seen[project.ID] = true
+			}
+		}
+		var next string
+		if len(result.Pagination.Next) > 0 && string(result.Pagination.Next) != "null" {
+			if err := json.Unmarshal(result.Pagination.Next, &next); err != nil {
+				var number json.Number
+				if err := json.Unmarshal(result.Pagination.Next, &number); err != nil { return nil, fmt.Errorf("pagination project Vercel tidak valid: %w", err) }
+				next = number.String()
+			}
+		}
+		if next == "" { return projects, nil }
+		if page == 9 { return nil, fmt.Errorf("daftar project Vercel terlalu panjang") }
+		query.Set("from", next)
+	}
+	return projects, nil
 }
 
 // CreateProject creates a project with the framework preset ("" = none) and,
@@ -517,10 +609,31 @@ func (c *Client) LinkProject(projectID, gitRepo string) error {
 		map[string]string{"type": "github", "repo": gitRepo}, nil)
 }
 
-// SetFramework stores the framework preset on the project.
-func (c *Client) SetFramework(projectID, framework string) error {
-	return c.Do(http.MethodPatch, "/v9/projects/"+url.PathEscape(projectID), nil,
-		map[string]interface{}{"framework": framework}, nil)
+// AlignBuildSettings makes the Git project's build match the isolated ZIP
+// test. Old root/output/build/install overrides can yield READY with no root
+// route even though the same files work in a manually imported project.
+// Only fields that actually differ are changed; nil restores Vercel defaults.
+func (c *Client) AlignBuildSettings(project Project, framework string) ([]string, error) {
+	changes := map[string]interface{}{}
+	// An empty result means the ZIP test did not identify a preset. Do not
+	// erase a working manual project's preset on that inconclusive signal.
+	if framework != "" && project.Framework != framework { changes["framework"] = framework }
+	for key, value := range map[string]string{
+		"rootDirectory": project.RootDirectory,
+		"outputDirectory": project.OutputDirectory,
+		"buildCommand": project.BuildCommand,
+		"installCommand": project.InstallCommand,
+	} {
+		if value != "" { changes[key] = nil }
+	}
+	if len(changes) == 0 { return nil, nil }
+	if err := c.Do(http.MethodPatch, "/v9/projects/"+url.PathEscape(project.ID), nil, changes, nil); err != nil {
+		return nil, err
+	}
+	fields := make([]string, 0, len(changes))
+	for key := range changes { fields = append(fields, key) }
+	sort.Strings(fields)
+	return fields, nil
 }
 
 // DisableProtection turns off Vercel Authentication, used only on the

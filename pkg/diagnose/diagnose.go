@@ -64,9 +64,10 @@ type rule struct {
 
 var rules = []rule{
 	{keys: []string{"halaman utama menampilkan 404", "http 404", "404 not_found"}, category: "Hasil build tidak disajikan (404 NOT_FOUND)",
-		cause: "Build selesai, tetapi Vercel tidak menemukan halaman di folder yang disajikannya: framework proyek tidak dikenali sehingga folder hasil build (dist/, build/) tidak dipakai, atau proyek bersarang di subfolder ZIP.",
+		cause: "Build selesai, tetapi Vercel tidak menemukan halaman pada URL deployment. Penyebabnya bisa framework/Root Directory/Output Directory yang tidak sesuai, project Git berbeda dari project import manual, atau alias mengarah ke deployment lama.",
 		fixes: []string{"Pastikan package.json berada di akar ZIP dan mencantumkan framework-nya (vite, react-scripts, next, dll.) di dependencies/devDependencies.",
 			"Pastikan package.json punya script \"build\" yang menghasilkan folder output (mis. vite build → dist/).",
+			"Periksa nama project, koneksi GitHub dan VERCEL_TEAM_ID; di Vercel → Settings → Build and Deployment, samakan Framework, Root Directory dan Output Directory dengan project yang berhasil di-import manual.",
 			"Untuk build khusus, tambahkan vercel.json di akar ZIP: { \"outputDirectory\": \"dist\" } (sesuaikan nama foldernya)."}},
 	{keys: []string{"could not find an exported function"}, category: "Struktur fungsi Go di Vercel",
 		cause: "Vercel menganggap setiap file .go langsung di folder /api sebagai fungsi terpisah, dan salah satunya tidak mengekspor handler.",

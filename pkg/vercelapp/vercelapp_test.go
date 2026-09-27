@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -143,13 +144,78 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 func TestGitDeploymentKeepsProjectBuildSettings(t *testing.T) {
 	client := New("test-token")
 	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Query().Get("skipAutoDetectionConfirmation") != "" {
+			t.Fatal("Git deployment must keep Vercel framework confirmation enabled")
+		}
 		var body map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
 		if _, override := body["projectSettings"]; override {
 			t.Fatal("Git deployment must use existing project build/output settings")
 		}
-		if body["target"] != "production" || body["gitSource"] == nil { t.Fatalf("unexpected deployment body: %v", body) }
+		if body["target"] != "production" || body["gitSource"] == nil || body["project"] != "prj_manual" { t.Fatalf("unexpected deployment body: %v", body) }
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"id":"dpl_123","url":"app.vercel.app"}`)), Header: make(http.Header)}, nil
 	})}
-	if _, err := client.CreateGitDeployment("project", "owner", "repo", "main", "sha"); err != nil { t.Fatal(err) }
+	if _, err := client.CreateGitDeployment("project", "prj_manual", "owner", "repo", "main", "sha"); err != nil { t.Fatal(err) }
+}
+
+func TestFindLinkedProjectsUsesExactRepo(t *testing.T) {
+	client := New("test-token")
+	calls := 0
+	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v10/projects" || r.URL.Query().Get("repo") != "owner/site" { t.Fatalf("unexpected request: %s", r.URL) }
+		calls++
+		if calls == 1 {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"projects":[{"id":"wrong","name":"other","link":{"type":"github","org":"owner","repo":"other"}},{"id":"manual","name":"site","link":{"type":"github","org":"owner","repo":"site"}}],"pagination":{"next":"cursor"}}`)), Header: make(http.Header)}, nil
+		}
+		if r.URL.Query().Get("from") != "cursor" { t.Fatalf("missing cursor: %s", r.URL) }
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"projects":[],"pagination":{}}`)), Header: make(http.Header)}, nil
+	})}
+	projects, err := client.FindLinkedProjects("owner", "site")
+	if err != nil { t.Fatal(err) }
+	if calls != 2 || len(projects) != 1 || projects[0].ID != "manual" || projects[0].Name != "site" {
+		t.Fatalf("FindLinkedProjects = %+v, calls = %d", projects, calls)
+	}
+}
+
+func TestFindLinkedProjectsAcceptsArrayResponse(t *testing.T) {
+	client := New("test-token")
+	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`[{"id":"manual","name":"site","link":{"type":"github","repo":"owner/site"}}]`)), Header: make(http.Header)}, nil
+	})}
+	projects, err := client.FindLinkedProjects("owner", "site")
+	if err != nil || len(projects) != 1 || projects[0].ID != "manual" { t.Fatalf("projects=%v, err=%v", projects, err) }
+}
+
+func TestDeploymentIDForURL(t *testing.T) {
+	client := New("test-token")
+	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v13/deployments/site.vercel.app" { t.Fatalf("unexpected path: %s", r.URL.Path) }
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"id":"dpl_current"}`)), Header: make(http.Header)}, nil
+	})}
+	id, err := client.DeploymentIDForURL("https://site.vercel.app/")
+	if err != nil || id != "dpl_current" { t.Fatalf("id=%q, err=%v", id, err) }
+}
+
+func TestAlignBuildSettings(t *testing.T) {
+	client := New("test-token")
+	patches := 0
+	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPatch || r.URL.Path != "/v9/projects/prj_old" { t.Fatalf("unexpected request: %s %s", r.Method, r.URL) }
+		patches++
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
+		want := map[string]interface{}{"framework": "vite", "rootDirectory": nil, "outputDirectory": nil, "buildCommand": nil, "installCommand": nil}
+		if !reflect.DeepEqual(body, want) { t.Fatalf("PATCH body = %v, want %v", body, want) }
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
+	})}
+	project := Project{ID: "prj_old", Framework: "", RootDirectory: "web", OutputDirectory: "public", BuildCommand: "echo old", InstallCommand: "npm ci"}
+	fields, err := client.AlignBuildSettings(project, "vite")
+	if err != nil { t.Fatal(err) }
+	if patches != 1 || !reflect.DeepEqual(fields, []string{"buildCommand", "framework", "installCommand", "outputDirectory", "rootDirectory"}) {
+		t.Fatalf("changes = %v, patches = %d", fields, patches)
+	}
+	fields, err = client.AlignBuildSettings(Project{ID: "prj_old", Framework: "vite"}, "vite")
+	if err != nil || len(fields) != 0 || patches != 1 { t.Fatalf("already aligned: fields=%v, err=%v, patches=%d", fields, err, patches) }
+	fields, err = client.AlignBuildSettings(Project{ID: "prj_old", Framework: "nextjs"}, "")
+	if err != nil || len(fields) != 0 || patches != 1 { t.Fatalf("unknown framework should preserve preset: fields=%v, err=%v, patches=%d", fields, err, patches) }
 }
