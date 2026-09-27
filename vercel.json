@@ -120,6 +120,10 @@
     {
       "source": "/api/zip-archives",
       "destination": "/api/gateway?resource=zip-archives"
+    },
+    {
+      "source": "/api/app-repair",
+      "destination": "/api/gateway?resource=app-repair"
     }
   ],
   "headers": [

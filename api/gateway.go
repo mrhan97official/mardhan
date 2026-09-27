@@ -142,6 +142,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		handleGithubRepos(w, r)
 	case "project":
 		projectdelete.Handle(w, r, vercelAppProjectName)
+	case "app-repair":
+		handleAppRepair(w, r)
 	case "project-thumbnails":
 		projectthumbnail.Handle(w, r)
 	case "app-promo":
@@ -556,6 +558,217 @@ func handleServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	util.JSON(w, http.StatusOK, rows)
+}
+
+// App repair is deliberately separate from ZIP updates: it inspects the
+// saved public link, can adopt a working manual Git import, and otherwise
+// builds the existing Git commit in the original project. No repo rewrite,
+// ZIP upload or Vercel project deletion is involved.
+type repairService struct { Name, Repo, Branch, URL string }
+
+func readRepairService(repo string) (repairService, error) {
+	owner, name, ok := splitRepo(repo)
+	if !ok || owner == "" || name == "" || strings.ContainsAny(repo, " ?#\\\n\r\t") || len(repo) > 200 {
+		return repairService{}, fmt.Errorf("nama repo tidak valid")
+	}
+	rows, err := d1.Query(`SELECT name, repo, branch, app_url FROM services WHERE lower(repo) = lower(?) LIMIT 2`, repo)
+	if err != nil { return repairService{}, err }
+	if len(rows) != 1 { return repairService{}, fmt.Errorf("repo tidak terhubung tepat ke satu aplikasi tersimpan") }
+	row := rows[0]
+	service := repairService{}
+	service.Name, _ = row["name"].(string)
+	service.Repo, _ = row["repo"].(string)
+	service.Branch, _ = row["branch"].(string)
+	service.URL, _ = row["app_url"].(string)
+	if service.Name == "" || service.Repo == "" || service.URL == "" { return repairService{}, fmt.Errorf("aplikasi belum memiliki repo dan tautan production tersimpan") }
+	return service, nil
+}
+
+func saveRepairedURL(service repairService, newURL string) error {
+	if _, err := d1.Query(`UPDATE services SET app_url = ?, status = 'Healthy' WHERE lower(repo) = lower(?) AND app_url = ?`, newURL, service.Repo, service.URL); err != nil { return err }
+	rows, err := d1.Query(`SELECT app_url FROM services WHERE lower(repo) = lower(?) LIMIT 1`, service.Repo)
+	if err != nil { return err }
+	if len(rows) != 1 || rows[0]["app_url"] != newURL { return fmt.Errorf("tautan aplikasi berubah selama pemulihan; muat ulang halaman") }
+	logActivity("Tautan aplikasi dipulihkan", service.Repo+" → "+newURL, "check")
+	return nil
+}
+
+func githubRepairRoot(token, owner, repo, branch string) (string, string, string, error) {
+	sha, err := currentGithubBranchSHA(token, owner, repo, branch)
+	if err != nil { return "", "", "", err }
+	client := &http.Client{Timeout: 15 * time.Second}
+	baseURL := fmt.Sprintf("https://api.github.com/repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo))
+	_, entries, truncated, err := githubCommitTree(client, token, baseURL, sha)
+	if err != nil { return "", "", "", err }
+	if truncated { return "", "", "", fmt.Errorf("daftar file GitHub terpotong; Root Directory tidak dapat dipastikan") }
+	files := []vercelapp.File{}
+	manifests := 0
+	for _, entry := range entries {
+		if entry.Type != "blob" { continue }
+		if path.Base(entry.Path) == "index.html" { files = append(files, vercelapp.File{Path: entry.Path}) }
+		if path.Base(entry.Path) != "package.json" { continue }
+		manifests++
+		if manifests > 12 { return "", "", "", fmt.Errorf("terlalu banyak package.json; Root Directory tidak dapat dipastikan") }
+		var blob struct { Content string `json:"content"`; Encoding string `json:"encoding"`; Size int `json:"size"` }
+		if _, err := githubJSONRequest(client, token, http.MethodGet, baseURL+"/git/blobs/"+url.PathEscape(entry.SHA), nil, &blob); err != nil { return "", "", "", err }
+		if blob.Encoding != "base64" || blob.Size > 256<<10 { return "", "", "", fmt.Errorf("package.json tidak dapat dibaca dengan aman") }
+		data, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(blob.Content, "\n", ""))
+		if err != nil { return "", "", "", err }
+		files = append(files, vercelapp.File{Path: entry.Path, Data: data})
+	}
+	root, err := vercelapp.WebRoot(files)
+	if err != nil { return "", "", "", err }
+	if !vercelapp.ExpectsHomePage(vercelapp.FilesAtRoot(files, root)) {
+		return "", "", "", fmt.Errorf("repo tidak memiliki halaman web yang dapat dipastikan")
+	}
+	framework := vercelapp.DetectFramework(vercelapp.FilesAtRoot(files, root))
+	return sha, root, framework, nil
+}
+
+func isVercelAppURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.User == nil && u.Port() == "" && u.RawQuery == "" && u.Fragment == "" && (u.Path == "" || u.Path == "/") && strings.HasSuffix(strings.ToLower(u.Hostname()), ".vercel.app")
+}
+
+func verifiedRepairURL(client *vercelapp.Client, deploymentID string, candidates []string) string {
+	checked := 0
+	for _, candidate := range candidates {
+		if !isVercelAppURL(candidate) { continue }
+		checked++
+		if checked > 2 { break }
+		if vercelapp.CheckHomePage(candidate) != nil { continue }
+		aliasID, err := client.DeploymentIDForURL(candidate)
+		if err == nil && aliasID == deploymentID { return candidate }
+	}
+	return ""
+}
+
+func selectRepairProject(client *vercelapp.Client, service repairService, owner, repo, root string, linked []vercelapp.Project) (vercelapp.Project, error) {
+	// The saved URL is the strongest identity hint, but never override a
+	// project whose root explicitly belongs to the API half of a monorepo.
+	if projectID, err := client.ProjectIDForURL(service.URL); err == nil {
+		for _, project := range linked {
+			if project.ID == projectID && (project.RootDirectory == root || (project.RootDirectory == "" && project.Name == vercelAppProjectName(owner, repo))) {
+				return clientRepairProject(client, project, owner, repo)
+			}
+		}
+	}
+	exact := []vercelapp.Project{}
+	legacy := []vercelapp.Project{}
+	for _, project := range linked {
+		if project.RootDirectory == root { exact = append(exact, project) }
+		if project.RootDirectory == "" { legacy = append(legacy, project) }
+	}
+	if len(exact) == 1 { return clientRepairProject(client, exact[0], owner, repo) }
+	if len(exact) > 1 { return vercelapp.Project{}, fmt.Errorf("beberapa project Vercel memakai Root Directory %q; pemulihan otomatis tidak bisa menentukan target", root) }
+	if len(legacy) == 1 && legacy[0].Name == vercelAppProjectName(owner, repo) { return clientRepairProject(client, legacy[0], owner, repo) }
+	return vercelapp.Project{}, fmt.Errorf("project Vercel yang terhubung ke repo %s tidak dapat diidentifikasi; periksa VERCEL_TEAM_ID dan koneksi Git", service.Repo)
+}
+
+func clientRepairProject(client *vercelapp.Client, project vercelapp.Project, owner, repo string) (vercelapp.Project, error) {
+	full, found, err := client.GetProject(project.ID)
+	if err != nil { return full, err }
+	if !found || !full.LinkedTo(owner, repo) { return vercelapp.Project{}, fmt.Errorf("koneksi Git project Vercel berubah saat diperiksa") }
+	return full, nil
+}
+
+func handleAppRepair(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	if !auth.IsAdmin(r) { util.Error(w, http.StatusForbidden, fmt.Errorf("pemulihan aplikasi hanya untuk owner/admin")); return }
+	if r.Method != http.MethodGet && r.Method != http.MethodPost { util.Error(w, http.StatusMethodNotAllowed, fmt.Errorf("gunakan GET atau POST")); return }
+	vercelToken := os.Getenv("VERCEL_TOKEN")
+	if r.Method == http.MethodGet && r.URL.Query().Get("ticket") != "" {
+		ticket, err := verifyBuildTicket(vercelToken, r.URL.Query().Get("ticket"))
+		if vercelToken == "" || err != nil || ticket.Stage != "app-repair" || ticket.Repo == "" || ticket.URL == "" || ticket.DeploymentID == "" || ticket.ProjectID == "" {
+			util.Error(w, http.StatusBadRequest, fmt.Errorf("sesi pemulihan tidak valid atau kedaluwarsa")); return
+		}
+		service, err := readRepairService(ticket.Repo)
+		if err != nil || service.URL != ticket.URL { util.Error(w, http.StatusConflict, fmt.Errorf("tautan aplikasi berubah selama pemulihan; muat ulang halaman")); return }
+		state, urls, detail, err := getVercelBuildStatus(vercelToken, ticket.DeploymentID)
+		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		if state == "ERROR" || state == "CANCELED" {
+			if detail == "" {
+				if buildLog, logErr := getVercelBuildLog(vercelToken, ticket.DeploymentID); logErr == nil { detail = vercelFailureSummary(buildLog) }
+			}
+			logLiveLog("ERROR", "Pemulihan "+service.Repo+": build Vercel "+state+" "+detail)
+			util.JSON(w, http.StatusOK, map[string]interface{}{"status":"failed", "message":"Build pemulihan Vercel "+state+": "+orDefault(detail, "periksa Build Logs di project Vercel")}); return
+		}
+		if state != "READY" { util.JSON(w, http.StatusOK, map[string]interface{}{"status":"pending", "message":"Build Vercel: "+state}); return }
+		client := vercelapp.New(vercelToken)
+		if current, found, err := client.GetProject(ticket.ProjectID); err != nil || !found || !current.LinkedTo(strings.SplitN(service.Repo,"/",2)[0], strings.SplitN(service.Repo,"/",2)[1]) {
+			util.Error(w, http.StatusConflict, fmt.Errorf("project Vercel tidak lagi terhubung ke repo aplikasi")); return
+		}
+		liveURL := verifiedRepairURL(client, ticket.DeploymentID, urls)
+		if liveURL == "" {
+			util.JSON(w, http.StatusOK, map[string]interface{}{"status":"failed", "message":"Build READY, tetapi URL belum melayani halaman web yang terverifikasi; periksa Root Directory, variabel API_URL, dan Deployment Protection di Vercel. Tautan lama tetap tersimpan."}); return
+		}
+		if err := saveRepairedURL(service, liveURL); err != nil { util.Error(w, http.StatusConflict, err); return }
+		util.JSON(w, http.StatusOK, map[string]interface{}{"status":"ready", "app_url":liveURL, "message":"Aplikasi sudah online; tautan tersimpan diperbarui"})
+		return
+	}
+	service, err := readRepairService(r.URL.Query().Get("repo"))
+	if err != nil {
+		if r.Method == http.MethodGet { util.JSON(w, http.StatusOK, map[string]bool{"broken":false}); return }
+		util.Error(w, http.StatusNotFound, err); return
+	}
+	broken, probeErr := vercelapp.Platform404(service.URL)
+	if r.Method == http.MethodGet {
+		util.JSON(w, http.StatusOK, map[string]interface{}{"broken":broken && probeErr == nil, "app_url":service.URL}); return
+	}
+	if probeErr != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("URL belum dapat diverifikasi: %w", probeErr)); return }
+	if !broken { util.Error(w, http.StatusConflict, fmt.Errorf("tautan tidak lagi menampilkan 404 Vercel; muat ulang halaman")); return }
+	active, err := d1.Query(`SELECT id FROM deployment_jobs WHERE lower(lock_key) = lower(?) AND status = 'Running' LIMIT 1`, service.Repo)
+	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	if len(active) != 0 { util.Error(w, http.StatusConflict, fmt.Errorf("repo sedang diproses oleh deployment lain; tunggu hingga selesai")); return }
+	githubToken := os.Getenv("GITHUB_TOKEN")
+	if vercelToken == "" || githubToken == "" { util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("GITHUB_TOKEN dan VERCEL_TOKEN diperlukan untuk pemulihan")); return }
+	owner, repo, _ := splitRepo(service.Repo)
+	branch := orDefault(service.Branch, "main")
+	sha, root, framework, err := githubRepairRoot(githubToken, owner, repo, branch)
+	if err != nil { util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("repo GitHub belum dapat dianalisis: %w", err)); return }
+	client := vercelapp.New(vercelToken)
+	linked, err := client.FindLinkedProjects(owner, repo)
+	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	// An already healthy manual import is the best repair: only switch the
+	// saved link, without redeploying or touching either Vercel project.
+	exact := []vercelapp.Project{}
+	for _, project := range linked { if project.RootDirectory == root { exact = append(exact, project) } }
+	if len(exact) > 1 { util.Error(w, http.StatusConflict, fmt.Errorf("beberapa project Vercel memakai root %q; target belum pasti", root)); return }
+	if len(exact) == 1 {
+		project, checkErr := clientRepairProject(client, exact[0], owner, repo)
+		if checkErr != nil { util.Error(w, http.StatusBadGateway, checkErr); return }
+		id, lookupErr := client.LatestProduction(project.ID, sha)
+		if lookupErr != nil { util.Error(w, http.StatusBadGateway, lookupErr); return }
+		if id != "" {
+			state, urls, _, statusErr := getVercelBuildStatus(vercelToken, id)
+			if statusErr != nil { util.Error(w, http.StatusBadGateway, statusErr); return }
+			if state == "READY" {
+				if liveURL := verifiedRepairURL(client, id, urls); liveURL != "" {
+					if err := saveRepairedURL(service, liveURL); err != nil { util.Error(w, http.StatusConflict, err); return }
+					util.JSON(w, http.StatusOK, map[string]interface{}{"status":"ready", "app_url":liveURL, "message":"Project import manual sudah sehat; tautan diperbaiki tanpa deployment baru"}); return
+				}
+				platformBroken := false
+				for _, candidate := range urls {
+					if !isVercelAppURL(candidate) { continue }
+					bad, probeErr := vercelapp.Platform404(candidate)
+					if probeErr == nil && bad { platformBroken = true }
+					break
+				}
+				if !platformBroken {
+					util.Error(w, http.StatusConflict, fmt.Errorf("project web %s sudah READY, tetapi halaman production tidak dapat diverifikasi sebagai web sehat atau 404 Vercel; periksa Deployment Protection dan Runtime Logs sebelum mengubah project", project.Name)); return
+				}
+			}
+		}
+	}
+	project, err := selectRepairProject(client, service, owner, repo, root, linked)
+	if err != nil { util.Error(w, http.StatusConflict, err); return }
+	if _, err := client.AlignBuildSettings(project, framework, root, true); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	deployment, err := client.CreateGitDeployment(project.Name, project.ID, owner, repo, branch, sha)
+	if err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("commit Git tidak dapat dideploy: %w", err)); return }
+	ticket, err := signBuildTicket(vercelToken, buildTicket{Stage:"app-repair", Repo:service.Repo, Name:service.Name, Branch:branch, CommitSHA:sha, URL:service.URL, Project:project.Name, ProjectID:project.ID, DeploymentID:deployment.ID, RootDirectory:root, Framework:framework})
+	if err != nil { util.Error(w, http.StatusInternalServerError, err); return }
+	logLiveLog("INFO", "Pemulihan 404 "+service.Repo+": membangun ulang commit "+sha+" pada project "+project.Name)
+	util.JSON(w, http.StatusOK, map[string]interface{}{"status":"pending", "ticket":ticket, "message":"Root Directory disesuaikan dan commit Git yang sudah ada sedang dibangun ulang di Vercel"})
 }
 
 // GET /api/activity -> recent activity feed (latest 10).
@@ -1019,7 +1232,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	if phase == "vercel-test" {
 		updateDeploymentStage(archiveID, 2, "Running")
-		id, previewURL, tempProject, framework, testErr := createVercelTestDeployment(vercelToken, name, files)
+		id, previewURL, tempProject, framework, rootDirectory, testErr := createVercelTestDeployment(vercelToken, name, files)
 		if testErr != nil {
 			_ = store.Fail(archiveID)
 			cleanupTestProject(vercelToken, tempProject)
@@ -1032,7 +1245,8 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		ticket, ticketErr := signBuildTicket(vercelToken, buildTicket{
 			Stage: "app-test", Mode: deployType, Name: name, DeploymentID: id,
 			Project: tempProject, URL: previewURL, ZipSHA: zipDigest(zipBytes), ArchiveID: archiveID,
-			Framework: framework, Probe: vercelapp.ExpectsHomePage(toVercelFiles(files)),
+			Framework: framework, RootDirectory: rootDirectory,
+			Probe: vercelapp.ExpectsHomePage(vercelapp.FilesAtRoot(toVercelFiles(files), rootDirectory)),
 		})
 		if ticketErr != nil {
 			cleanupTestProject(vercelToken, tempProject)
@@ -1128,7 +1342,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if id == "" {
-			id, deploymentURL, _, deployErr = createVercelDeployment(vercelToken, project, "production", files, phaseTicket.Framework, phaseTicket.ProjectID)
+			id, deploymentURL, _, deployErr = createVercelDeployment(vercelToken, project, "production", files, phaseTicket.Framework, phaseTicket.RootDirectory, phaseTicket.ProjectID)
 			source = "ZIP"
 		}
 		if deployErr != nil {
@@ -1143,7 +1357,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 			Stage: "app-live", Mode: deployType, Name: name, DeploymentID: id,
 			URL: deploymentURL, Repo: repoFullName, Branch: branch, Environment: environment,
 			ArchiveID: archiveID, ZipSHA: zipDigest(zipBytes),
-			Framework: phaseTicket.Framework, Probe: phaseTicket.Probe, Linked: phaseTicket.Linked,
+			Framework: phaseTicket.Framework, RootDirectory: phaseTicket.RootDirectory, Probe: phaseTicket.Probe, Linked: phaseTicket.Linked,
 		})
 		if ticketErr != nil {
 			util.Error(w, http.StatusInternalServerError, ticketErr)
@@ -1170,8 +1384,8 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	// Vercel's build, which must already see those values.
 	vercelClient := vercelapp.New(vercelToken)
 	project := vercelAppProjectName(owner, repoName)
-	envVars := vercelapp.EnvFromFiles(toVercelFiles(files))
-	gitState, envErr := prepareExistingVercelProject(vercelClient, project, owner, repoName, phaseTicket.Framework, envVars)
+	envVars := vercelapp.EnvFromFiles(vercelapp.FilesAtRoot(toVercelFiles(files), phaseTicket.RootDirectory))
+	gitState, envErr := prepareExistingVercelProject(vercelClient, project, owner, repoName, phaseTicket.Framework, phaseTicket.RootDirectory, envVars)
 	if envErr == nil && isUpdate && !gitState.Found {
 		envErr = fmt.Errorf("project Vercel untuk %s tidak ditemukan di akun/team token ini; periksa VERCEL_TEAM_ID dan koneksi Git pada project import manual", repoFullName)
 	}
@@ -1200,7 +1414,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	if !gitState.Found {
 		// First deployment: create the project connected to the repo that
 		// now has its first commit (like "Import Git Repository").
-		gitState = createVercelGitProject(vercelClient, project, owner, repoName, phaseTicket.Framework, envVars)
+		gitState = createVercelGitProject(vercelClient, project, owner, repoName, phaseTicket.Framework, phaseTicket.RootDirectory, envVars)
 	}
 	for _, note := range gitState.Notes {
 		setSyncNote(archiveID, note)
@@ -1214,7 +1428,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		Stage: "app-live-start", Mode: deployType, Name: name, ZipSHA: zipDigest(zipBytes),
 		Repo: repoFullName, Branch: branch, ArchiveID: archiveID, CommitSHA: commitSHA,
 		Project: gitState.Name, ProjectID: gitState.ID,
-		Framework: phaseTicket.Framework, Probe: phaseTicket.Probe, Linked: gitState.Linked,
+		Framework: phaseTicket.Framework, RootDirectory: phaseTicket.RootDirectory, Probe: phaseTicket.Probe, Linked: gitState.Linked,
 	})
 	if ticketErr != nil {
 		util.Error(w, http.StatusInternalServerError, ticketErr)
@@ -1257,7 +1471,7 @@ func syncVercelEnv(client *vercelapp.Client, projectID string, env []vercelapp.E
 // prepareExistingVercelProject runs before the push. Found=false means the
 // project does not exist yet (first deployment). Settings errors stop the
 // push before GitHub can trigger a build with the wrong framework or env.
-func prepareExistingVercelProject(client *vercelapp.Client, project, owner, repo, framework string, env []vercelapp.EnvVar) (vercelGitState, error) {
+func prepareExistingVercelProject(client *vercelapp.Client, project, owner, repo, framework, rootDirectory string, env []vercelapp.EnvVar) (vercelGitState, error) {
 	state := vercelGitState{}
 	info, found, err := client.GetProject(project)
 	if err != nil {
@@ -1267,21 +1481,31 @@ func prepareExistingVercelProject(client *vercelapp.Client, project, owner, repo
 	if found && info.LinkType != "" && !info.LinkedTo(owner, repo) {
 		return state, fmt.Errorf("project Vercel %s terhubung ke repo lain; periksa project dan akun/team Vercel", project)
 	}
-	if !found || !info.LinkedTo(owner, repo) {
-		// Manual Git imports usually keep the repository name. Prefer the
-		// already connected project over an empty project with our own name.
+	if !found || !info.LinkedTo(owner, repo) || info.RootDirectory != rootDirectory {
+		// A monorepo can have a web and API project connected to the same repo.
+		// Select the web root exactly; never turn the API project into a web app.
 		matches, listErr := client.FindLinkedProjects(owner, repo)
 		if listErr != nil { return state, fmt.Errorf("project Git %s tidak dapat dicari di Vercel: %w", full, listErr) }
-		if len(matches) > 1 {
-			names := make([]string, 0, len(matches))
-			for _, match := range matches { names = append(names, match.Name) }
-			return state, fmt.Errorf("repo %s terhubung ke beberapa project Vercel (%s); pilih satu project sebelum mencoba lagi", full, strings.Join(names, ", "))
+		exact := []vercelapp.Project{}
+		legacy := []vercelapp.Project{}
+		for _, match := range matches {
+			if match.RootDirectory == rootDirectory { exact = append(exact, match) }
+			if match.RootDirectory == "" { legacy = append(legacy, match) }
 		}
-		if len(matches) == 1 {
-			selected, selectedFound, getErr := client.GetProject(matches[0].ID)
+		selectedMatch := vercelapp.Project{}
+		if found && info.LinkedTo(owner, repo) && info.RootDirectory == rootDirectory { selectedMatch = info }
+		if selectedMatch.ID == "" && len(exact) == 1 { selectedMatch = exact[0] }
+		if selectedMatch.ID == "" && len(exact) > 1 {
+			return state, fmt.Errorf("repo %s memiliki beberapa project Vercel dengan root %q; pilih project melalui Vercel sebelum mencoba lagi", full, rootDirectory)
+		}
+		if selectedMatch.ID == "" && found && (info.RootDirectory == "" || info.RootDirectory == rootDirectory) { selectedMatch = info }
+		if selectedMatch.ID == "" && len(legacy) == 1 && legacy[0].Name == project { selectedMatch = legacy[0] }
+		if selectedMatch.ID == "" && found { return state, fmt.Errorf("project %s memakai Root Directory %q, sedangkan web berada di %q; project API tidak akan diubah", info.Name, info.RootDirectory, rootDirectory) }
+		if selectedMatch.ID != "" && selectedMatch.ID != info.ID {
+			selected, selectedFound, getErr := client.GetProject(selectedMatch.ID)
 			if getErr != nil { return state, getErr }
 			if !selectedFound || !selected.LinkedTo(owner, repo) {
-				return state, fmt.Errorf("koneksi project Vercel %s berubah saat diperiksa", matches[0].Name)
+				return state, fmt.Errorf("koneksi project Vercel %s berubah saat diperiksa", selectedMatch.Name)
 			}
 			info, found = selected, true
 			if info.Name != project { state.Notes = append(state.Notes, "Menggunakan project Vercel import Git yang sudah ada: "+info.Name) }
@@ -1289,7 +1513,7 @@ func prepareExistingVercelProject(client *vercelapp.Client, project, owner, repo
 	}
 	if !found { return state, nil }
 	state.Found, state.ID, state.Name = true, info.ID, orDefault(info.Name, project)
-	fields, alignErr := client.AlignBuildSettings(info, framework)
+	fields, alignErr := client.AlignBuildSettings(info, framework, rootDirectory)
 	if alignErr != nil { return state, fmt.Errorf("pengaturan build project Vercel belum dapat disamakan dengan uji ZIP: %w", alignErr) }
 	if len(fields) > 0 { state.Notes = append(state.Notes, "Pengaturan project Vercel disamakan dengan uji ZIP: "+strings.Join(fields, ", ")) }
 	note, envErr := syncVercelEnv(client, info.ID, env)
@@ -1309,12 +1533,12 @@ func prepareExistingVercelProject(client *vercelapp.Client, project, owner, repo
 // createVercelGitProject creates the app's project connected to its repo.
 // Without repo access it still creates the project with the right framework
 // and production is deployed from the ZIP, as before.
-func createVercelGitProject(client *vercelapp.Client, project, owner, repo, framework string, env []vercelapp.EnvVar) vercelGitState {
+func createVercelGitProject(client *vercelapp.Client, project, owner, repo, framework, rootDirectory string, env []vercelapp.EnvVar) vercelGitState {
 	state := vercelGitState{Found: true, Name: project}
 	full := owner + "/" + repo
 	// Prepare the project and environment first. Linking a populated Git repo
 	// can immediately start a build, so its first build must have the env.
-	info, createErr := client.CreateProject(project, framework, "")
+	info, createErr := client.CreateProject(project, framework, rootDirectory, "")
 	if createErr != nil {
 		state.Notes = append(state.Notes, "Project Vercel dibuat oleh deployment ZIP ("+createErr.Error()+")")
 		return state
@@ -1410,7 +1634,7 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 	if step == "vercel-test" {
 		next, signErr := signBuildTicket(token, buildTicket{
 			Stage: "app-push", Mode: mode, Name: name, ZipSHA: ticket.ZipSHA, Project: ticket.Project, ArchiveID: ticket.ArchiveID,
-			Framework: ticket.Framework, Probe: ticket.Probe,
+			Framework: ticket.Framework, RootDirectory: ticket.RootDirectory, Probe: ticket.Probe,
 		})
 		if signErr != nil { util.Error(w, http.StatusInternalServerError, signErr); return }
 		updateDeploymentStage(ticket.ArchiveID, 2, "Success")
@@ -2205,7 +2429,7 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	updateDeploymentStage(archiveID, 2, "Running")
 	logLiveLog("INFO", fmt.Sprintf("Self-update: mengekstrak %d file dari zip untuk %s/%s", len(files), owner, repoName))
 
-	deploymentID, previewURL, tempProject, _, err := createVercelTestDeployment(vercelToken, repoName, files)
+	deploymentID, previewURL, tempProject, _, _, err := createVercelTestDeployment(vercelToken, repoName, files)
 	if err != nil {
 		_ = store.Fail(archiveID)
 		updateDeploymentStage(archiveID, 2, "Failed")
@@ -2505,11 +2729,14 @@ func toVercelFiles(files []selfUpdateFile) []vercelapp.File {
 // deployment history. The returned tempProject name is what the caller
 // must delete afterwards via deleteVercelProject once the test is done.
 // framework is the preset the build really used, for the production step.
-func createVercelTestDeployment(token, repoName string, files []selfUpdateFile) (id string, previewURL string, tempProject string, framework string, err error) {
+func createVercelTestDeployment(token, repoName string, files []selfUpdateFile) (id string, previewURL string, tempProject string, framework string, rootDirectory string, err error) {
 	tempProject = temporaryVercelProjectName(repoName)
-	id, previewURL, framework, err = createVercelDeployment(token, tempProject, "", files, vercelapp.DetectFramework(toVercelFiles(files)))
-	if err != nil { return "", "", tempProject, "", err }
-	return id, previewURL, tempProject, framework, nil
+	rootDirectory, err = vercelapp.WebRoot(toVercelFiles(files))
+	if err != nil { return "", "", tempProject, "", "", err }
+	framework = vercelapp.DetectFramework(vercelapp.FilesAtRoot(toVercelFiles(files), rootDirectory))
+	id, previewURL, framework, err = createVercelDeployment(token, tempProject, "", files, framework, rootDirectory)
+	if err != nil { return "", "", tempProject, "", rootDirectory, err }
+	return id, previewURL, tempProject, framework, rootDirectory, nil
 }
 
 // createVercelDeployment starts either an isolated test or a real production
@@ -2517,8 +2744,8 @@ func createVercelTestDeployment(token, repoName string, files []selfUpdateFile) 
 // (package.json, or the one Vercel itself detects): skipping detection left
 // Vite/CRA apps in a project without a framework, which served the source
 // folder instead of dist/ and showed Vercel's 404 NOT_FOUND to visitors.
-func createVercelDeployment(token, project, target string, files []selfUpdateFile, framework string, projectID ...string) (id string, deploymentURL string, usedFramework string, err error) {
-	deployment, used, err := vercelapp.New(token).CreateFileDeployment(project, target, toVercelFiles(files), framework, projectID...)
+func createVercelDeployment(token, project, target string, files []selfUpdateFile, framework, rootDirectory string, projectID ...string) (id string, deploymentURL string, usedFramework string, err error) {
+	deployment, used, err := vercelapp.New(token).CreateFileDeployment(project, target, toVercelFiles(files), framework, rootDirectory, projectID...)
 	if err != nil { return "", "", "", err }
 	return deployment.ID, deployment.URL, used, nil
 }
@@ -2739,6 +2966,7 @@ type buildTicket struct {
 	// home page must be checked, and whether production is built from the
 	// GitHub commit (project connected to the repo) instead of the ZIP upload.
 	Framework string `json:"framework,omitempty"`
+	RootDirectory string `json:"root_directory,omitempty"`
 	Probe bool `json:"probe,omitempty"`
 	Linked bool `json:"linked,omitempty"`
 }

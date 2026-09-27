@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Archive, ExternalLink, FileArchive, GitBranch, History, ImagePlus, Lock, MoreVertical, Star, Trash2, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { AlertCircle, Archive, ExternalLink, FileArchive, GitBranch, History, ImagePlus, Lock, MoreVertical, RotateCcw, Star, Trash2, X } from "lucide-react";
 import { UpdateHistoryDialog, ZipArchiveDialog } from "@/components/ProjectDialogs";
+import { notifyDataChanged } from "@/lib/liveUpdates";
 import { isAdminRole, useSession } from "@/lib/session";
 import type { GithubRepo } from "@/lib/types";
 
@@ -62,12 +64,111 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
   const menuRef = useRef<HTMLDivElement>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [dialog, setDialog] = useState<"zip" | "history" | null>(null);
+  const [repairBroken, setRepairBroken] = useState(false);
+  const [repairDialog, setRepairDialog] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [repairTicket, setRepairTicket] = useState<string | null>(null);
+  const [repairMessage, setRepairMessage] = useState("");
+  const [repairError, setRepairError] = useState("");
+  const [repairedURL, setRepairedURL] = useState<string | null>(null);
   const { role } = useSession();
   const admin = isAdminRole(role);
   const [failedVersion, setFailedVersion] = useState<string | null>(null);
   const name = repo.full_name.split("/")[1] ?? repo.full_name;
   const languageDot = repo.language ? LANGUAGE_COLORS[repo.language] ?? "bg-slate-400" : null;
   const pushed = timeAgo(repo.pushed_at);
+  const shownURL = repairedURL ?? appUrl;
+  const repairStorageKey = `devcontrol-app-repair:${repo.full_name.toLowerCase()}`;
+
+  useEffect(() => {
+    try {
+      const pending = sessionStorage.getItem(repairStorageKey);
+      if (pending) {
+        setRepairTicket(pending);
+        setRepairBusy(true);
+        setRepairDialog(true);
+        setRepairMessage("Melanjutkan pemeriksaan deployment Vercel…");
+      }
+    } catch { /* storage unavailable */ }
+  }, [repairStorageKey]);
+
+  useEffect(() => {
+    if (!actionsOpen || !admin || !appUrl || repairedURL) return;
+    const controller = new AbortController();
+    setRepairBroken(false);
+    fetch(`/api/app-repair?repo=${encodeURIComponent(repo.full_name)}`, { cache: "no-store", credentials: "same-origin", signal: controller.signal })
+      .then((response) => response.ok ? response.json() : null)
+      .then((result) => { if (!controller.signal.aborted && result?.broken && result.app_url === appUrl) setRepairBroken(true); })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [actionsOpen, admin, appUrl, repairedURL, repo.full_name]);
+
+  useEffect(() => {
+    if (!repairTicket) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/app-repair?ticket=${encodeURIComponent(repairTicket)}`, { cache: "no-store", credentials: "same-origin" });
+        const result = await response.json();
+        if (!active) return;
+        if (!response.ok) throw new Error(result.error || "Status pemulihan tidak dapat diperiksa");
+        if (result.status === "ready") {
+          setRepairMessage(result.message || "Aplikasi sudah online");
+          setRepairedURL(result.app_url);
+          setRepairBroken(false);
+          setRepairTicket(null);
+          setRepairBusy(false);
+          try { sessionStorage.removeItem(repairStorageKey); } catch { /* storage unavailable */ }
+          notifyDataChanged();
+        } else if (result.status === "failed") {
+          setRepairError(result.message || "Build pemulihan gagal");
+          setRepairTicket(null);
+          setRepairBusy(false);
+          try { sessionStorage.removeItem(repairStorageKey); } catch { /* storage unavailable */ }
+        } else {
+          setRepairMessage(result.message || "Build Vercel sedang berjalan…");
+          timer = setTimeout(poll, 4000);
+        }
+      } catch (error) {
+        if (active) {
+          setRepairError(error instanceof Error ? error.message : "Status pemulihan tidak dapat diperiksa");
+          setRepairTicket(null);
+          setRepairBusy(false);
+          try { sessionStorage.removeItem(repairStorageKey); } catch { /* storage unavailable */ }
+        }
+      }
+    };
+    timer = setTimeout(poll, 2500);
+    return () => { active = false; clearTimeout(timer); };
+  }, [repairTicket, repairStorageKey]);
+
+  const startRepair = async () => {
+    if (repairBusy) return;
+    setRepairBusy(true);
+    setRepairError("");
+    setRepairMessage("Memeriksa import Git dan project Vercel…");
+    try {
+      const response = await fetch(`/api/app-repair?repo=${encodeURIComponent(repo.full_name)}`, { method: "POST", credentials: "same-origin" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Pemulihan gagal dimulai");
+      setRepairMessage(result.message || "Pemulihan sedang berjalan");
+      if (result.status === "ready" && result.app_url) {
+        setRepairedURL(result.app_url);
+        setRepairBroken(false);
+        setRepairBusy(false);
+        notifyDataChanged();
+      } else if (result.status === "pending" && result.ticket) {
+        try { sessionStorage.setItem(repairStorageKey, result.ticket); } catch { /* storage unavailable */ }
+        setRepairTicket(result.ticket);
+      } else {
+        throw new Error("Respons pemulihan Vercel tidak lengkap");
+      }
+    } catch (error) {
+      setRepairError(error instanceof Error ? error.message : "Pemulihan gagal dimulai");
+      setRepairBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!failedVersion) return;
@@ -122,7 +223,7 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
             <MoreVertical size={17} />
           </button>
           {actionsOpen && (
-            <div role="menu" aria-label={`Aksi proyek ${repo.full_name}`} className="absolute right-0 top-full z-30 mt-2 w-44 rounded-xl border border-base-border bg-base-900 p-1.5 text-sm shadow-2xl">
+            <div role="menu" aria-label={`Aksi proyek ${repo.full_name}`} className="absolute right-0 top-full z-30 mt-2 w-52 rounded-xl border border-base-border bg-base-900 p-1.5 text-sm shadow-2xl">
               <span aria-hidden="true" className="pointer-events-none absolute -top-[5px] right-2.5 h-2.5 w-2.5 rotate-45 border-l border-t border-base-border bg-base-900" />
               {admin && <>
               <button type="button" role="menuitem" disabled={uploading} onClick={() => { setActionsOpen(false); inputRef.current?.click(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800 disabled:opacity-50">
@@ -133,6 +234,7 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
               </>}
               {admin && <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("zip"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><FileArchive size={14} /> Arsip ZIP</button>}
               <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("history"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><History size={14} /> Riwayat update</button>
+              {admin && repairBroken && <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setRepairDialog(true); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-amber-300 hover:bg-amber-500/10"><RotateCcw size={14} /> Perbaiki 404 Vercel</button>}
               {admin && <>
               <div className="my-1 border-t border-base-border" />
               <button type="button" role="menuitem" disabled={uploading} onClick={() => { setActionsOpen(false); onDelete(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-red-400 hover:bg-red-500/10 disabled:opacity-50"><Trash2 size={14} /> Hapus aplikasi</button>
@@ -143,6 +245,19 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
       </div>
       {dialog === "zip" && <ZipArchiveDialog repo={repo.full_name} onClose={() => setDialog(null)} />}
       {dialog === "history" && <UpdateHistoryDialog repo={repo.full_name} onClose={() => setDialog(null)} />}
+      {repairDialog && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setRepairDialog(false); }}>
+          <section role="dialog" aria-modal="true" aria-label={`Pemulihan 404 ${repo.full_name}`} className="w-full max-w-md rounded-2xl border border-base-border bg-base-900 p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3"><h2 className="text-lg font-bold text-white">Perbaiki 404 Vercel</h2><button type="button" aria-label="Tutup" onClick={() => setRepairDialog(false)} className="rounded-lg p-1 text-slate-300 hover:bg-base-800"><X size={18} /></button></div>
+            <p className="mt-3 text-sm text-slate-300">Tautan tersimpan untuk {repo.full_name} menampilkan 404 dari Vercel. DevControl akan mencari import Git yang sudah sehat. Jika belum ada, DevControl membetulkan pengaturan build dan membangun ulang commit Git yang sama pada project terkait.</p>
+            <p className="mt-2 text-xs text-slate-400">Repo GitHub dan project Vercel tidak dihapus. Tautan baru hanya disimpan setelah halaman dapat dibuka dan deployment terverifikasi.</p>
+            {repairMessage && <p role="status" className="mt-4 rounded-lg bg-base-800 p-3 text-sm text-slate-200">{repairMessage}</p>}
+            {repairError && <p role="alert" className="mt-4 rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{repairError}</p>}
+            {repairedURL ? <a href={repairedURL} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm text-white">Buka aplikasi <ExternalLink size={14} /></a> :
+              <button type="button" disabled={repairBusy} onClick={startRepair} className="mt-4 rounded-lg bg-accent-blue px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{repairBusy ? "Memulihkan…" : "Mulai pemulihan"}</button>}
+          </section>
+        </div>, document.body,
+      )}
       <input ref={inputRef} type="file" accept="image/jpeg,image/png" className="sr-only" disabled={uploading} aria-label={`Unggah thumbnail ${repo.full_name}`} onChange={(event) => {
           const file = event.currentTarget.files?.[0];
           if (file) onUpload(file);
@@ -207,9 +322,9 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
             GitHub <ExternalLink size={12} />
           </a>
         )}
-        {appUrl ? (
+        {shownURL ? (
           <a
-            href={appUrl}
+            href={shownURL}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1 text-xs font-medium text-accent-blue hover:underline"

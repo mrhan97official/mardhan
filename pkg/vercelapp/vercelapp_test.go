@@ -31,6 +31,73 @@ func TestDetectFramework(t *testing.T) {
 	}
 }
 
+func TestWebRootMonorepoApotikPintar(t *testing.T) {
+	files := []File{
+		{Path: "server/api/index.go", Data: []byte("package handler")},
+		{Path: "server/go.mod", Data: []byte("module apotik")},
+		{Path: "web/package.json", Data: []byte(`{"scripts":{"build":"next build"},"dependencies":{"next":"15.0.0"}}`)},
+		{Path: "web/app/page.js", Data: []byte("export default function Home() {}")},
+		{Path: "web/.env.production", Data: []byte("API_URL=https://api.vercel.app")},
+	}
+	root, err := WebRoot(files)
+	if err != nil || root != "web" { t.Fatalf("WebRoot = %q, %v; want web", root, err) }
+	selected := FilesAtRoot(files, root)
+	if DetectFramework(selected) != "nextjs" || !ExpectsHomePage(selected) { t.Fatalf("web root was not recognized: %v", selected) }
+	if got := EnvFromFiles(selected); len(got) != 1 || got[0].Key != "API_URL" { t.Fatalf("web env not found: %v", got) }
+	if _, err := WebRoot(append(files, File{Path: "admin/package.json", Data: []byte(`{"dependencies":{"next":"15"}}`)})); err == nil {
+		t.Fatal("two web frontends need an explicit choice")
+	}
+}
+
+func TestIsPlatform404(t *testing.T) {
+	if !IsPlatform404(404, "NOT_FOUND", "") || !IsPlatform404(404, "", "This page doesn’t exist. 404 NOT_FOUND") {
+		t.Fatal("Vercel platform 404 was missed")
+	}
+	if IsPlatform404(404, "", "My application says 404") || IsPlatform404(500, "NOT_FOUND", "") || IsPlatform404(200, "", "This page doesn’t exist. 404 NOT_FOUND") {
+		t.Fatal("non-platform page reported broken")
+	}
+	if broken, err := Platform404("https://127.0.0.1/"); err == nil || broken { t.Fatalf("local probe allowed: %v, %v", broken, err) }
+}
+
+func TestFileDeploymentSetsMonorepoRoot(t *testing.T) {
+	client := New("test-token")
+	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var body struct { ProjectSettings struct { Framework string `json:"framework"`; RootDirectory string `json:"rootDirectory"` } `json:"projectSettings"` }
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
+		if body.ProjectSettings.Framework != "nextjs" || body.ProjectSettings.RootDirectory != "web" { t.Fatalf("wrong project settings: %+v", body.ProjectSettings) }
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"id":"dpl_web","url":"site.vercel.app"}`)), Header: make(http.Header)}, nil
+	})}
+	if _, _, err := client.CreateFileDeployment("site", "", []File{{Path:"web/package.json", Data:[]byte(`{}`)}}, "nextjs", "web"); err != nil { t.Fatal(err) }
+}
+
+func TestLatestProductionScopedToProject(t *testing.T) {
+	client := New("test-token")
+	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v7/deployments" || r.URL.Query().Get("projectId") != "prj_web" || r.URL.Query().Get("target") != "production" || r.URL.Query().Get("sha") != "commit123" { t.Fatalf("unexpected query: %s", r.URL) }
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"deployments":[{"uid":"dpl_healthy","target":"production"}]}`)), Header: make(http.Header)}, nil
+	})}
+	if id, err := client.LatestProduction("prj_web", "commit123"); err != nil || id != "dpl_healthy" { t.Fatalf("id=%s, err=%v", id, err) }
+}
+
+func TestWorkingManualProjectSettingsArePreserved(t *testing.T) {
+	client := New("test-token")
+	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatal("manual project with matching root and preset must not be patched")
+		return nil, nil
+	})}
+	fields, err := client.AlignBuildSettings(Project{ID:"prj_web", Framework:"nextjs", RootDirectory:"web", BuildCommand:"pnpm build"}, "nextjs", "web")
+	if err != nil || len(fields) != 0 { t.Fatalf("manual settings changed: %v, %v", fields, err) }
+}
+
+func TestProjectIDForURL(t *testing.T) {
+	client := New("test-token")
+	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v13/deployments/old.vercel.app" { t.Fatalf("unexpected URL: %s", r.URL) }
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"id":"dpl_old","projectId":"prj_old"}`)), Header: make(http.Header)}, nil
+	})}
+	if id, err := client.ProjectIDForURL("https://old.vercel.app/"); err != nil || id != "prj_old" { t.Fatalf("project=%s, err=%v", id, err) }
+}
+
 func TestExpectsHomePage(t *testing.T) {
 	if !ExpectsHomePage([]File{pkg(`{"devDependencies":{"vite":"5"}}`)}) {
 		t.Error("vite app must expect a home page")
@@ -209,13 +276,13 @@ func TestAlignBuildSettings(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
 	})}
 	project := Project{ID: "prj_old", Framework: "", RootDirectory: "web", OutputDirectory: "public", BuildCommand: "echo old", InstallCommand: "npm ci"}
-	fields, err := client.AlignBuildSettings(project, "vite")
+	fields, err := client.AlignBuildSettings(project, "vite", "")
 	if err != nil { t.Fatal(err) }
 	if patches != 1 || !reflect.DeepEqual(fields, []string{"buildCommand", "framework", "installCommand", "outputDirectory", "rootDirectory"}) {
 		t.Fatalf("changes = %v, patches = %d", fields, patches)
 	}
-	fields, err = client.AlignBuildSettings(Project{ID: "prj_old", Framework: "vite"}, "vite")
+	fields, err = client.AlignBuildSettings(Project{ID: "prj_old", Framework: "vite"}, "vite", "")
 	if err != nil || len(fields) != 0 || patches != 1 { t.Fatalf("already aligned: fields=%v, err=%v, patches=%d", fields, err, patches) }
-	fields, err = client.AlignBuildSettings(Project{ID: "prj_old", Framework: "nextjs"}, "")
+	fields, err = client.AlignBuildSettings(Project{ID: "prj_old", Framework: "nextjs"}, "", "")
 	if err != nil || len(fields) != 0 || patches != 1 { t.Fatalf("unknown framework should preserve preset: fields=%v, err=%v, patches=%d", fields, err, patches) }
 }

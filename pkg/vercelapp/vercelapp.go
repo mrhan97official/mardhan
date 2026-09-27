@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -101,6 +102,56 @@ func DetectFramework(files []File) string {
 		}
 	}
 	return ""
+}
+
+// WebRoot finds the directory Vercel must build for a web app. GitHub ZIPs
+// often contain several projects (web/, server/); looking only at the repo
+// root silently treats the web project as an API-only project and skips the
+// home-page check. A genuinely ambiguous layout is rejected before a push.
+func WebRoot(files []File) (string, error) {
+	type candidate struct { root string; score int }
+	candidates := map[string]int{}
+	for _, file := range files {
+		if path.Base(file.Path) != "package.json" && path.Base(file.Path) != "index.html" { continue }
+		root := path.Dir(file.Path)
+		if root == "." { root = "" }
+		if path.Base(file.Path) == "index.html" {
+			if strings.HasSuffix(root, "/public") { root = strings.TrimSuffix(root, "/public") }
+			if root == "public" { root = "" }
+			if candidates[root] < 1 { candidates[root] = 1 }
+			continue
+		}
+		manifest, ok := readManifest([]File{{Path: "package.json", Data: file.Data}})
+		if !ok { continue }
+		score := 0
+		if DetectFramework([]File{{Path: "package.json", Data: file.Data}}) != "" { score = 3 } else if strings.TrimSpace(manifest.Scripts["build"]) != "" { score = 2 }
+		if score > candidates[root] { candidates[root] = score }
+	}
+	best := candidate{score: 0}
+	ties := []string{}
+	for root, score := range candidates {
+		if score > best.score { best = candidate{root, score}; ties = []string{root} } else if score == best.score && score > 0 { ties = append(ties, root) }
+	}
+	if len(ties) > 1 {
+		sort.Strings(ties)
+		for i := range ties { if ties[i] == "" { ties[i] = "(akar repo)" } }
+		return "", fmt.Errorf("lebih dari satu folder aplikasi web terdeteksi (%s); pilih ZIP dengan satu aplikasi web", strings.Join(ties, ", "))
+	}
+	return best.root, nil
+}
+
+// FilesAtRoot gives framework detection and .env parsing the same root that
+// Vercel will build, without changing the original paths uploaded to Vercel.
+func FilesAtRoot(files []File, root string) []File {
+	if root == "" { return files }
+	selected := []File{}
+	prefix := strings.Trim(root, "/") + "/"
+	for _, file := range files {
+		if strings.HasPrefix(file.Path, prefix) {
+			selected = append(selected, File{Path: strings.TrimPrefix(file.Path, prefix), Data: file.Data})
+		}
+	}
+	return selected
 }
 
 // ExpectsHomePage: the ZIP is a web app, so Vercel's own 404 on "/" means
@@ -349,6 +400,34 @@ type Deployment struct {
 type deploymentResponse struct {
 	ID  string `json:"id"`
 	URL string `json:"url"`
+	ProjectID string `json:"projectId"`
+}
+
+// ProjectIDForURL identifies which project owns the saved deployment alias.
+// The caller must still verify the project's Git link before editing it.
+func (c *Client) ProjectIDForURL(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" { return "", fmt.Errorf("URL deployment tidak valid") }
+	var out deploymentResponse
+	if err := c.Do(http.MethodGet, "/v13/deployments/"+url.PathEscape(parsed.Hostname()), nil, nil, &out); err != nil { return "", err }
+	if out.ProjectID == "" { return "", fmt.Errorf("Vercel tidak mengembalikan project ID untuk URL") }
+	return out.ProjectID, nil
+}
+
+// LatestProduction returns the newest production build for one project.
+// A working manual Git import can be adopted without creating a deployment.
+func (c *Client) LatestProduction(projectID string, sha ...string) (string, error) {
+	var out struct {
+		Deployments []struct {
+			ID string `json:"uid"`
+			Target string `json:"target"`
+		} `json:"deployments"`
+	}
+	query := url.Values{"projectId": {projectID}, "target": {"production"}, "limit": {"1"}}
+	if len(sha) > 0 && sha[0] != "" { query.Set("sha", sha[0]) }
+	if err := c.Do(http.MethodGet, "/v7/deployments", query, nil, &out); err != nil { return "", err }
+	if len(out.Deployments) == 0 || out.Deployments[0].Target != "production" { return "", nil }
+	return out.Deployments[0].ID, nil
 }
 
 // DeploymentIDForURL resolves a public alias to its current deployment. An
@@ -392,7 +471,7 @@ func (c *Client) createDeployment(body map[string]interface{}, confirm bool) (De
 // use ("" = let Vercel decide). The returned string is the framework the
 // deployment was really created with ("" when the project's saved settings
 // were used).
-func (c *Client) CreateFileDeployment(project, target string, files []File, framework string, projectID ...string) (Deployment, string, error) {
+func (c *Client) CreateFileDeployment(project, target string, files []File, framework, rootDirectory string, projectID ...string) (Deployment, string, error) {
 	inline := make([]map[string]string, 0, len(files))
 	for _, file := range files {
 		inline = append(inline, map[string]string{
@@ -406,6 +485,10 @@ func (c *Client) CreateFileDeployment(project, target string, files []File, fram
 		}
 		if target != "" {
 			body["target"] = target
+		}
+		if rootDirectory != "" {
+			if settings == nil { settings = map[string]interface{}{} }
+			settings["rootDirectory"] = rootDirectory
 		}
 		if settings != nil {
 			body["projectSettings"] = settings
@@ -583,8 +666,9 @@ func (c *Client) FindLinkedProjects(owner, repo string) ([]Project, error) {
 
 // CreateProject creates a project with the framework preset ("" = none) and,
 // when gitRepo ("owner/repo") is set, connected to that GitHub repo.
-func (c *Client) CreateProject(name, framework, gitRepo string) (Project, error) {
+func (c *Client) CreateProject(name, framework, rootDirectory, gitRepo string) (Project, error) {
 	body := map[string]interface{}{"name": name}
+	if rootDirectory != "" { body["rootDirectory"] = rootDirectory }
 	if framework != "" {
 		body["framework"] = framework
 	} else {
@@ -613,18 +697,24 @@ func (c *Client) LinkProject(projectID, gitRepo string) error {
 // test. Old root/output/build/install overrides can yield READY with no root
 // route even though the same files work in a manually imported project.
 // Only fields that actually differ are changed; nil restores Vercel defaults.
-func (c *Client) AlignBuildSettings(project Project, framework string) ([]string, error) {
+func (c *Client) AlignBuildSettings(project Project, framework, rootDirectory string, resetOverrides ...bool) ([]string, error) {
 	changes := map[string]interface{}{}
+	needsReset := project.RootDirectory != rootDirectory || (framework != "" && project.Framework != framework)
+	if len(resetOverrides) > 0 && resetOverrides[0] { needsReset = true }
 	// An empty result means the ZIP test did not identify a preset. Do not
 	// erase a working manual project's preset on that inconclusive signal.
 	if framework != "" && project.Framework != framework { changes["framework"] = framework }
-	for key, value := range map[string]string{
-		"rootDirectory": project.RootDirectory,
-		"outputDirectory": project.OutputDirectory,
-		"buildCommand": project.BuildCommand,
-		"installCommand": project.InstallCommand,
-	} {
-		if value != "" { changes[key] = nil }
+	if project.RootDirectory != rootDirectory {
+		if rootDirectory == "" { changes["rootDirectory"] = nil } else { changes["rootDirectory"] = rootDirectory }
+	}
+	if needsReset {
+		for key, value := range map[string]string{
+			"outputDirectory": project.OutputDirectory,
+			"buildCommand": project.BuildCommand,
+			"installCommand": project.InstallCommand,
+		} {
+			if value != "" { changes[key] = nil }
+		}
 	}
 	if len(changes) == 0 { return nil, nil }
 	if err := c.Do(http.MethodPatch, "/v9/projects/"+url.PathEscape(project.ID), nil, changes, nil); err != nil {
@@ -796,4 +886,32 @@ func CheckHomePage(rawURL string) error {
 		}
 	}
 	return last
+}
+
+// Platform404 checks the exact saved Vercel URL. Application 404 pages and
+// network failures are inconclusive and never enable the repair action.
+func Platform404(rawURL string) (bool, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Port() != "" || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" || !strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".vercel.app") {
+		return false, fmt.Errorf("tautan bukan URL aplikasi Vercel yang dapat diperiksa")
+	}
+	client := &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(next *http.Request, via []*http.Request) error {
+		if len(via) >= 3 || !strings.EqualFold(next.URL.Hostname(), parsed.Hostname()) { return http.ErrUseLastResponse }
+		return nil
+	}}
+	resp, err := client.Get("https://" + parsed.Hostname() + "/")
+	if err != nil { return false, err }
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil { return false, err }
+	return IsPlatform404(resp.StatusCode, resp.Header.Get("X-Vercel-Error"), string(body)), nil
+}
+
+// IsPlatform404 rejects an application's own 404 and Vercel's other errors.
+func IsPlatform404(status int, platformError, body string) bool {
+	if status != http.StatusNotFound { return false }
+	if strings.EqualFold(strings.TrimSpace(platformError), "NOT_FOUND") { return true }
+	page := strings.ToLower(body)
+	return (strings.Contains(page, "404_not_found") || strings.Contains(page, "404 not_found") || strings.Contains(page, "404: not_found")) &&
+		(strings.Contains(page, "this page doesn") || strings.Contains(page, "it may have been moved"))
 }
