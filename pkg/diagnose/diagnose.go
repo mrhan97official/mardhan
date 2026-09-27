@@ -63,7 +63,7 @@ type rule struct {
 }
 
 var rules = []rule{
-	{keys: []string{"halaman utama menampilkan 404"}, category: "Hasil build tidak disajikan (404 NOT_FOUND)",
+	{keys: []string{"halaman utama menampilkan 404", "http 404", "404 not_found"}, category: "Hasil build tidak disajikan (404 NOT_FOUND)",
 		cause: "Build selesai, tetapi Vercel tidak menemukan halaman di folder yang disajikannya: framework proyek tidak dikenali sehingga folder hasil build (dist/, build/) tidak dipakai, atau proyek bersarang di subfolder ZIP.",
 		fixes: []string{"Pastikan package.json berada di akar ZIP dan mencantumkan framework-nya (vite, react-scripts, next, dll.) di dependencies/devDependencies.",
 			"Pastikan package.json punya script \"build\" yang menghasilkan folder output (mis. vite build → dist/).",

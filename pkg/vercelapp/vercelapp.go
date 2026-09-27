@@ -2,7 +2,7 @@
 // plain file upload: the right framework preset, a project connected to the
 // app's GitHub repo (the same state as a manual "Import Git Repository"),
 // the app's .env values copied into the project, and a check that the page
-// Vercel serves is really the app and not Vercel's own 404.
+// Vercel serves is really reachable, not just a successful build.
 //
 // Why this exists: a file-upload deployment with skipAutoDetectionConfirmation
 // skips framework detection, so a Vite/CRA app landed in a project with no
@@ -419,15 +419,15 @@ func (c *Client) CreateFileDeployment(project, target string, files []File, fram
 
 // CreateGitDeployment deploys a commit of the connected GitHub repo to
 // production, exactly like a push-triggered build.
-func (c *Client) CreateGitDeployment(project, org, repo, ref, sha, framework string) (Deployment, error) {
+func (c *Client) CreateGitDeployment(project, org, repo, ref, sha string) (Deployment, error) {
 	source := map[string]interface{}{"type": "github", "org": org, "repo": repo, "ref": ref}
 	if sha != "" {
 		source["sha"] = sha
 	}
 	body := map[string]interface{}{"name": project, "target": "production", "gitSource": source}
-	if framework != "" {
-		body["projectSettings"] = map[string]interface{}{"framework": framework}
-	}
+	// The linked project already has its framework. Sending only a framework
+	// here can replace the build/output settings used by a working manual
+	// deployment. Keep the project's complete saved settings for Git builds.
 	return c.createDeployment(body, true)
 }
 
@@ -630,30 +630,36 @@ func (c *Client) AddMissingEnv(projectID string, vars []EnvVar) ([]string, []str
 	return added, failed, nil
 }
 
-// MissingHomePage reports true only when "/" is answered by Vercel itself
-// with 404 NOT_FOUND (no build output where Vercel serves from). It asks up
-// to three times to ride out alias propagation and the few seconds it takes
-// for a lifted login wall to apply. Any real answer from the app, network
-// errors and a login wall that stays up are inconclusive and report false.
-func MissingHomePage(rawURL string) bool {
-	if rawURL == "" {
-		return false
+// CheckHomePage verifies the actual URL visitors will open. READY is only a
+// build state; a platform 404, app 5xx, protection page or failed request
+// must never be silently interpreted as a working website.
+func CheckHomePage(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return fmt.Errorf("URL deployment tidak valid")
 	}
 	client := &http.Client{
-		Timeout: 8 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
+		Timeout: 7 * time.Second,
+		CheckRedirect: func(next *http.Request, via []*http.Request) error {
+			// Follow app routes such as /login and inspect their final status.
+			// Never follow Vercel's login wall or an unrelated domain.
+			if len(via) >= 4 { return fmt.Errorf("terlalu banyak pengalihan halaman") }
+			if !strings.EqualFold(next.URL.Host, parsed.Host) {
+				return http.ErrUseLastResponse
+			}
+			return nil
 		},
 	}
 	target := strings.TrimRight(rawURL, "/") + "/"
-	notFound := 0
-	for attempt := 0; attempt < 3; attempt++ {
+	var last error
+	for attempt := 0; attempt < 2; attempt++ {
 		if attempt > 0 {
-			time.Sleep(2 * time.Second)
+			time.Sleep(time.Second)
 		}
 		resp, err := client.Get(target)
 		if err != nil {
-			return false
+			last = fmt.Errorf("halaman tidak dapat dihubungi: %w", err)
+			continue
 		}
 		platformError := strings.ToUpper(strings.TrimSpace(resp.Header.Get("X-Vercel-Error")))
 		location := strings.ToLower(resp.Header.Get("Location"))
@@ -661,14 +667,20 @@ func MissingHomePage(rawURL string) bool {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 		resp.Body.Close()
 		switch {
-		case status == http.StatusNotFound && platformError == "NOT_FOUND":
-			notFound++
+		case status >= 200 && status < 300 && status != http.StatusNoContent:
+			return nil
+		case status >= 300 && status < 400 && location != "" &&
+			!strings.Contains(location, "vercel.com/sso") && platformError == "":
+			// An app may intentionally redirect its home page to /login.
+			return nil
 		case status == http.StatusUnauthorized || status == http.StatusForbidden ||
-			(status >= 300 && status < 400 && strings.Contains(location, "vercel.com/sso")):
-			// Deployment protection still active: ask again.
+			strings.Contains(location, "vercel.com/sso"):
+			last = fmt.Errorf("HTTP %d: akses deployment dibatasi; periksa Deployment Protection", status)
+		case platformError != "":
+			last = fmt.Errorf("HTTP %d dari Vercel (%s)", status, platformError)
 		default:
-			return false
+			last = fmt.Errorf("HTTP %d saat membuka halaman utama", status)
 		}
 	}
-	return notFound >= 2
+	return last
 }

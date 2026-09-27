@@ -1111,7 +1111,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		if phaseTicket.Linked {
 			// Connected to GitHub: build the pushed commit, the same way a
 			// manual import deploys, so Vercel shows the repo and commit.
-			deployment, gitErr := vercelapp.New(vercelToken).CreateGitDeployment(project, owner, repoName, branch, phaseTicket.CommitSHA, phaseTicket.Framework)
+			deployment, gitErr := vercelapp.New(vercelToken).CreateGitDeployment(project, owner, repoName, branch, phaseTicket.CommitSHA)
 			if gitErr == nil {
 				id, deploymentURL, source = deployment.ID, deployment.URL, "GitHub "+repoFullName+"@"+branch
 			} else {
@@ -1166,7 +1166,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	gitState, envErr := prepareExistingVercelProject(vercelClient, project, owner, repoName, phaseTicket.Framework, envVars)
 	if envErr != nil {
 		_ = store.Fail(archiveID)
-		msg := "[GitHub] Variabel .env dari ZIP belum dapat disalin ke Vercel, jadi tidak ada yang didorong (build dari GitHub akan kehilangan nilainya): " + envErr.Error()
+		msg := "[GitHub] Pengaturan project Vercel belum siap, jadi tidak ada yang didorong ke GitHub: " + envErr.Error()
 		logLiveLog("ERROR", label+": "+msg)
 		updateDeploymentStage(archiveID, 3, "Failed")
 		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg, Repo: repoFullName})
@@ -1176,8 +1176,8 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	// A connected project builds exactly what is in the repo, so files the
 	// ZIP dropped are removed in this same commit instead of after going
 	// online (reposync keeps lockfiles, CI files and secrets rules).
-	commitSHA, pushPlan, err := pushFilesToGitHub(githubToken, owner, repoName, branch, files, githubPushOptions{DeleteStale: gitState.Linked})
-	setSyncNote(archiveID, pushPlan.SecretsNote())
+	commitSHA, pushPlan, err := pushFilesToGitHub(githubToken, owner, repoName, branch, files, githubPushOptions{DeleteStale: true})
+	setSyncNote(archiveID, pushPlan.Summary())
 	if err != nil {
 		_ = store.Fail(archiveID)
 		msg := "[GitHub] Gagal mendorong file: " + err.Error()
@@ -1242,9 +1242,8 @@ func syncVercelEnv(client *vercelapp.Client, projectID string, env []vercelapp.E
 }
 
 // prepareExistingVercelProject runs before the push. Found=false means the
-// project does not exist yet (first deployment). An error is returned only
-// when a connected project cannot receive the ZIP's .env values; nothing has
-// been pushed at that point, so production is untouched.
+// project does not exist yet (first deployment). Settings errors stop the
+// push before GitHub can trigger a build with the wrong framework or env.
 func prepareExistingVercelProject(client *vercelapp.Client, project, owner, repo, framework string, env []vercelapp.EnvVar) (vercelGitState, error) {
 	state := vercelGitState{}
 	info, found, err := client.GetProject(project)
@@ -1256,14 +1255,13 @@ func prepareExistingVercelProject(client *vercelapp.Client, project, owner, repo
 	}
 	if !found { return state, nil }
 	state.Found, state.ID = true, info.ID
-	if framework != "" && info.Framework == "" {
-		// Projects created by older versions have no framework: that is the
-		// 404 NOT_FOUND after a "successful" deployment.
+	if framework != "" && !strings.EqualFold(info.Framework, framework) {
+		// Keep the Git project's framework aligned with the ZIP test. Older
+		// projects may be saved as "Other" and serve an empty output after READY.
 		if setErr := client.SetFramework(info.ID, framework); setErr != nil {
-			state.Notes = append(state.Notes, "Framework project Vercel belum dapat disimpan: "+setErr.Error())
-		} else {
-			state.Notes = append(state.Notes, "Framework project Vercel diatur ke "+framework)
+			return state, fmt.Errorf("framework Vercel %s belum dapat disimpan: %w", framework, setErr)
 		}
+		state.Notes = append(state.Notes, "Framework project Vercel diatur ke "+framework)
 	}
 	full := owner + "/" + repo
 	switch {
@@ -1337,13 +1335,17 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("arsip sesi deployment tidak valid")); return
 	}
 	if step == "vercel-live" && record.Status == "current" {
+		appURL := ticket.URL
+		if rows, queryErr := d1.Query(`SELECT app_url FROM services WHERE name = ? LIMIT 1`, name); queryErr == nil && len(rows) > 0 {
+			if saved, ok := rows[0]["app_url"].(string); ok && saved != "" { appURL = saved }
+		}
 		util.JSON(w, http.StatusOK, deployResult{Step: "done", OK: true, Status: "ready", ArchiveID: record.ID,
-			Message: "Aplikasi sudah online; ZIP aktif tersimpan", Repo: ticket.Repo, AppURL: ticket.URL})
+			Message: "Aplikasi sudah online; ZIP aktif tersimpan", Repo: ticket.Repo, AppURL: appURL})
 		return
 	}
 	if record.Status != "pending" { util.Error(w, http.StatusBadRequest, fmt.Errorf("arsip sesi deployment tidak lagi menunggu proses")); return }
 	if err := requireActiveDeployment(ticket.ArchiveID); err != nil { util.Error(w, http.StatusConflict, err); return }
-	state, liveURL, detail, checkErr := getVercelBuildStatus(token, ticket.DeploymentID)
+	state, liveURLs, detail, checkErr := getVercelBuildStatus(token, ticket.DeploymentID)
 	if checkErr != nil {
 		util.Error(w, http.StatusBadGateway, fmt.Errorf("gagal memeriksa status Vercel: %w", checkErr))
 		return
@@ -1373,12 +1375,12 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		// READY only means the build finished. Open the test page itself:
 		// Vercel's own 404 there means the app would be unreachable online.
 		if protectErr := vercelapp.New(token).DisableProtection(ticket.Project); protectErr != nil {
-			logLiveLog("WARN", "Proteksi project uji tidak dapat dilepas; pemeriksaan halaman bisa dilewati: "+protectErr.Error())
+			logLiveLog("WARN", "Proteksi project uji tidak dapat dilepas; pemeriksaan halaman dapat gagal: "+protectErr.Error())
 		}
-		if vercelapp.MissingHomePage(ticket.URL) {
+		if pageErr := vercelapp.CheckHomePage(ticket.URL); pageErr != nil {
 			_ = store.Fail(ticket.ArchiveID)
-			cleanupTestProject(token, ticket.Project)
-			msg := missingHomePageMessage("Uji Build Vercel", ticket.Framework) + " Tidak ada yang didorong ke GitHub dan production tidak berubah."
+			msg := unavailableHomePageMessage("Uji Build Vercel", ticket.URL, pageErr) +
+				" Tidak ada yang didorong ke GitHub dan production tidak berubah. Project uji " + ticket.Project + " tetap tersedia untuk memeriksa Output Vercel."
 			updateDeploymentStage(ticket.ArchiveID, 2, "Failed")
 			logLiveLog("ERROR", msg)
 			util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: msg})
@@ -1398,15 +1400,33 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: true, Status: "ready", Ticket: next, Message: "Build uji Vercel berhasil"})
 		return
 	}
-	if liveURL == "" { liveURL = ticket.URL }
-	if ticket.Probe && vercelapp.MissingHomePage(liveURL) {
-		// Never report an app as online while visitors get Vercel's 404.
+	// Check the exact link that will be saved. An alias can be broken while
+	// another alias or the immutable deployment URL still works.
+	if ticket.URL != "" {
+		found := false
+		for _, candidate := range liveURLs { if candidate == ticket.URL { found = true; break } }
+		if !found { liveURLs = append(liveURLs, ticket.URL) }
+	}
+	var liveURL string
+	var pageFailures []string
+	for _, candidate := range liveURLs {
+		if ticket.Probe {
+			if pageErr := vercelapp.CheckHomePage(candidate); pageErr != nil {
+				pageFailures = append(pageFailures, candidate+": "+pageErr.Error())
+				continue
+			}
+		}
+		liveURL = candidate
+		break
+	}
+	if liveURL == "" {
+		// Never record Success or replace the saved link on an unverified site.
 		_ = store.Fail(ticket.ArchiveID)
-		msg := missingHomePageMessage("Onlinekan di Vercel", ticket.Framework) +
-			" Aplikasi tidak dicatat sebagai online; kembalikan versi sebelumnya lewat Vercel → Deployments → Promote atau arsip ZIP bila perlu."
+		msg := "[Onlinekan di Vercel] Build READY, tetapi tautan aplikasi gagal dibuka: " + strings.Join(pageFailures, "; ") +
+			". Periksa Output/Runtime Logs, framework, Root Directory, Output Directory, dan Deployment Protection di Vercel. Tautan lama tetap disimpan; jika versi lama tertimpa, pulihkan lewat Vercel → Deployments → Promote."
 		updateDeploymentStage(ticket.ArchiveID, 4, "Failed")
 		logLiveLog("ERROR", msg)
-		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: msg, Repo: ticket.Repo, AppURL: liveURL})
+		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: msg, Repo: ticket.Repo, AppURL: ticket.URL})
 		return
 	}
 	if mode == "update_app" {
@@ -1425,8 +1445,8 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: "Aplikasi online, tetapi gagal mencatat versi ZIP aktif: " + err.Error(), Repo: ticket.Repo, AppURL: liveURL})
 		return
 	}
-	// Only now that the app is online: delete repo files the ZIP dropped.
-	setSyncNote(ticket.ArchiveID, cleanupAppRepo(store, ticket))
+	// GitHub was synchronized before production started. No unverified
+	// follow-up commit may trigger another Vercel deployment after success.
 	updateDeploymentStage(ticket.ArchiveID, 4, "Success")
 	label, icon := "aplikasi baru", "box"
 	if mode == "update_app" { label, icon = "update aplikasi", "check" }
@@ -1435,12 +1455,9 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 	util.JSON(w, http.StatusOK, deployResult{Step: "done", OK: true, Status: "ready", Message: "Aplikasi sudah online di Vercel", Repo: ticket.Repo, AppURL: liveURL})
 }
 
-func missingHomePageMessage(stage, framework string) string {
-	preset := framework
-	if preset == "" { preset = "tidak terdeteksi" }
-	return "[" + stage + "] Build Vercel selesai, tetapi halaman utama menampilkan 404 NOT_FOUND dari Vercel (framework: " + preset +
-		"): hasil build tidak berada di folder yang disajikan Vercel. Pastikan package.json berada di akar ZIP dan memuat framework-nya " +
-		"(mis. vite, react-scripts, next) serta script \"build\", atau tambahkan vercel.json berisi \"outputDirectory\" yang sesuai (mis. \"dist\")."
+func unavailableHomePageMessage(stage, pageURL string, pageErr error) string {
+	return "[" + stage + "] Build Vercel READY, tetapi halaman utama " + pageURL + " gagal dibuka: " + pageErr.Error() +
+		". Periksa Output dan Runtime Logs deployment, framework, Root Directory, Output Directory, serta Deployment Protection di Vercel."
 }
 
 // An existing app predates ZIP history: preserve the current GitHub branch
@@ -2564,30 +2581,52 @@ type vercelStatusResponse struct {
 	} `json:"error"`
 }
 
-// getVercelBuildStatus performs exactly one bounded check. QUEUED and
-// BUILDING remain pending instead of becoming a false build failure.
-func getVercelBuildStatus(token, id string) (state, liveURL, detail string, err error) {
+// getVercelBuildStatus returns candidates for the public link, with the
+// stable Vercel alias first and the immutable deployment URL last. READY
+// alone cannot establish that any of those links actually serves the app.
+func getVercelBuildStatus(token, id string) (state string, urls []string, detail string, err error) {
 	endpoint := "https://api.vercel.com/v13/deployments/" + url.PathEscape(id)
 	if team := os.Getenv("VERCEL_TEAM_ID"); team != "" { endpoint += "?teamId=" + url.QueryEscape(team) }
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
-	if err != nil { return "", "", "", err }
+	if err != nil { return "", nil, "", err }
 	req.Header.Set("Authorization", "Bearer "+token)
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
-	if err != nil { return "", "", "", err }
+	if err != nil { return "", nil, "", err }
 	defer resp.Body.Close()
 	var out vercelStatusResponse
-	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil { return "", "", "", err }
+	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil { return "", nil, "", err }
 	if resp.StatusCode >= 300 {
-		if out.Error != nil && out.Error.Message != "" { return "", "", "", fmt.Errorf("%s", out.Error.Message) }
-		return "", "", "", fmt.Errorf("HTTP %d dari Vercel", resp.StatusCode)
+		if out.Error != nil && out.Error.Message != "" { return "", nil, "", fmt.Errorf("%s", out.Error.Message) }
+		return "", nil, "", fmt.Errorf("HTTP %d dari Vercel", resp.StatusCode)
 	}
-	if out.ReadyState == "" { return "", "", "", fmt.Errorf("Vercel belum mengembalikan status deployment") }
-	// A custom alias can fail while the deployment itself is READY. The
-	// deployment URL remains usable and the build must still count as ready.
-	if out.AliasAssigned && len(out.Alias) > 0 { liveURL = "https://" + out.Alias[0] } else if out.URL != "" { liveURL = "https://" + out.URL }
+	if out.ReadyState == "" { return "", nil, "", fmt.Errorf("Vercel belum mengembalikan status deployment") }
+	if out.AliasAssigned {
+		// Probe at most two aliases to keep this status request within the
+		// function timeout. Prefer the stable .vercel.app project domain.
+		for _, alias := range out.Alias {
+			if strings.HasSuffix(strings.ToLower(alias), ".vercel.app") {
+				urls = append(urls, "https://"+alias)
+				break
+			}
+		}
+		for _, alias := range out.Alias {
+			candidate := "https://" + alias
+			if alias != "" && (len(urls) == 0 || urls[0] != candidate) {
+				urls = append(urls, candidate)
+				break
+			}
+		}
+	}
+	if out.URL != "" {
+		candidate := "https://" + out.URL
+		found := false
+		for _, existing := range urls { if existing == candidate { found = true; break } }
+		if !found { urls = append(urls, candidate) }
+	}
 	if out.Error != nil { detail = out.Error.Message }
-	return out.ReadyState, liveURL, detail, nil
+	if out.AliasError != nil && detail == "" { detail = out.AliasError.Message }
+	return out.ReadyState, urls, detail, nil
 }
 
 // Vercel's deployment status often contains only ERROR with no error.message.
@@ -2928,31 +2967,6 @@ func githubCommitTree(client *http.Client, token, baseURL, commitSHA string) (st
 func setSyncNote(id, note string) {
 	if id == "" || note == "" { return }
 	_, _ = d1.Query(`UPDATE deployment_jobs SET sync_note = CASE WHEN sync_note = '' THEN ? ELSE sync_note || ' · ' || ? END WHERE id = ?`, note, note, id)
-}
-
-// cleanupAppRepo runs after an app is online: files that are in GitHub but
-// not in the deployed ZIP are removed in one commit (reposync rules apply).
-// A failure here never fails the deployment; it is only reported.
-func cleanupAppRepo(store *archive.Store, ticket buildTicket) string {
-	token := os.Getenv("GITHUB_TOKEN")
-	parts := strings.SplitN(ticket.Repo, "/", 2)
-	if token == "" || len(parts) != 2 || ticket.Branch == "" { return "" }
-	record, err := store.Get(ticket.ArchiveID)
-	if err != nil { return "Pembersihan GitHub dilewati: ZIP tidak terbaca" }
-	data, err := store.Download(record)
-	if err != nil { return "Pembersihan GitHub dilewati: ZIP tidak terbaca" }
-	files, err := extractZip(data)
-	if err != nil || len(files) == 0 { return "Pembersihan GitHub dilewati: ZIP tidak valid" }
-	_, plan, err := pushFilesToGitHub(token, parts[0], parts[1], ticket.Branch, files, githubPushOptions{
-		DeleteStale: true, SkipIfUnchanged: true, Message: "devcontrol: hapus file yang tidak dipakai lagi",
-	})
-	if err != nil {
-		logLiveLog("WARN", "Pembersihan file lama di GitHub gagal: "+err.Error())
-		return "Pembersihan file lama di GitHub gagal: " + err.Error()
-	}
-	note := plan.Summary()
-	if note != "" { logLiveLog("INFO", ticket.Repo+": "+note) }
-	return note
 }
 
 func githubBranchHead(client *http.Client, token, baseURL, branch string) (string, bool, error) {
