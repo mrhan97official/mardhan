@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Bell, CheckCircle2, Circle, Loader2, Sparkles, X } from "lucide-react";
 import { notifyDataChanged, subscribeDataChanges } from "@/lib/liveUpdates";
+import { isAdminRole, useSession } from "@/lib/session";
 
 type Option = { value: string; label: string; hint?: string };
 type Confirmation = { id: string; title: string; detail: string; options: Option[]; source: "setup" | "zone" };
@@ -59,7 +60,15 @@ const statusIcon = (status: string) => {
   return <AlertTriangle size={16} className="text-red-400" />;
 };
 
+// Setup and its confirmations belong to the owner/admin. Members never poll
+// the setup endpoints, so they never see "sesi admin diperlukan".
 export default function ConfirmationCenter() {
+  const { role } = useSession();
+  if (!isAdminRole(role)) return null;
+  return <AdminConfirmationCenter />;
+}
+
+function AdminConfirmationCenter() {
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [zone, setZone] = useState<Confirmation | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
