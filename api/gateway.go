@@ -1127,6 +1127,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updateDeploymentStage(archiveID, 3, "Success")
+	updateDeploymentStage(archiveID, 4, "Running")
 	logLiveLog("INFO", fmt.Sprintf("%s: %q didorong ke %s@%s", label, name, repoFullName, branch))
 	nextTicket, ticketErr := signBuildTicket(vercelToken, buildTicket{
 		Stage: "app-live-start", Mode: deployType, Name: name, ZipSHA: zipDigest(zipBytes),
@@ -1202,6 +1203,9 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		})
 		if signErr != nil { util.Error(w, http.StatusInternalServerError, signErr); return }
 		updateDeploymentStage(ticket.ArchiveID, 2, "Success")
+		// Show the next stage as running right away; the runner picks up the
+		// GitHub phase on its next tick, which used to look like a stall.
+		updateDeploymentStage(ticket.ArchiveID, 3, "Running")
 		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: true, Status: "ready", Ticket: next, Message: "Build uji Vercel berhasil"})
 		return
 	}
@@ -2022,6 +2026,7 @@ func handleSelfUpdateStatus(w http.ResponseWriter, r *http.Request, token, repo,
 		util.Error(w, http.StatusInternalServerError, signErr); return
 	}
 	updateDeploymentStage(ticket.ArchiveID, 2, "Success")
+	updateDeploymentStage(ticket.ArchiveID, 3, "Running")
 	util.JSON(w, http.StatusOK, selfUpdateResult{Step: "vercel-test", OK: true, Status: "ready", Ticket: next, ArchiveID: ticket.ArchiveID,
 		Message: "Build uji Vercel berhasil; memperbarui GitHub...", PreviewURL: ticket.URL})
 }

@@ -43,8 +43,34 @@ export default function EnvironmentStatus({ environments, loading, error, update
         </p>
       )}
 
-      <div className="scroll-x mt-2">
-        <table className="w-full min-w-[420px] text-left text-sm">
+      {/* Stacked rows: never scroll sideways. The Overview card is a narrow
+          column on tablets, so it always uses this layout; the full
+          Environments page switches to the table from lg. */}
+      <ul className={`mt-2 divide-y divide-base-border/70 ${viewAll ? "" : "lg:hidden"}`}>
+        {visible.map((env) => (
+          <li key={env.id} className="flex items-start gap-2 py-2 text-slate-200">
+            <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${DOT_COLOR[env.name] ?? "bg-accent-blue"}`} />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-sm font-medium">{env.name}</span>
+                <StatusBadge status={env.status} />
+              </div>
+              <p className="mt-0.5 break-all text-xs text-slate-400">
+                {env.project}{env.version && <> · <span className="font-mono">{env.version}</span></>}
+              </p>
+            </div>
+            {env.url && <a href={env.url} target="_blank" rel="noopener noreferrer" aria-label={`Buka deployment ${env.project} ${env.name}`} className="mt-0.5 inline-flex shrink-0 text-accent-blue hover:text-blue-400"><ExternalLink size={15} /></a>}
+          </li>
+        ))}
+        {visible.length === 0 && (
+          <li className="py-7 text-center text-xs text-slate-400">
+            {loading ? "Memeriksa deployment Vercel…" : error ? "Tidak ada status terverifikasi." : "Belum ada deployment Vercel untuk aplikasi yang tercatat."}
+          </li>
+        )}
+      </ul>
+
+      {!viewAll && <div className="mt-2 hidden lg:block">
+        <table className="w-full text-left text-sm">
           <thead>
             <tr className="text-xs uppercase tracking-wide text-slate-500">
               <th className="pb-2 font-medium">Environment</th>
@@ -78,7 +104,7 @@ export default function EnvironmentStatus({ environments, loading, error, update
             )}
           </tbody>
         </table>
-      </div>
+      </div>}
       {!error && updatedAt && <p className="mt-2 text-[11px] text-slate-500">Diperiksa {new Date(updatedAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</p>}
     </div>
   );
