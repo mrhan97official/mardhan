@@ -158,7 +158,12 @@ func pruneExpired(store *archive.Store) error {
 
 func Handle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	if !auth.IsAdmin(r) { util.Error(w, http.StatusForbidden, fmt.Errorf("sesi admin diperlukan")); return }
+	// Every signed-in role sees thumbnails and the promo banner image (they
+	// are served from here); only owner/admin may upload or delete them.
+	if auth.Current(r) == nil { util.Error(w, http.StatusUnauthorized, fmt.Errorf("login diperlukan")); return }
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && !auth.IsAdmin(r) {
+		util.Error(w, http.StatusForbidden, fmt.Errorf("sesi admin diperlukan")); return
+	}
 	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 
 	switch r.Method {

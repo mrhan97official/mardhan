@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import type { ProjectEntry } from "@/lib/projectRepos";
 import { useOfflineData } from "@/lib/useOfflineData";
+import { isAdminRole, useSession } from "@/lib/session";
 
 interface Promotion {
   repo: string;
@@ -17,6 +18,7 @@ interface Promotion {
 
 export default function AppsPromoBanner({ apps }: { apps: ProjectEntry[] }) {
   const promotion = useOfflineData<Promotion | null>("app-promo-v1", "/api/app-promo", null, 10000);
+  const admin = isAdminRole(useSession().role);
   const [imageFailed, setImageFailed] = useState(false);
   useEffect(() => { setImageFailed(false); }, [promotion.data?.image_repo, promotion.data?.version]);
 
@@ -44,7 +46,7 @@ export default function AppsPromoBanner({ apps }: { apps: ProjectEntry[] }) {
           <div className="flex min-h-[150px] items-center justify-center bg-gradient-to-r from-sky-50 to-white px-2 text-center text-slate-700 sm:aspect-[16/5]">
             <div>
               <p className="text-base font-semibold">Banner promosi belum diatur</p>
-              <a href="/settings#promo-banner" className="mt-2 inline-block text-sm font-medium text-blue-700 underline underline-offset-2">Atur banner di Pengaturan</a>
+              {admin && <a href="/settings#promo-banner" className="mt-2 inline-block text-sm font-medium text-blue-700 underline underline-offset-2">Atur banner di Pengaturan</a>}
             </div>
           </div>
         )}
