@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Archive, ExternalLink, GitBranch, ImagePlus, Lock, MoreVertical, Star, Trash2, X } from "lucide-react";
+import { AlertCircle, Archive, ExternalLink, FileArchive, GitBranch, History, ImagePlus, Lock, MoreVertical, Star, Trash2, X } from "lucide-react";
+import { UpdateHistoryDialog, ZipArchiveDialog } from "@/components/ProjectDialogs";
 import type { GithubRepo } from "@/lib/types";
 
 const LANGUAGE_COLORS: Record<string, string> = {
@@ -59,6 +60,7 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
   const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [dialog, setDialog] = useState<"zip" | "history" | null>(null);
   const [failedVersion, setFailedVersion] = useState<string | null>(null);
   const name = repo.full_name.split("/")[1] ?? repo.full_name;
   const languageDot = repo.language ? LANGUAGE_COLORS[repo.language] ?? "bg-slate-400" : null;
@@ -124,11 +126,16 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
               </button>
               {thumbnailVersion && <button type="button" role="menuitem" disabled={uploading} onClick={() => { setActionsOpen(false); onRemoveThumbnail(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-300 hover:bg-base-800 disabled:opacity-50"><X size={14} /> Hapus gambar</button>}
               <div className="my-1 border-t border-base-border" />
+              <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("zip"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><FileArchive size={14} /> Arsip ZIP</button>
+              <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("history"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><History size={14} /> Riwayat update</button>
+              <div className="my-1 border-t border-base-border" />
               <button type="button" role="menuitem" disabled={uploading} onClick={() => { setActionsOpen(false); onDelete(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-red-400 hover:bg-red-500/10 disabled:opacity-50"><Trash2 size={14} /> Hapus aplikasi</button>
             </div>
           )}
         </div>
       </div>
+      {dialog === "zip" && <ZipArchiveDialog repo={repo.full_name} onClose={() => setDialog(null)} />}
+      {dialog === "history" && <UpdateHistoryDialog repo={repo.full_name} onClose={() => setDialog(null)} />}
       <input ref={inputRef} type="file" accept="image/jpeg,image/png" className="sr-only" disabled={uploading} aria-label={`Unggah thumbnail ${repo.full_name}`} onChange={(event) => {
           const file = event.currentTarget.files?.[0];
           if (file) onUpload(file);

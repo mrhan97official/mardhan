@@ -370,6 +370,33 @@ func (s *Store) List(offset int) ([]Record, bool, error) {
 	return list, more, nil
 }
 
+// Baseline returns the successful ZIP an archive should be compared with:
+// the current one, or the previous one when this archive is itself current.
+func (s *Store) Baseline(scope, target, exceptID string) (*Record, error) {
+	rows, err := s.query(`SELECT * FROM zip_archives WHERE scope = ? AND target = ? AND id <> ?
+		AND status IN ('current', 'previous')
+		ORDER BY CASE status WHEN 'current' THEN 0 ELSE 1 END, created_at DESC, rowid DESC LIMIT 1`, scope, target, exceptID)
+	if err != nil || len(rows) == 0 { return nil, err }
+	record := fromRow(rows[0])
+	return &record, nil
+}
+
+// ListForRepo returns the archives of one GitHub repo: app deployments whose
+// name maps to that repo, plus Update Diri archives ("owner/repo@branch").
+func (s *Store) ListForRepo(repo, repoName string) ([]Record, error) {
+	rows, err := s.query(`SELECT * FROM zip_archives WHERE
+		(scope = 'app' AND (lower(target) = lower(?2) OR target IN (
+			SELECT name FROM services WHERE lower(repo) = lower(?1)
+			UNION SELECT target FROM deployment_jobs WHERE lower(lock_key) = lower(?1) AND kind != 'self_update'
+			UNION SELECT target FROM deployment_history WHERE lower(repo) = lower(?1) AND kind != 'self_update')))
+		OR (scope = 'self' AND instr(target, '@') > 0 AND lower(substr(target, 1, instr(target, '@') - 1)) = lower(?1))
+		ORDER BY created_at DESC, rowid DESC LIMIT 20`, repo, repoName)
+	if err != nil { return nil, err }
+	list := make([]Record, 0, len(rows))
+	for _, row := range rows { list = append(list, fromRow(row)) }
+	return list, nil
+}
+
 // DeleteTarget removes only the ZIP objects belonging to one application or
 // self-update target. Each D1 row is removed after its R2 object is gone, so
 // a failed request can safely resume on the next attempt.

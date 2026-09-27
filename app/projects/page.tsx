@@ -6,7 +6,6 @@ import AppShell from "@/components/AppShell";
 import ComingSoon from "@/components/ComingSoon";
 import ProjectCard from "@/components/ProjectCard";
 import AppsPromoBanner from "@/components/AppsPromoBanner";
-import ZipArchivePanel from "@/components/ZipArchivePanel";
 import { useOfflineData } from "@/lib/useOfflineData";
 import { fallbackGithubRepos, fallbackServices } from "@/lib/fallbackData";
 import { mergeProjects } from "@/lib/projectRepos";
@@ -44,7 +43,6 @@ export default function ProjectsPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleted, setDeleted] = useState<string[]>([]);
-  const [archiveRefresh, setArchiveRefresh] = useState(0);
   const [uploading, setUploading] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [imageError, setImageError] = useState<{ repo: string; message: string } | null>(null);
@@ -138,7 +136,6 @@ export default function ProjectsPage() {
         cacheSet("github-repos-v16", repos.data.filter((repo) => repo.full_name.toLowerCase() !== key)),
         cacheSet("services-v16", services.data.filter((service) => service.repo?.toLowerCase() !== key)),
       ]).catch(() => {});
-      setArchiveRefresh((current) => current + 1);
       setTarget(null);
       notifyDataChanged();
     } catch (cause) {
@@ -214,7 +211,6 @@ export default function ProjectsPage() {
           ))}
         </div>
       )}
-      <ZipArchivePanel key={archiveRefresh} />
       {target && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-2" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deleting) setTarget(null); }}>
           <div role="dialog" aria-modal="true" aria-labelledby="delete-project-title" className="w-full max-w-md rounded-2xl border border-red-500/30 bg-base-900 p-2 shadow-2xl">

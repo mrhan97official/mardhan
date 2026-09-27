@@ -26,7 +26,7 @@ type Status struct {
   Migrations []string `json:"migrations"`
 }
 
-const appSchemaVersion = "app-1.0.39-deployment-diagnosis"
+const appSchemaVersion = "app-1.0.46-deployment-history"
 
 // Prepare avoids replaying the full schema before every new deployment.
 // The Databases page always performs a fresh inspection and can repair drift.

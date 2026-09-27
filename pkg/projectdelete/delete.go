@@ -262,6 +262,7 @@ func Handle(w http.ResponseWriter, r *http.Request, stableProjectName func(strin
     statements := []string{
         `DELETE FROM api_check_metrics WHERE api_id IN (SELECT id FROM managed_apis WHERE project IN (SELECT name FROM services WHERE lower(repo) = lower(?)))`,
         `DELETE FROM managed_apis WHERE project IN (SELECT name FROM services WHERE lower(repo) = lower(?))`,
+        `DELETE FROM deployment_history WHERE lower(repo) = lower(?)`,
         `DELETE FROM deployment_jobs WHERE lower(lock_key) = lower(?)`,
         `DELETE FROM services WHERE lower(repo) = lower(?)`,
     }

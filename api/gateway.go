@@ -62,6 +62,7 @@ import (
 	"devcontrol/pkg/databrowser"
 	"devcontrol/pkg/deploymentrunner"
 	"devcontrol/pkg/diagnose"
+	"devcontrol/pkg/history"
 	"devcontrol/pkg/setup"
 	"devcontrol/pkg/util"
 )
@@ -141,6 +142,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		handleZipArchives(w, r)
 	case "diagnose":
 		handleDiagnose(w, r)
+	case "deploy-history":
+		handleDeployHistory(w, r)
 	case "databases":
 		handleDatabases(w, r)
 	case "api-management":
@@ -319,6 +322,7 @@ func updateDeploymentStage(id string, position int, status string) {
 		status, position, status, id)
 	// Fully successful: keep only this ZIP for the target, drop older ones.
 	if position == 4 && status == "Success" {
+		recordHistory(id, "Success", "")
 		if store, err := archive.New(); err == nil { _ = store.Finalize(id) }
 	}
 }
@@ -371,7 +375,10 @@ func haltRunner(job runnerJob, message string, uncertain bool) { haltRunnerWithL
 
 func haltRunnerWithLog(job runnerJob, message, buildLog string, uncertain bool) {
 	// Diagnose before discarding: the snippet is read from the uploaded ZIP.
-	recordDiagnosis(job.id, job.kind, job.target, runnerStage(job), message, buildLog)
+	found := recordDiagnosis(job.id, job.kind, job.target, runnerStage(job), message, buildLog)
+	historyStatus := "Failed"
+	if uncertain { historyStatus = "Interrupted" }
+	recordHistory(job.id, historyStatus, found.Category+": "+found.Summary)
 	if len(message) > 700 { message = message[:700] }
 	status := "Failed"
 	if uncertain { status = "Interrupted" }
@@ -1297,6 +1304,19 @@ func handleZipArchives(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, record.Filename))
 		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 		_, _ = w.Write(data)
+		return
+	}
+	// ?repo=owner/name: archives of one project card (latest successful ZIP,
+	// plus a pending one while an update is running).
+	if repo := strings.TrimSpace(r.URL.Query().Get("repo")); repo != "" {
+		parts := strings.Split(repo, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" || len(repo) > 200 {
+			util.Error(w, http.StatusBadRequest, fmt.Errorf("format repo harus owner/nama")); return
+		}
+		if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		items, err := store.ListForRepo(repo, parts[1])
+		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		util.JSON(w, http.StatusOK, map[string]interface{}{"items": items, "has_more": false})
 		return
 	}
 	offset, err := strconv.Atoi(r.URL.Query().Get("offset"))
@@ -2893,7 +2913,7 @@ func diagnosisStage(kind string, position int) string {
 
 // recordDiagnosis stores where the run failed and how to fix it, including
 // the offending code read from the uploaded ZIP while it still exists.
-func recordDiagnosis(id, kind, target string, position int, message, buildLog string) {
+func recordDiagnosis(id, kind, target string, position int, message, buildLog string) diagnose.Diagnosis {
 	var zipBytes []byte
 	if store, err := archive.New(); err == nil {
 		if record, err := store.Get(id); err == nil { zipBytes, _ = store.Download(record) }
@@ -2901,8 +2921,9 @@ func recordDiagnosis(id, kind, target string, position int, message, buildLog st
 	result := diagnose.Analyze(diagnose.Input{Kind: kind, Target: target, Stage: diagnosisStage(kind, position),
 		Message: message, BuildLog: buildLog, Zip: zipBytes})
 	encoded, err := json.Marshal(result)
-	if err != nil { return }
+	if err != nil { return result }
 	_, _ = d1.Query(`UPDATE deployment_jobs SET diagnosis = ? WHERE id = ?`, string(encoded), id)
+	return result
 }
 
 // POST /api/diagnose -> {job_id} returns the stored diagnosis of a pipeline;
@@ -2948,4 +2969,67 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 	}
 	util.JSON(w, http.StatusOK, diagnose.Analyze(diagnose.Input{Kind: input.Kind, Target: input.Target, Stage: input.Stage,
 		Message: input.Message, BuildLog: input.BuildLog}))
+}
+
+
+// ---------- update history ----------
+
+// recordHistory keeps one row per finished deployment with a file-level
+// summary of what changed versus the last successful ZIP. It must run while
+// both ZIPs still exist (before Finalize/Discard delete the loser).
+func recordHistory(id, status, message string) {
+	rows, err := d1.Query(`SELECT kind, target, lock_key FROM deployment_jobs WHERE id = ? LIMIT 1`, id)
+	if err != nil || len(rows) == 0 { return }
+	kind, target, repo := rowText(rows[0], "kind"), rowText(rows[0], "target"), strings.ToLower(rowText(rows[0], "lock_key"))
+	if repo == "" { return }
+	var record archive.Record
+	var newZip, oldZip []byte
+	if store, err := archive.New(); err == nil {
+		if found, err := store.Get(id); err == nil {
+			record = found
+			newZip, _ = store.Download(found)
+			if baseline, err := store.Baseline(found.Scope, found.Target, id); err == nil && baseline != nil {
+				oldZip, _ = store.Download(*baseline)
+			}
+		}
+	}
+	changes, err := json.Marshal(history.Diff(newZip, oldZip))
+	if err != nil { changes = []byte("{}") }
+	if len(message) > 500 { message = message[:500] }
+	_, _ = d1.Query(`INSERT OR REPLACE INTO deployment_history (id, repo, kind, target, status, file_name, size_bytes, sha256, changes, message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, repo, kind, target, status, record.Filename, record.SizeBytes, record.SHA256, string(changes), message)
+	_, _ = d1.Query(`DELETE FROM deployment_history WHERE repo = ?1 AND id NOT IN
+		(SELECT id FROM deployment_history WHERE repo = ?1 ORDER BY created_at DESC LIMIT 100)`, repo)
+}
+
+// GET /api/deploy-history?repo=owner/name
+func handleDeployHistory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet { util.Error(w, http.StatusMethodNotAllowed, fmt.Errorf("gunakan GET")); return }
+	repo := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("repo")))
+	if parts := strings.Split(repo, "/"); len(parts) != 2 || parts[0] == "" || parts[1] == "" || len(repo) > 200 {
+		util.Error(w, http.StatusBadRequest, fmt.Errorf("format repo harus owner/nama")); return
+	}
+	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	rows, err := d1.Query(`SELECT h.id, h.kind, h.target, h.status, h.file_name, h.size_bytes, h.sha256, h.changes, h.message, h.created_at,
+		CASE WHEN a.status = 'current' THEN 1 ELSE 0 END AS is_current
+		FROM deployment_history h LEFT JOIN zip_archives a ON a.id = h.id
+		WHERE h.repo = ? ORDER BY h.created_at DESC LIMIT 100`, repo)
+	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	entries := make([]map[string]interface{}, 0, len(rows))
+	successes, updates := 0, 0
+	for _, row := range rows {
+		entry := map[string]interface{}{
+			"id": rowText(row, "id"), "kind": rowText(row, "kind"), "target": rowText(row, "target"), "status": rowText(row, "status"),
+			"file_name": rowText(row, "file_name"), "size_bytes": row["size_bytes"], "sha256": rowText(row, "sha256"),
+			"message": rowText(row, "message"), "created_at": rowText(row, "created_at"), "is_current": fmt.Sprint(row["is_current"]) == "1",
+		}
+		if raw := rowText(row, "changes"); raw != "" && json.Valid([]byte(raw)) { entry["changes"] = json.RawMessage(raw) }
+		if entry["status"] == "Success" {
+			successes++
+			if entry["kind"] != "new_app" { updates++ }
+		}
+		entries = append(entries, entry)
+	}
+	util.JSON(w, http.StatusOK, map[string]interface{}{"entries": entries, "success_count": successes, "update_count": updates, "total": len(entries)})
 }

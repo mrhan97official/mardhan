@@ -442,8 +442,8 @@ export default function SelfUpdateModal({
           <ErrorDiagnosis message={serverError} kind="self_update" target={repo.trim()} stage="Simpan & ekstrak ZIP" />
         )}
         {archiveSaved && finished && (
-          <Link href="/projects#zip-archives" className="text-xs font-medium text-accent-blue hover:underline">
-            Lihat dan unduh ZIP tersimpan di Projects
+          <Link href="/projects" className="text-xs font-medium text-accent-blue hover:underline">
+            ZIP tersimpan: buka Projects → menu ⋮ kartu aplikasi → Arsip ZIP / Riwayat update
           </Link>
         )}
 

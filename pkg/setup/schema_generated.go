@@ -41,6 +41,8 @@ var schemaStatements = []string{
   "CREATE INDEX IF NOT EXISTS idx_api_check_metrics_time ON api_check_metrics (checked_at DESC)",
   "CREATE TABLE IF NOT EXISTS admin_audit_log (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  action TEXT NOT NULL,\n  target TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE INDEX IF NOT EXISTS idx_admin_audit_time ON admin_audit_log (created_at DESC)",
+  "CREATE TABLE IF NOT EXISTS deployment_history (\n  id TEXT PRIMARY KEY,\n  repo TEXT NOT NULL,\n  kind TEXT NOT NULL,\n  target TEXT NOT NULL,\n  status TEXT NOT NULL,\n  file_name TEXT NOT NULL DEFAULT '',\n  size_bytes INTEGER NOT NULL DEFAULT 0,\n  sha256 TEXT NOT NULL DEFAULT '',\n  changes TEXT NOT NULL DEFAULT '',\n  message TEXT NOT NULL DEFAULT '',\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+  "CREATE INDEX IF NOT EXISTS idx_deployment_history_repo ON deployment_history (repo, created_at DESC)",
 }
 
 var migrationStatements = []migrationStatement{
@@ -81,6 +83,7 @@ var expectedColumns = map[string][]string{
   "api_keys": {"id", "name", "key_prefix", "key_hash", "scopes", "created_at", "revoked_at"},
   "api_check_metrics": {"id", "api_id", "status_code", "latency_ms", "checked_at"},
   "admin_audit_log": {"id", "action", "target", "created_at"},
+  "deployment_history": {"id", "repo", "kind", "target", "status", "file_name", "size_bytes", "sha256", "changes", "message", "created_at"},
 }
 
 var expectedTypes = map[string]map[string]string{
@@ -108,6 +111,7 @@ var expectedTypes = map[string]map[string]string{
   "api_keys": {"id": "TEXT", "name": "TEXT", "key_prefix": "TEXT", "key_hash": "TEXT", "scopes": "TEXT", "created_at": "TEXT", "revoked_at": "TEXT"},
   "api_check_metrics": {"id": "TEXT", "api_id": "TEXT", "status_code": "INTEGER", "latency_ms": "INTEGER", "checked_at": "TEXT"},
   "admin_audit_log": {"id": "INTEGER", "action": "TEXT", "target": "TEXT", "created_at": "TEXT"},
+  "deployment_history": {"id": "TEXT", "repo": "TEXT", "kind": "TEXT", "target": "TEXT", "status": "TEXT", "file_name": "TEXT", "size_bytes": "INTEGER", "sha256": "TEXT", "changes": "TEXT", "message": "TEXT", "created_at": "TEXT"},
 }
 
-var expectedIndexes = []string{"idx_deployment_jobs_running_target", "idx_deployment_jobs_updated", "idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_project_thumbnail_uploads_repo", "idx_project_thumbnail_uploads_time", "idx_project_thumbnail_objects_repo", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time"}
+var expectedIndexes = []string{"idx_deployment_jobs_running_target", "idx_deployment_jobs_updated", "idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_project_thumbnail_uploads_repo", "idx_project_thumbnail_uploads_time", "idx_project_thumbnail_objects_repo", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time", "idx_deployment_history_repo"}

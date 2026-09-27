@@ -122,6 +122,9 @@ export default function DeploymentPipeline({
   const [now, setNow] = useState<number | null>(null);
   const [openDiagnosis, setOpenDiagnosis] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const seenFirstId = useRef<string | undefined>(undefined);
+  const [freshId, setFreshId] = useState<string | null>(null);
   const [firstHeight, setFirstHeight] = useState<number | null>(null);
   const hasRunningJob = jobs.some((job) => job.status === "Running");
 
@@ -147,6 +150,19 @@ export default function DeploymentPipeline({
   const scrolling = scroll && visibleJobs.length > 1;
   const firstJobId = visibleJobs[0]?.id;
 
+  // A new deployment appears on top: scroll the list (and the card, if it is
+  // off screen) back to the top and highlight it so the start is noticed.
+  useEffect(() => {
+    const previous = seenFirstId.current;
+    seenFirstId.current = firstJobId;
+    if (!firstJobId || previous === undefined || previous === firstJobId) return;
+    listRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    setFreshId(firstJobId);
+    const timer = window.setTimeout(() => setFreshId(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [firstJobId]);
+
   // With more than one job, show exactly one and scroll to the others so the
   // card never grows taller than a single job.
   useEffect(() => {
@@ -159,7 +175,7 @@ export default function DeploymentPipeline({
     return () => observer.disconnect();
   }, [scrolling, firstJobId]);
   return (
-    <div className="card min-w-0 p-2">
+    <div ref={cardRef} className="card min-w-0 scroll-mt-2 p-2">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-base font-bold text-white sm:text-lg">Deployment Pipeline</h2>
         <NewDeploymentMenu />
@@ -180,7 +196,7 @@ export default function DeploymentPipeline({
           </section>
         )}
         {visibleJobs.map((job) => (
-          <section key={job.id} className="min-h-[clamp(136px,10rem,160px)] snap-start rounded-xl border border-base-border bg-base-900 p-2" aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
+          <section key={job.id} className={`min-h-[clamp(136px,10rem,160px)] snap-start rounded-xl border bg-base-900 p-2 transition-shadow duration-700 ${freshId === job.id ? "border-purple-400/60 shadow-[0_0_0_3px_rgba(168,85,247,0.25)]" : "border-base-border"}`} aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-100">{KIND_TEXT[job.kind]} · <span className="break-all">{job.target}</span></p>

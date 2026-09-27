@@ -252,3 +252,21 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_admin_audit_time ON admin_audit_log (created_at DESC);
+
+-- One row per finished deployment (success or failure) so each app keeps an
+-- update history after its older ZIPs are deleted. `changes` is the JSON file
+-- diff against the previous successful ZIP.
+CREATE TABLE IF NOT EXISTS deployment_history (
+  id TEXT PRIMARY KEY,
+  repo TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  target TEXT NOT NULL,
+  status TEXT NOT NULL,
+  file_name TEXT NOT NULL DEFAULT '',
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  sha256 TEXT NOT NULL DEFAULT '',
+  changes TEXT NOT NULL DEFAULT '',
+  message TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_deployment_history_repo ON deployment_history (repo, created_at DESC);
