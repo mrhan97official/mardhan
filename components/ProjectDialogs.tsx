@@ -282,7 +282,7 @@ export function UpdateHistoryDialog({ repo, onClose }: { repo: string; onClose: 
                   </div>
                   {entry.file_name && <p className="truncate font-mono text-[11px] text-slate-400">{entry.file_name} · {formatSize(entry.size_bytes)}</p>}
                   <ChangeSummary changes={entry.changes} />
-                  {!success && entry.message && <p className="break-words text-xs text-red-300">{entry.message}</p>}
+                  {entry.message && <p className={`break-words text-xs ${success ? "text-slate-400" : "text-red-300"}`}>{entry.message}</p>}
                   {!success && <p className="text-[11px] text-slate-500">ZIP versi ini tidak disimpan; ZIP terakhir yang berhasil tetap aktif.</p>}
                 </li>
               );

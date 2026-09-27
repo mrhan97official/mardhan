@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS deployment_jobs (
   lease_until TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  diagnosis TEXT NOT NULL DEFAULT ''
+  diagnosis TEXT NOT NULL DEFAULT '',
+  sync_note TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_deployment_jobs_running_target ON deployment_jobs (lock_key) WHERE status = 'Running';
 CREATE INDEX IF NOT EXISTS idx_deployment_jobs_updated ON deployment_jobs (updated_at DESC);

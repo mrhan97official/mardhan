@@ -54,6 +54,7 @@ import (
 	"devcontrol/pkg/branding"
 	"devcontrol/pkg/environmentstatus"
 	"devcontrol/pkg/projectdelete"
+	"devcontrol/pkg/reposync"
 	"devcontrol/pkg/projectthumbnail"
 	"devcontrol/pkg/trafficmetrics"
 	"devcontrol/pkg/zonemanagement"
@@ -1133,7 +1134,9 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if _, err := pushFilesToGitHub(githubToken, owner, repoName, branch, files); err != nil {
+	_, pushPlan, err := pushFilesToGitHub(githubToken, owner, repoName, branch, files, githubPushOptions{})
+	setSyncNote(archiveID, pushPlan.SecretsNote())
+	if err != nil {
 		_ = store.Fail(archiveID)
 		msg := "[GitHub] Gagal mendorong file: " + err.Error()
 		logLiveLog("ERROR", label+": "+msg)
@@ -1242,6 +1245,8 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: "Aplikasi online, tetapi gagal mencatat versi ZIP aktif: " + err.Error(), Repo: ticket.Repo, AppURL: liveURL})
 		return
 	}
+	// Only now that the app is online: delete repo files the ZIP dropped.
+	setSyncNote(ticket.ArchiveID, cleanupAppRepo(store, ticket))
 	updateDeploymentStage(ticket.ArchiveID, 4, "Success")
 	label, icon := "aplikasi baru", "box"
 	if mode == "update_app" { label, icon = "update aplikasi", "check" }
@@ -2052,7 +2057,11 @@ func finishSelfUpdate(w http.ResponseWriter, githubToken, vercelToken, owner, re
 	defer cleanupTestProject(vercelToken, tempProject)
 
 	logLiveLog("INFO", "Self-update: build Vercel lulus, memperbarui GitHub...")
-	commitSHA, err := pushFilesToGitHub(githubToken, owner, repoName, branch, files)
+	// Production of DevControl is built from this commit, so stale files are
+	// removed here (after the Uji Vercel build passed without them); leaving
+	// them for a later commit would build something that was never tested.
+	commitSHA, syncPlan, err := pushFilesToGitHub(githubToken, owner, repoName, branch, files, githubPushOptions{DeleteStale: true})
+	setSyncNote(archiveID, syncPlan.Summary())
 	if err != nil {
 		_ = store.Fail(archiveID)
 		updateDeploymentStage(archiveID, 3, "Failed")
@@ -2183,6 +2192,9 @@ func extractZip(data []byte) ([]selfUpdateFile, error) {
 		if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
 			continue
 		}
+		// __MACOSX/.DS_Store must go first: an extra top-level __MACOSX folder
+		// would otherwise stop stripCommonRootDir from finding the project root.
+		if reposync.IsJunk(cleaned) { continue }
 		rc, err := f.Open()
 		if err != nil {
 			return nil, err
@@ -2195,7 +2207,13 @@ func extractZip(data []byte) ([]selfUpdateFile, error) {
 		out = append(out, selfUpdateFile{path: cleaned, data: content})
 	}
 	stripCommonRootDir(out)
-	return out, nil
+	// Output of npm install / builds (node_modules, .next, …) is never
+	// deployed or committed; Vercel installs and builds it itself.
+	kept := out[:0]
+	for _, file := range out {
+		if !reposync.IsGenerated(file.path) { kept = append(kept, file) }
+	}
+	return kept, nil
 }
 
 // stripCommonRootDir removes a single shared top-level folder from every
@@ -2631,46 +2649,65 @@ type githubCombinedStatusResponse struct {
 	Statuses []githubCommitStatus `json:"statuses"`
 }
 
-// pushFilesToGitHub publishes the whole ZIP as one atomic Git commit. The old
-// Contents API loop made one commit per file, so one update could emit dozens
-// of push events and make Vercel rate-limit the resulting deployments. A tree
-// created without base_tree is also a full replacement: paths absent from the
-// ZIP are deleted by the same commit instead of by more per-file commits.
-func pushFilesToGitHub(token, owner, repo, branch string, files []selfUpdateFile) (string, error) {
-	if len(files) == 0 {
-		return "", fmt.Errorf("tidak ada file untuk didorong ke GitHub")
+// githubPushOptions controls how the ZIP replaces the repo contents.
+type githubPushOptions struct {
+	DeleteStale     bool   // remove repo files the ZIP no longer has (reposync rules)
+	Message         string // commit message
+	SkipIfUnchanged bool   // no commit when the resulting tree is identical
+}
+
+// pushFilesToGitHub publishes the ZIP as one atomic Git commit (a single push
+// event, so Vercel starts at most one deployment). It first reads the repo's
+// current file list and asks reposync which missing files are really unused:
+// lockfiles, CI/Git metadata and licences are carried over, npm/build output
+// committed by mistake is dropped, and a ZIP of the wrong folder cannot wipe
+// the repo (mass-deletion guard). Real .env files are never published.
+func pushFilesToGitHub(token, owner, repo, branch string, files []selfUpdateFile, options githubPushOptions) (string, reposync.Plan, error) {
+	plan := reposync.Plan{SkippedSecrets: []string{}}
+	publish := make([]selfUpdateFile, 0, len(files))
+	for _, file := range files {
+		if reposync.IsSecretEnv(file.path) { plan.SkippedSecrets = append(plan.SkippedSecrets, file.path); continue }
+		publish = append(publish, file)
 	}
+	if len(publish) == 0 {
+		return "", plan, fmt.Errorf("tidak ada file untuk didorong ke GitHub")
+	}
+	if options.Message == "" { options.Message = "devcontrol: sinkronkan paket ZIP" }
 
 	client := &http.Client{Timeout: 25 * time.Second}
 	baseURL := fmt.Sprintf("https://api.github.com/repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo))
 	parentSHA, exists, err := githubBranchHead(client, token, baseURL, branch)
 	if err != nil {
-		return "", err
+		return "", plan, err
 	}
 	if !exists {
 		// GitHub's Git Database API cannot create the first ref in an empty
 		// repository. Bootstrap it with one Contents API commit, then perform
 		// the normal atomic tree replacement below.
-		if err := initializeGithubBranch(client, token, baseURL, branch, files[0]); err != nil {
-			return "", fmt.Errorf("gagal menyiapkan branch %s: %w", branch, err)
+		if err := initializeGithubBranch(client, token, baseURL, branch, publish[0]); err != nil {
+			return "", plan, fmt.Errorf("gagal menyiapkan branch %s: %w", branch, err)
 		}
-		if len(files) == 1 {
+		if len(publish) == 1 {
 			sha, found, headErr := githubBranchHead(client, token, baseURL, branch)
-			if headErr != nil { return "", headErr }
-			if !found { return "", fmt.Errorf("GitHub belum membuat branch %s setelah inisialisasi", branch) }
-			return sha, nil
+			if headErr != nil { return "", plan, headErr }
+			if !found { return "", plan, fmt.Errorf("GitHub belum membuat branch %s setelah inisialisasi", branch) }
+			return sha, plan, nil
 		}
 		parentSHA, exists, err = githubBranchHead(client, token, baseURL, branch)
 		if err != nil {
-			return "", err
+			return "", plan, err
 		}
 		if !exists {
-			return "", fmt.Errorf("GitHub belum membuat branch %s setelah inisialisasi", branch)
+			return "", plan, fmt.Errorf("GitHub belum membuat branch %s setelah inisialisasi", branch)
 		}
 	}
 
-	entries := make([]githubTreeEntry, 0, len(files))
-	for _, file := range files {
+	entries := make([]githubTreeEntry, 0, len(publish))
+	inZip := make(map[string]bool, len(publish))
+	zipPaths := make([]string, 0, len(publish))
+	for _, file := range publish {
+		inZip[file.path] = true
+		zipPaths = append(zipPaths, file.path)
 		entry := githubTreeEntry{Path: file.path, Mode: "100644", Type: "blob"}
 		if utf8.Valid(file.data) {
 			entry.Content = new(string)
@@ -2678,42 +2715,134 @@ func pushFilesToGitHub(token, owner, repo, branch string, files []selfUpdateFile
 		} else {
 			blobSHA, err := createGithubBlob(client, token, baseURL, file.data)
 			if err != nil {
-				return "", fmt.Errorf("gagal mengunggah blob %s: %w", file.path, err)
+				return "", plan, fmt.Errorf("gagal mengunggah blob %s: %w", file.path, err)
 			}
 			entry.SHA = blobSHA
 		}
 		entries = append(entries, entry)
 	}
 
+	// Compare with what GitHub has now and decide per file.
+	parentTree, existing, truncated, listErr := githubCommitTree(client, token, baseURL, parentSHA)
+	if listErr != nil {
+		return "", plan, fmt.Errorf("gagal membaca daftar file GitHub (tidak ada yang diubah): %w", listErr)
+	}
+	request := map[string]interface{}{}
+	if truncated {
+		// GitHub could not list the whole repo: add/replace only, never delete.
+		request["base_tree"] = parentTree
+		plan.Blocked, plan.Reason = true, "repo terlalu besar untuk dibandingkan; file lama tidak dihapus"
+	} else {
+		repoPaths := make([]string, 0, len(existing))
+		for _, item := range existing { if item.Type == "blob" { repoPaths = append(repoPaths, item.Path) } }
+		skipped := plan.SkippedSecrets
+		plan = reposync.PlanSync(zipPaths, repoPaths)
+		plan.SkippedSecrets = skipped
+		remove := map[string]bool{}
+		if options.DeleteStale { for _, file := range plan.Removed() { remove[file] = true } }
+		for _, item := range existing {
+			if inZip[item.Path] || remove[item.Path] { continue }
+			entries = append(entries, item) // carried over unchanged (same blob SHA)
+		}
+	}
+	request["tree"] = entries
+
 	var tree githubSHAResponse
-	if _, err := githubJSONRequest(client, token, http.MethodPost, baseURL+"/git/trees", map[string]interface{}{
-		"tree": entries,
-	}, &tree); err != nil {
-		return "", fmt.Errorf("gagal membuat tree GitHub: %w", err)
+	if _, err := githubJSONRequest(client, token, http.MethodPost, baseURL+"/git/trees", request, &tree); err != nil {
+		return "", plan, fmt.Errorf("gagal membuat tree GitHub: %w", err)
 	}
 	if tree.SHA == "" {
-		return "", fmt.Errorf("GitHub tidak mengembalikan SHA tree")
+		return "", plan, fmt.Errorf("GitHub tidak mengembalikan SHA tree")
+	}
+	if options.SkipIfUnchanged && tree.SHA == parentTree {
+		return "", plan, nil
 	}
 
 	var commit githubSHAResponse
 	if _, err := githubJSONRequest(client, token, http.MethodPost, baseURL+"/git/commits", map[string]interface{}{
-		"message": "devcontrol: sinkronkan paket ZIP",
+		"message": options.Message,
 		"tree":    tree.SHA,
 		"parents": []string{parentSHA},
 	}, &commit); err != nil {
-		return "", fmt.Errorf("gagal membuat commit GitHub: %w", err)
+		return "", plan, fmt.Errorf("gagal membuat commit GitHub: %w", err)
 	}
 	if commit.SHA == "" {
-		return "", fmt.Errorf("GitHub tidak mengembalikan SHA commit")
+		return "", plan, fmt.Errorf("GitHub tidak mengembalikan SHA commit")
 	}
 
 	refURL := baseURL + "/git/refs/heads/" + url.PathEscape(branch)
 	if _, err := githubJSONRequest(client, token, http.MethodPatch, refURL, map[string]interface{}{
 		"sha": commit.SHA, "force": false,
 	}, &githubRefResponse{}); err != nil {
-		return "", fmt.Errorf("gagal memperbarui branch %s: %w", branch, err)
+		return "", plan, fmt.Errorf("gagal memperbarui branch %s: %w", branch, err)
 	}
-	return commit.SHA, nil
+	return commit.SHA, plan, nil
+}
+
+// githubCommitTree lists every file of a commit (recursive). Entries keep
+// their mode and blob SHA so they can be carried into a new tree as-is.
+func githubCommitTree(client *http.Client, token, baseURL, commitSHA string) (string, []githubTreeEntry, bool, error) {
+	var commit struct {
+		Tree struct {
+			SHA string `json:"sha"`
+		} `json:"tree"`
+	}
+	if _, err := githubJSONRequest(client, token, http.MethodGet, baseURL+"/git/commits/"+url.PathEscape(commitSHA), nil, &commit); err != nil {
+		return "", nil, false, err
+	}
+	if commit.Tree.SHA == "" { return "", nil, false, fmt.Errorf("commit %s tanpa tree", commitSHA) }
+	var listing struct {
+		Truncated bool `json:"truncated"`
+		Tree      []struct {
+			Path string `json:"path"`
+			Mode string `json:"mode"`
+			Type string `json:"type"`
+			SHA  string `json:"sha"`
+		} `json:"tree"`
+	}
+	if _, err := githubJSONRequest(client, token, http.MethodGet, baseURL+"/git/trees/"+url.PathEscape(commit.Tree.SHA)+"?recursive=1", nil, &listing); err != nil {
+		return commit.Tree.SHA, nil, false, err
+	}
+	entries := make([]githubTreeEntry, 0, len(listing.Tree))
+	for _, item := range listing.Tree {
+		// Folders are implied by paths; submodules ("commit") and symlinks are kept.
+		if (item.Type == "blob" || item.Type == "commit") && item.SHA != "" {
+			entries = append(entries, githubTreeEntry{Path: item.Path, Mode: item.Mode, Type: item.Type, SHA: item.SHA})
+		}
+	}
+	return commit.Tree.SHA, entries, listing.Truncated, nil
+}
+
+// setSyncNote appends a GitHub-sync note to a pipeline; it is copied into the
+// update history when the deployment succeeds.
+func setSyncNote(id, note string) {
+	if id == "" || note == "" { return }
+	_, _ = d1.Query(`UPDATE deployment_jobs SET sync_note = CASE WHEN sync_note = '' THEN ? ELSE sync_note || ' · ' || ? END WHERE id = ?`, note, note, id)
+}
+
+// cleanupAppRepo runs after an app is online: files that are in GitHub but
+// not in the deployed ZIP are removed in one commit (reposync rules apply).
+// A failure here never fails the deployment; it is only reported.
+func cleanupAppRepo(store *archive.Store, ticket buildTicket) string {
+	token := os.Getenv("GITHUB_TOKEN")
+	parts := strings.SplitN(ticket.Repo, "/", 2)
+	if token == "" || len(parts) != 2 || ticket.Branch == "" { return "" }
+	record, err := store.Get(ticket.ArchiveID)
+	if err != nil { return "Pembersihan GitHub dilewati: ZIP tidak terbaca" }
+	data, err := store.Download(record)
+	if err != nil { return "Pembersihan GitHub dilewati: ZIP tidak terbaca" }
+	files, err := extractZip(data)
+	if err != nil || len(files) == 0 { return "Pembersihan GitHub dilewati: ZIP tidak valid" }
+	_, plan, err := pushFilesToGitHub(token, parts[0], parts[1], ticket.Branch, files, githubPushOptions{
+		DeleteStale: true, SkipIfUnchanged: true, Message: "devcontrol: hapus file yang tidak dipakai lagi",
+	})
+	if err != nil {
+		logLiveLog("WARN", "Pembersihan file lama di GitHub gagal: "+err.Error())
+		return "Pembersihan file lama di GitHub gagal: " + err.Error()
+	}
+	note := plan.Summary()
+	if note != "" { logLiveLog("INFO", ticket.Repo+": "+note) }
+	return note
 }
 
 func githubBranchHead(client *http.Client, token, baseURL, branch string) (string, bool, error) {
@@ -3000,9 +3129,11 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 // summary of what changed versus the last successful ZIP. It must run while
 // both ZIPs still exist (before Finalize/Discard delete the loser).
 func recordHistory(id, status, message string) {
-	rows, err := d1.Query(`SELECT kind, target, lock_key FROM deployment_jobs WHERE id = ? LIMIT 1`, id)
+	rows, err := d1.Query(`SELECT kind, target, lock_key, sync_note FROM deployment_jobs WHERE id = ? LIMIT 1`, id)
 	if err != nil || len(rows) == 0 { return }
 	kind, target, repo := rowText(rows[0], "kind"), rowText(rows[0], "target"), strings.ToLower(rowText(rows[0], "lock_key"))
+	// Successful runs carry the GitHub sync summary (files removed/kept).
+	if message == "" { message = rowText(rows[0], "sync_note") }
 	if repo == "" { return }
 	var record archive.Record
 	var newZip, oldZip []byte

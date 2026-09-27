@@ -181,6 +181,27 @@ Menu **Member & Akses** (`/team`, khusus owner, `pkg/auth/members.go`):
 - Header keamanan global di `vercel.json`: CSP, HSTS, X-Frame-Options DENY, nosniff, Referrer-Policy, Permissions-Policy, COOP/CORP.
 - Unduh arsip ZIP butuh sesi owner/admin **dan** kunci arsip.
 
+## Sinkron GitHub: file yang tidak dipakai lagi (`pkg/reposync`)
+
+Setelah ZIP diekstrak, isinya dibandingkan dengan file di GitHub, satu per satu:
+
+| File di GitHub yang tidak ada di ZIP | Tindakan |
+|---|---|
+| Kode/aset biasa | **Dihapus** (dianggap tidak dipakai lagi) |
+| Hasil `npm install`/build yang ter-commit (`node_modules`, `.next`, `.turbo`, `__pycache__`, …) | **Dihapus** |
+| Lockfile (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `go.sum`, …) | **Dipertahankan**, kecuali ZIP membawa lockfile lain di folder yang sama |
+| `.github/`, `.gitignore`, `.npmrc`, `.nvmrc`, `LICENSE`, `CODEOWNERS`, … | **Dipertahankan** |
+| `.env` rahasia | **Dipertahankan** + peringatan |
+
+Aturan tambahan:
+
+- Dari ZIP, `__MACOSX`/`.DS_Store` dan hasil install/build tidak pernah ikut di-deploy. File `.env` rahasia tetap ikut di-deploy ke Vercel, tetapi tidak didorong ke GitHub.
+- **Pengaman:** jika lebih dari separuh file sumber (dan lebih dari 10 file) akan terhapus, penghapusan dibatalkan. Ini biasanya tanda ZIP salah folder.
+- **Waktu penghapusan:**
+  - Aplikasi Baru/Update Aplikasi: file lama dihapus lewat commit terpisah **setelah aplikasi online**.
+  - Update Diri: penghapusan dilakukan dalam commit yang sama setelah Uji Vercel lulus, karena production DevControl dibangun dari commit itu.
+- Ringkasannya tampil di Riwayat update.
+
 ## Deploy: GitHub → Vercel
 
 ### Deployment aplikasi dari dashboard
