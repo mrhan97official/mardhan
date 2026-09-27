@@ -129,7 +129,6 @@ body:has(.app-shell) {
 
 /* Solid primary actions and thumbnail captions keep white lettering in both palettes. */
 html.light :is(.bg-accent-blue, .bg-red-600).text-white,
-html.light .project-thumb-caption { color: #fff; }
 
 .logo-transparency-bg {
   background-color: #fff;

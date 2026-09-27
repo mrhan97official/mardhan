@@ -60,7 +60,7 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
   const menuRef = useRef<HTMLDivElement>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [failedVersion, setFailedVersion] = useState<string | null>(null);
-  const [owner, name] = repo.full_name.split("/");
+  const name = repo.full_name.split("/")[1] ?? repo.full_name;
   const languageDot = repo.language ? LANGUAGE_COLORS[repo.language] ?? "bg-slate-400" : null;
   const pushed = timeAgo(repo.pushed_at);
 
@@ -109,12 +109,11 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
             // eslint-disable-next-line @next/next/no-img-element
             <img key={thumbnailVersion} src={`/api/project-thumbnails?repo=${encodeURIComponent(repo.full_name)}&v=${encodeURIComponent(thumbnailVersion)}`} alt={`Thumbnail aplikasi ${repo.full_name}`} loading="lazy" className="absolute inset-0 h-full w-full object-cover" onLoad={() => setFailedVersion(null)} onError={() => setFailedVersion(thumbnailVersion)} />
           )}
-          <span className="project-thumb-caption absolute bottom-3 left-3 right-3 truncate rounded-lg bg-black/70 px-2.5 py-1.5 text-xs font-semibold text-white backdrop-blur-sm">{name}</span>
         </div>
         <div ref={menuRef} className="absolute right-2 top-2 z-10" onBlur={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false);
         }}>
-          <button type="button" aria-label={`Aksi proyek ${repo.full_name}`} aria-expanded={actionsOpen} aria-haspopup="menu" onClick={() => setActionsOpen((open) => !open)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-base-border bg-base-900/90 text-slate-200 shadow-lg backdrop-blur hover:bg-base-800">
+          <button type="button" aria-label={`Aksi proyek ${repo.full_name}`} aria-expanded={actionsOpen} aria-haspopup="menu" onClick={() => setActionsOpen((open) => !open)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-base-900/35 text-slate-100 shadow-sm backdrop-blur-sm hover:bg-base-900/60">
             <MoreVertical size={17} />
           </button>
           {actionsOpen && (
@@ -139,7 +138,6 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
       {imageError && <p role="alert" className="text-xs text-red-300">{imageError}</p>}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-xs text-slate-500">{owner}</p>
           <h3 className="truncate text-sm font-bold text-white sm:text-base">{name}</h3>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
