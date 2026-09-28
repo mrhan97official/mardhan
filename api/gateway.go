@@ -35,6 +35,7 @@ import (
 	"io"
 	"math"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -560,10 +561,9 @@ func handleServices(w http.ResponseWriter, r *http.Request) {
 	util.JSON(w, http.StatusOK, rows)
 }
 
-// App repair is deliberately separate from ZIP updates: it inspects the
-// saved public link, can adopt a working manual Git import, and otherwise
-// builds the existing Git commit in the original project. No repo rewrite,
-// ZIP upload or Vercel project deletion is involved.
+// App repair is separate from ZIP updates: a standard repair can reuse a
+// healthy Git import; an explicitly confirmed reimport creates a new web
+// project and cleans up the old one only after the replacement is online.
 type repairService struct { Name, Repo, Branch, URL string }
 
 func readRepairService(repo string) (repairService, error) {
@@ -672,6 +672,135 @@ func clientRepairProject(client *vercelapp.Client, project vercelapp.Project, ow
 	return full, nil
 }
 
+// Never infer that a same-repo project is the web project: monorepos may
+// have a second Vercel project for their API. A legacy empty root is accepted
+// only under DevControl's stable app name and with a matching Git link or a
+// direct proof that the saved URL belongs to that project.
+func safeReimportSource(project vercelapp.Project, service repairService, owner, repo, root string, urlOwned bool) bool {
+	if project.ID == "" || project.ID == os.Getenv("VERCEL_PROJECT_ID") || project.Name == "" { return false }
+	stable := vercelAppProjectName(owner, repo)
+	if project.RootDirectory != root && !(project.RootDirectory == "" && project.Name == stable) { return false }
+	if project.LinkType != "" && !project.LinkedTo(owner, repo) { return false }
+	if !project.LinkedTo(owner, repo) && !urlOwned && !(project.Name == stable && strings.EqualFold(strings.TrimSuffix(service.URL, "/"), "https://"+stable+".vercel.app")) { return false }
+	// A web root shared with the current DevControl installation must not be
+	// removed even if its name accidentally resembles the app's name.
+	return true
+}
+
+func selectReimportSource(client *vercelapp.Client, service repairService, owner, repo, root string) (vercelapp.Project, error) {
+	if id, err := client.ProjectIDForURL(service.URL); err == nil {
+		project, found, getErr := client.GetProject(id)
+		if getErr != nil { return vercelapp.Project{}, getErr }
+		if found && safeReimportSource(project, service, owner, repo, root, true) { return project, nil }
+		return vercelapp.Project{}, fmt.Errorf("URL rusak menunjuk project Vercel lain atau root API; project tidak akan dihapus")
+	}
+	// A platform 404 often has no deployment lookup. The stable project name
+	// is then a fallback, with the same root and Git ownership checks.
+	project, found, err := client.GetProject(vercelAppProjectName(owner, repo))
+	if err != nil { return vercelapp.Project{}, err }
+	if found {
+		owned := strings.EqualFold(strings.TrimSuffix(service.URL, "/"), "https://"+project.Name+".vercel.app")
+		if !owned {
+			owned, err = client.ProjectHasDeploymentURL(project.ID, service.URL)
+			if err != nil { return vercelapp.Project{}, fmt.Errorf("kepemilikan URL project lama tidak dapat diperiksa: %w", err) }
+		}
+		if owned && safeReimportSource(project, service, owner, repo, root, true) { return project, nil }
+	}
+	linked, err := client.FindLinkedProjects(owner, repo)
+	if err != nil { return vercelapp.Project{}, err }
+	parsed, _ := url.Parse(service.URL)
+	var candidate vercelapp.Project
+	for _, match := range linked {
+		if match.RootDirectory != root || !strings.EqualFold(parsed.Hostname(), match.Name+".vercel.app") { continue }
+		if candidate.ID != "" { return vercelapp.Project{}, fmt.Errorf("beberapa project web cocok dengan URL rusak; target penghapusan tidak pasti") }
+		candidate = match
+	}
+	if candidate.ID != "" {
+		full, exists, getErr := client.GetProject(candidate.ID)
+		if getErr != nil { return vercelapp.Project{}, getErr }
+		if exists && safeReimportSource(full, service, owner, repo, root, true) { return full, nil }
+	}
+	return vercelapp.Project{}, fmt.Errorf("project web lama tidak dapat dibuktikan dari URL atau nama project; periksa koneksi Git dan VERCEL_TEAM_ID. Project API tidak disentuh")
+}
+
+func reimportProjectName(owner, repo string) string {
+	base := vercelAppProjectName(owner, repo)
+	suffix := fmt.Sprintf("-web-%d", time.Now().UnixNano())
+	if len(base)+len(suffix) > 80 { base = strings.Trim(base[:80-len(suffix)], "-") }
+	return base+suffix
+}
+
+func validAPIURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil { return false }
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || !strings.Contains(host, ".") { return false }
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalUnicast()) { return false }
+	return u.Scheme == "https" && u.User == nil && u.Port() == "" && (u.Path == "" || u.Path == "/") && u.RawQuery == "" && u.Fragment == ""
+}
+
+func startWebReimport(w http.ResponseWriter, client *vercelapp.Client, token string, service repairService, owner, repo, branch, sha, root, framework, apiURL string) {
+	source, err := selectReimportSource(client, service, owner, repo, root)
+	if err != nil { util.Error(w, http.StatusConflict, err); return }
+	if domains, err := client.CustomDomains(source.ID); err != nil {
+		util.Error(w, http.StatusBadGateway, fmt.Errorf("domain project lama belum dapat diperiksa: %w", err)); return
+	} else if len(domains) != 0 {
+		util.Error(w, http.StatusConflict, fmt.Errorf("project web lama memiliki domain khusus; pindahkan domain tersebut secara manual terlebih dahulu agar tidak terputus saat project dihapus")); return
+	}
+	variables, err := client.ReadProjectEnvironment(source.ID)
+	if err != nil { util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("variabel project web lama belum dapat disalin: %w", err)); return }
+	if apiURL != "" {
+		if !validAPIURL(apiURL) { util.Error(w, http.StatusBadRequest, fmt.Errorf("API_URL harus URL HTTPS publik tanpa path atau parameter")); return }
+		found := false
+		for index := range variables { if variables[index].Key == "API_URL" { variables[index].Value = apiURL; found = true } }
+		if !found { variables = append(variables, vercelapp.ProjectEnvironment{Key:"API_URL", Value:apiURL, Type:"encrypted", Target:[]string{"production", "preview", "development"}}) }
+	}
+	name := reimportProjectName(owner, repo)
+	replacement, err := client.CreateProject(name, framework, root, "")
+	if err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("project pengganti tidak dapat dibuat: %w", err)); return }
+	// Every error until the signed ticket is issued leaves the old project and
+	// D1 URL untouched; a partially made replacement is disposable.
+	complete := false
+	defer func() { if !complete { if cleanErr := client.DeleteProject(replacement.ID); cleanErr != nil { logLiveLog("WARN", "Gagal membersihkan project pengganti "+replacement.Name+": "+cleanErr.Error()) } } }()
+	if err := client.CopyProjectEnvironment(replacement.ID, variables); err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("variabel tidak dapat disalin ke project pengganti: %w", err)); return }
+	if err := client.LinkProject(replacement.ID, service.Repo); err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("project pengganti tidak dapat dihubungkan ke GitHub: %w", err)); return }
+	deployment, err := client.CreateGitDeployment(replacement.Name, replacement.ID, owner, repo, branch, sha)
+	if err != nil {
+		// Linking the repo can start the identical production build itself.
+		// Only adopt that build when its Git SHA matches the requested commit.
+		id, lookupErr := client.LatestProduction(replacement.ID, sha)
+		if lookupErr != nil || id == "" { util.Error(w, http.StatusBadGateway, fmt.Errorf("commit Git tidak dapat dideploy pada project baru: %w", err)); return }
+		deployment.ID = id
+	}
+	ticket, err := signBuildTicket(token, buildTicket{Stage:"app-reimport", Repo:service.Repo, Name:service.Name, Branch:branch, CommitSHA:sha, URL:service.URL, Project:replacement.Name, ProjectID:replacement.ID, OldProjectID:source.ID, DeploymentID:deployment.ID, RootDirectory:root, Framework:framework})
+	if err != nil { util.Error(w, http.StatusInternalServerError, err); return }
+	complete = true
+	logLiveLog("INFO", "Impor ulang web "+service.Repo+": commit "+sha+" dibangun pada project pengganti "+replacement.Name)
+	util.JSON(w, http.StatusOK, map[string]interface{}{"status":"pending", "ticket":ticket, "message":"Project web pengganti dibuat, variabel disalin, dan commit Git sedang dibangun. Project lama tetap tersedia sampai halaman baru sehat"})
+}
+
+func finishWebReimport(w http.ResponseWriter, client *vercelapp.Client, service repairService, ticket buildTicket, liveURL string) {
+	if service.URL != ticket.URL && service.URL != liveURL { util.Error(w, http.StatusConflict, fmt.Errorf("tautan aplikasi berubah selama impor ulang; project lama dipertahankan")); return }
+	if service.URL == ticket.URL {
+		if err := saveRepairedURL(service, liveURL); err != nil { util.Error(w, http.StatusConflict, err); return }
+	}
+	message := "Aplikasi online pada project web baru; tautan tersimpan diperbarui. "
+	owner, repo, ok := splitRepo(ticket.Repo)
+	if !ok || ticket.OldProjectID == ticket.ProjectID || ticket.OldProjectID == os.Getenv("VERCEL_PROJECT_ID") {
+		util.JSON(w, http.StatusOK, map[string]interface{}{"status":"ready", "app_url":liveURL, "message":message+"Project lama dipertahankan karena identitasnya tidak aman untuk dihapus"}); return
+	}
+	old, found, err := client.GetProject(ticket.OldProjectID)
+	if err == nil && found && safeReimportSource(old, repairService{Repo:service.Repo, URL:ticket.URL}, owner, repo, ticket.RootDirectory, true) {
+		var domains []string
+		domains, err = client.CustomDomains(old.ID)
+		if err == nil && len(domains) != 0 { err = fmt.Errorf("project lama masih memiliki domain khusus") }
+		if err == nil { err = client.DeleteProject(old.ID) }
+	} else if err == nil && found { err = fmt.Errorf("identitas atau root project lama berubah") }
+	if err != nil { message += "Project web lama tetap ada: " + err.Error() } else { message += "Project web lama berhasil dihapus; project API tetap ada" }
+	logLiveLog("INFO", "Impor ulang web "+service.Repo+": "+message)
+	util.JSON(w, http.StatusOK, map[string]interface{}{"status":"ready", "app_url":liveURL, "message":message})
+}
+
 func handleAppRepair(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	if !auth.IsAdmin(r) { util.Error(w, http.StatusForbidden, fmt.Errorf("pemulihan aplikasi hanya untuk owner/admin")); return }
@@ -679,29 +808,41 @@ func handleAppRepair(w http.ResponseWriter, r *http.Request) {
 	vercelToken := os.Getenv("VERCEL_TOKEN")
 	if r.Method == http.MethodGet && r.URL.Query().Get("ticket") != "" {
 		ticket, err := verifyBuildTicket(vercelToken, r.URL.Query().Get("ticket"))
-		if vercelToken == "" || err != nil || ticket.Stage != "app-repair" || ticket.Repo == "" || ticket.URL == "" || ticket.DeploymentID == "" || ticket.ProjectID == "" {
+		if vercelToken == "" || err != nil || (ticket.Stage != "app-repair" && ticket.Stage != "app-reimport") || ticket.Repo == "" || ticket.URL == "" || ticket.DeploymentID == "" || ticket.ProjectID == "" || (ticket.Stage == "app-reimport" && ticket.OldProjectID == "") {
 			util.Error(w, http.StatusBadRequest, fmt.Errorf("sesi pemulihan tidak valid atau kedaluwarsa")); return
 		}
 		service, err := readRepairService(ticket.Repo)
-		if err != nil || service.URL != ticket.URL { util.Error(w, http.StatusConflict, fmt.Errorf("tautan aplikasi berubah selama pemulihan; muat ulang halaman")); return }
+		if err != nil || (service.URL != ticket.URL && ticket.Stage != "app-reimport") { util.Error(w, http.StatusConflict, fmt.Errorf("tautan aplikasi berubah selama pemulihan; muat ulang halaman")); return }
 		state, urls, detail, err := getVercelBuildStatus(vercelToken, ticket.DeploymentID)
 		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
 		if state == "ERROR" || state == "CANCELED" {
 			if detail == "" {
 				if buildLog, logErr := getVercelBuildLog(vercelToken, ticket.DeploymentID); logErr == nil { detail = vercelFailureSummary(buildLog) }
 			}
+			if ticket.Stage == "app-reimport" && service.URL == ticket.URL {
+				client := vercelapp.New(vercelToken)
+				owner, repo, ok := splitRepo(ticket.Repo)
+				if replacement, found, getErr := client.GetProject(ticket.ProjectID); getErr == nil && found && ok && replacement.LinkedTo(owner, repo) && replacement.RootDirectory == ticket.RootDirectory {
+					if cleanErr := client.DeleteProject(replacement.ID); cleanErr != nil { logLiveLog("WARN", "Project web pengganti yang gagal belum dapat dibersihkan: "+cleanErr.Error()) }
+				}
+			}
 			logLiveLog("ERROR", "Pemulihan "+service.Repo+": build Vercel "+state+" "+detail)
-			util.JSON(w, http.StatusOK, map[string]interface{}{"status":"failed", "message":"Build pemulihan Vercel "+state+": "+orDefault(detail, "periksa Build Logs di project Vercel")}); return
+			util.JSON(w, http.StatusOK, map[string]interface{}{"status":"failed", "message":"Build pemulihan Vercel "+state+": "+orDefault(detail, "periksa Build Logs di project Vercel")+". Project web lama dan tautan lama tetap ada"}); return
 		}
 		if state != "READY" { util.JSON(w, http.StatusOK, map[string]interface{}{"status":"pending", "message":"Build Vercel: "+state}); return }
 		client := vercelapp.New(vercelToken)
-		if current, found, err := client.GetProject(ticket.ProjectID); err != nil || !found || !current.LinkedTo(strings.SplitN(service.Repo,"/",2)[0], strings.SplitN(service.Repo,"/",2)[1]) {
+		owner, repo, repoOK := splitRepo(service.Repo)
+		if current, found, err := client.GetProject(ticket.ProjectID); err != nil || !found || !repoOK || !current.LinkedTo(owner, repo) || (ticket.Stage == "app-reimport" && current.RootDirectory != ticket.RootDirectory) {
 			util.Error(w, http.StatusConflict, fmt.Errorf("project Vercel tidak lagi terhubung ke repo aplikasi")); return
 		}
 		liveURL := verifiedRepairURL(client, ticket.DeploymentID, urls)
 		if liveURL == "" {
+			if ticket.Stage == "app-reimport" && time.Now().Unix()-ticket.CreatedAt < 10*60 {
+				util.JSON(w, http.StatusOK, map[string]interface{}{"status":"pending", "message":"Build READY; menunggu tautan project baru dapat dibuka dan terikat pada deployment yang benar. Project lama belum dihapus"}); return
+			}
 			util.JSON(w, http.StatusOK, map[string]interface{}{"status":"failed", "message":"Build READY, tetapi URL belum melayani halaman web yang terverifikasi; periksa Root Directory, variabel API_URL, dan Deployment Protection di Vercel. Tautan lama tetap tersimpan."}); return
 		}
+		if ticket.Stage == "app-reimport" { finishWebReimport(w, client, service, ticket, liveURL); return }
 		if err := saveRepairedURL(service, liveURL); err != nil { util.Error(w, http.StatusConflict, err); return }
 		util.JSON(w, http.StatusOK, map[string]interface{}{"status":"ready", "app_url":liveURL, "message":"Aplikasi sudah online; tautan tersimpan diperbarui"})
 		return
@@ -715,6 +856,18 @@ func handleAppRepair(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		util.JSON(w, http.StatusOK, map[string]interface{}{"broken":broken && probeErr == nil, "app_url":service.URL}); return
 	}
+	var input struct { Action string `json:"action"`; Confirmation string `json:"confirmation"`; APIURL string `json:"api_url"` }
+	if r.Body != nil && r.Body != http.NoBody && (r.ContentLength != 0 || len(r.TransferEncoding) != 0) {
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") { util.Error(w, http.StatusUnsupportedMediaType, fmt.Errorf("permintaan harus berupa JSON")); return }
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2048))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil { util.Error(w, http.StatusBadRequest, fmt.Errorf("data pemulihan tidak valid: %w", err)); return }
+		var trailing interface{}
+		if err := decoder.Decode(&trailing); err != io.EOF { util.Error(w, http.StatusBadRequest, fmt.Errorf("permintaan pemulihan berisi data tambahan")); return }
+	}
+	if input.Action != "" && input.Action != "reimport" { util.Error(w, http.StatusBadRequest, fmt.Errorf("aksi pemulihan tidak dikenal")); return }
+	if input.Action == "reimport" && !strings.EqualFold(input.Confirmation, service.Repo) { util.Error(w, http.StatusBadRequest, fmt.Errorf("ketik nama lengkap repo untuk mengonfirmasi impor ulang project web")); return }
+	if input.Action != "reimport" && input.APIURL != "" { util.Error(w, http.StatusBadRequest, fmt.Errorf("API_URL hanya berlaku saat impor ulang")); return }
 	if probeErr != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("URL belum dapat diverifikasi: %w", probeErr)); return }
 	if !broken { util.Error(w, http.StatusConflict, fmt.Errorf("tautan tidak lagi menampilkan 404 Vercel; muat ulang halaman")); return }
 	active, err := d1.Query(`SELECT id FROM deployment_jobs WHERE lower(lock_key) = lower(?) AND status = 'Running' LIMIT 1`, service.Repo)
@@ -727,6 +880,7 @@ func handleAppRepair(w http.ResponseWriter, r *http.Request) {
 	sha, root, framework, err := githubRepairRoot(githubToken, owner, repo, branch)
 	if err != nil { util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("repo GitHub belum dapat dianalisis: %w", err)); return }
 	client := vercelapp.New(vercelToken)
+	if input.Action == "reimport" { startWebReimport(w, client, vercelToken, service, owner, repo, branch, sha, root, framework, strings.TrimSpace(input.APIURL)); return }
 	linked, err := client.FindLinkedProjects(owner, repo)
 	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	// An already healthy manual import is the best repair: only switch the
@@ -737,7 +891,7 @@ func handleAppRepair(w http.ResponseWriter, r *http.Request) {
 	if len(exact) == 1 {
 		project, checkErr := clientRepairProject(client, exact[0], owner, repo)
 		if checkErr != nil { util.Error(w, http.StatusBadGateway, checkErr); return }
-		id, lookupErr := client.LatestProduction(project.ID, sha)
+		id, lookupErr := client.LatestProduction(project.ID)
 		if lookupErr != nil { util.Error(w, http.StatusBadGateway, lookupErr); return }
 		if id != "" {
 			state, urls, _, statusErr := getVercelBuildStatus(vercelToken, id)
@@ -2958,6 +3112,7 @@ type buildTicket struct {
 	DeploymentID string `json:"deployment_id,omitempty"`
 	Project string `json:"project,omitempty"`
 	ProjectID string `json:"project_id,omitempty"`
+	OldProjectID string `json:"old_project_id,omitempty"`
 	URL string `json:"url,omitempty"`
 	Environment string `json:"environment,omitempty"`
 	CreatedAt int64 `json:"created_at,omitempty"`

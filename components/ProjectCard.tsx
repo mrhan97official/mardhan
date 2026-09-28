@@ -66,6 +66,9 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
   const [dialog, setDialog] = useState<"zip" | "history" | null>(null);
   const [repairBroken, setRepairBroken] = useState(false);
   const [repairDialog, setRepairDialog] = useState(false);
+  const [repairMode, setRepairMode] = useState<"repair" | "reimport">("repair");
+  const [reimportConfirm, setReimportConfirm] = useState("");
+  const [reimportAPIURL, setReimportAPIURL] = useState("");
   const [repairBusy, setRepairBusy] = useState(false);
   const [repairTicket, setRepairTicket] = useState<string | null>(null);
   const [repairMessage, setRepairMessage] = useState("");
@@ -84,6 +87,7 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
     try {
       const pending = sessionStorage.getItem(repairStorageKey);
       if (pending) {
+        setRepairMode(sessionStorage.getItem(`${repairStorageKey}:mode`) === "reimport" ? "reimport" : "repair");
         setRepairTicket(pending);
         setRepairBusy(true);
         setRepairDialog(true);
@@ -119,13 +123,13 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
           setRepairBroken(false);
           setRepairTicket(null);
           setRepairBusy(false);
-          try { sessionStorage.removeItem(repairStorageKey); } catch { /* storage unavailable */ }
+          try { sessionStorage.removeItem(repairStorageKey); sessionStorage.removeItem(`${repairStorageKey}:mode`); } catch { /* storage unavailable */ }
           notifyDataChanged();
         } else if (result.status === "failed") {
           setRepairError(result.message || "Build pemulihan gagal");
           setRepairTicket(null);
           setRepairBusy(false);
-          try { sessionStorage.removeItem(repairStorageKey); } catch { /* storage unavailable */ }
+          try { sessionStorage.removeItem(repairStorageKey); sessionStorage.removeItem(`${repairStorageKey}:mode`); } catch { /* storage unavailable */ }
         } else {
           setRepairMessage(result.message || "Build Vercel sedang berjalan…");
           timer = setTimeout(poll, 4000);
@@ -135,7 +139,7 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
           setRepairError(error instanceof Error ? error.message : "Status pemulihan tidak dapat diperiksa");
           setRepairTicket(null);
           setRepairBusy(false);
-          try { sessionStorage.removeItem(repairStorageKey); } catch { /* storage unavailable */ }
+          try { sessionStorage.removeItem(repairStorageKey); sessionStorage.removeItem(`${repairStorageKey}:mode`); } catch { /* storage unavailable */ }
         }
       }
     };
@@ -143,13 +147,17 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
     return () => { active = false; clearTimeout(timer); };
   }, [repairTicket, repairStorageKey]);
 
-  const startRepair = async () => {
+  const startRepair = async (action: "repair" | "reimport") => {
     if (repairBusy) return;
+    if (action === "reimport" && reimportConfirm !== repo.full_name) return;
     setRepairBusy(true);
     setRepairError("");
-    setRepairMessage("Memeriksa import Git dan project Vercel…");
+    setRepairMessage(action === "reimport" ? "Memeriksa project web lama dan menyiapkan pengganti…" : "Memeriksa import Git dan project Vercel…");
     try {
-      const response = await fetch(`/api/app-repair?repo=${encodeURIComponent(repo.full_name)}`, { method: "POST", credentials: "same-origin" });
+      const response = await fetch(`/api/app-repair?repo=${encodeURIComponent(repo.full_name)}`, {
+        method: "POST", credentials: "same-origin",
+        ...(action === "reimport" ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reimport", confirmation: reimportConfirm, api_url: reimportAPIURL.trim() }) } : {}),
+      });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Pemulihan gagal dimulai");
       setRepairMessage(result.message || "Pemulihan sedang berjalan");
@@ -159,7 +167,7 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
         setRepairBusy(false);
         notifyDataChanged();
       } else if (result.status === "pending" && result.ticket) {
-        try { sessionStorage.setItem(repairStorageKey, result.ticket); } catch { /* storage unavailable */ }
+        try { sessionStorage.setItem(repairStorageKey, result.ticket); sessionStorage.setItem(`${repairStorageKey}:mode`, action); } catch { /* storage unavailable */ }
         setRepairTicket(result.ticket);
       } else {
         throw new Error("Respons pemulihan Vercel tidak lengkap");
@@ -234,7 +242,10 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
               </>}
               {admin && <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("zip"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><FileArchive size={14} /> Arsip ZIP</button>}
               <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("history"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><History size={14} /> Riwayat update</button>
-              {admin && repairBroken && <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setRepairDialog(true); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-amber-300 hover:bg-amber-500/10"><RotateCcw size={14} /> Perbaiki 404 Vercel</button>}
+              {admin && repairBroken && <>
+                <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setRepairMode("repair"); setRepairDialog(true); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-amber-300 hover:bg-amber-500/10"><RotateCcw size={14} /> Perbaiki 404 Vercel</button>
+                <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setRepairMode("reimport"); setRepairDialog(true); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-amber-300 hover:bg-amber-500/10"><RotateCcw size={14} /> Impor ulang web Vercel</button>
+              </>}
               {admin && <>
               <div className="my-1 border-t border-base-border" />
               <button type="button" role="menuitem" disabled={uploading} onClick={() => { setActionsOpen(false); onDelete(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-red-400 hover:bg-red-500/10 disabled:opacity-50"><Trash2 size={14} /> Hapus aplikasi</button>
@@ -248,13 +259,26 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
       {repairDialog && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setRepairDialog(false); }}>
           <section role="dialog" aria-modal="true" aria-label={`Pemulihan 404 ${repo.full_name}`} className="w-full max-w-md rounded-2xl border border-base-border bg-base-900 p-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-3"><h2 className="text-lg font-bold text-white">Perbaiki 404 Vercel</h2><button type="button" aria-label="Tutup" onClick={() => setRepairDialog(false)} className="rounded-lg p-1 text-slate-300 hover:bg-base-800"><X size={18} /></button></div>
-            <p className="mt-3 text-sm text-slate-300">Tautan tersimpan untuk {repo.full_name} menampilkan 404 dari Vercel. DevControl akan mencari import Git yang sudah sehat. Jika belum ada, DevControl membetulkan pengaturan build dan membangun ulang commit Git yang sama pada project terkait.</p>
-            <p className="mt-2 text-xs text-slate-400">Repo GitHub dan project Vercel tidak dihapus. Tautan baru hanya disimpan setelah halaman dapat dibuka dan deployment terverifikasi.</p>
+            <div className="flex items-start justify-between gap-3"><h2 className="text-lg font-bold text-white">{repairMode === "reimport" ? "Impor ulang web Vercel" : "Perbaiki 404 Vercel"}</h2><button type="button" aria-label="Tutup" onClick={() => setRepairDialog(false)} className="rounded-lg p-1 text-slate-300 hover:bg-base-800"><X size={18} /></button></div>
+            {repairMode === "reimport" ? <>
+              <p className="mt-3 text-sm text-slate-300">Tautan {repo.full_name} terdeteksi sebagai 404 Vercel. DevControl akan membuat project web baru dari repo dan commit Git yang sudah ada, menyalin variabel Vercel, lalu memeriksa halaman penggantinya.</p>
+              <p className="mt-2 text-xs text-amber-200">Setelah tautan baru sehat, project web lama dihapus. Project API (misalnya server/) dan repo GitHub tetap ada. Jika identitas project, variabel, atau domain khusus tidak aman untuk dipindah, penghapusan dibatalkan.</p>
+              {!repairedURL && <label className="mt-4 block text-xs text-slate-300">Ketik {repo.full_name} untuk menyetujui penggantian project web
+                <input value={reimportConfirm} onChange={(event) => setReimportConfirm(event.target.value)} autoComplete="off" spellCheck={false} disabled={repairBusy} className="mt-2 w-full rounded-lg border border-base-border bg-base-800 px-3 py-2 text-sm text-white outline-none focus:border-accent-blue disabled:opacity-50" />
+              </label>}
+              {!repairedURL && <label className="mt-3 block text-xs text-slate-300">URL project API jika perlu diganti (opsional)
+                <input type="url" placeholder="https://alamat-api.vercel.app" value={reimportAPIURL} onChange={(event) => setReimportAPIURL(event.target.value)} autoComplete="url" disabled={repairBusy} className="mt-2 w-full rounded-lg border border-base-border bg-base-800 px-3 py-2 text-sm text-white outline-none focus:border-accent-blue disabled:opacity-50" />
+                <span className="mt-1 block text-slate-400">Contoh repo web/ dan server/: isi URL API server/ jika API_URL pada project lama masih salah. Kosongkan untuk menyalin nilai lama.</span>
+              </label>}
+            </> : <>
+              <p className="mt-3 text-sm text-slate-300">DevControl akan mencari import Git yang sudah sehat. Jika belum ada, pengaturan build dibetulkan dan commit Git yang sama dibangun ulang pada project terkait.</p>
+              <p className="mt-2 text-xs text-slate-400">Project yang ada tidak dihapus. Tautan baru disimpan setelah halaman dan deployment terverifikasi.</p>
+            </>}
             {repairMessage && <p role="status" className="mt-4 rounded-lg bg-base-800 p-3 text-sm text-slate-200">{repairMessage}</p>}
             {repairError && <p role="alert" className="mt-4 rounded-lg bg-red-500/10 p-3 text-sm text-red-300">{repairError}</p>}
             {repairedURL ? <a href={repairedURL} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm text-white">Buka aplikasi <ExternalLink size={14} /></a> :
-              <button type="button" disabled={repairBusy} onClick={startRepair} className="mt-4 rounded-lg bg-accent-blue px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{repairBusy ? "Memulihkan…" : "Mulai pemulihan"}</button>}
+              <button type="button" disabled={repairBusy || (repairMode === "reimport" && reimportConfirm !== repo.full_name)} onClick={() => startRepair(repairMode)} className="mt-4 rounded-lg bg-accent-blue px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{repairBusy ? "Memulihkan…" : repairMode === "reimport" ? "Buat pengganti dan impor ulang" : "Mulai pemulihan"}</button>}
+            {!repairBusy && !repairedURL && <button type="button" onClick={() => { setRepairMode(repairMode === "reimport" ? "repair" : "reimport"); setRepairError(""); setRepairMessage(""); }} className="ml-3 mt-4 text-xs text-slate-300 underline">{repairMode === "reimport" ? "Coba perbaikan biasa" : "Impor ulang jika perbaikan belum berhasil"}</button>}
           </section>
         </div>, document.body,
       )}

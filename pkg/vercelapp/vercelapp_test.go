@@ -79,6 +79,68 @@ func TestLatestProductionScopedToProject(t *testing.T) {
 	if id, err := client.LatestProduction("prj_web", "commit123"); err != nil || id != "dpl_healthy" { t.Fatalf("id=%s, err=%v", id, err) }
 }
 
+func TestReimportCopiesDecryptedEnvWithScope(t *testing.T) {
+	client := New("test-token")
+	posted := false
+	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body := ""
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v10/projects/prj_old/env":
+			if r.URL.Query().Get("decrypt") != "true" { t.Fatal("old project must be read decrypted") }
+			body = `{"envs":[{"id":"e1","key":"API_URL","value":"https://api.vercel.app","type":"encrypted","decrypted":true,"target":["production","preview"]},{"id":"e2","key":"PUBLIC_FLAG","value":"on","type":"plain","target":"production"}]}`
+		case r.Method == http.MethodPost && r.URL.Path == "/v10/projects/prj_new/env":
+			var items []struct { Key, Value, Type string; Target []string }
+			if err := json.NewDecoder(r.Body).Decode(&items); err != nil { t.Fatal(err) }
+			if len(items) != 2 || items[0].Key != "API_URL" || items[0].Value != "https://api.vercel.app" || !reflect.DeepEqual(items[0].Target, []string{"production","preview"}) || items[1].Type != "encrypted" { t.Fatalf("scope or type lost: %+v", items) }
+			posted = true
+			body = `{"created":{},"failed":[]}`
+		case r.Method == http.MethodGet && r.URL.Path == "/v10/projects/prj_new/env":
+			body = `{"envs":[{"key":"API_URL","target":["production","preview"]},{"key":"PUBLIC_FLAG","target":["production"]}]}`
+		default: t.Fatalf("unexpected request: %s %s", r.Method, r.URL)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	vars, err := client.ReadProjectEnvironment("prj_old")
+	if err != nil { t.Fatal(err) }
+	if err := client.CopyProjectEnvironment("prj_new", vars); err != nil || !posted { t.Fatalf("environment not safely copied: %v", err) }
+}
+
+func TestReimportRefusesUndecryptableOrCustomDomain(t *testing.T) {
+	client := New("test-token")
+	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body := ""
+		switch r.URL.Path {
+		case "/v10/projects/prj_old/env": body = `{"envs":[{"id":"e1","key":"SECRET","type":"sensitive","target":["production"]}]}`
+		case "/v1/projects/prj_old/env/e1": body = `{"decrypted":false}`
+		case "/v9/projects/prj_old/domains": body = `{"domains":[{"name":"www.example.com"},{"name":"project.vercel.app"}]}`
+		default: t.Fatalf("unexpected request: %s %s", r.Method, r.URL)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	if _, err := client.ReadProjectEnvironment("prj_old"); err == nil { t.Fatal("secret without a decrypted value must abort replacement") }
+	domains, err := client.CustomDomains("prj_old")
+	if err != nil || !reflect.DeepEqual(domains, []string{"www.example.com"}) { t.Fatalf("custom domains: %v, %v", domains, err) }
+}
+
+func TestReimportCanIdentifyOldImmutableURLFromProjectHistory(t *testing.T) {
+	client := New("test-token")
+	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v7/deployments" || r.URL.Query().Get("projectId") != "prj_old" { t.Fatalf("unexpected URL: %s", r.URL) }
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"deployments":[{"url":"old-sha.vercel.app"}]}`)), Header: make(http.Header)}, nil
+	})}
+	if found, err := client.ProjectHasDeploymentURL("prj_old", "https://old-sha.vercel.app/"); err != nil || !found { t.Fatalf("old immutable URL should identify its project: %t, %v", found, err) }
+	if found, err := client.ProjectHasDeploymentURL("prj_old", "https://unrelated.vercel.app"); err != nil || found { t.Fatalf("unrelated URL must not identify the project: %t, %v", found, err) }
+}
+
+func TestDeleteProjectUsesExactProjectID(t *testing.T) {
+	client := New("test-token")
+	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v9/projects/prj_old_web" { t.Fatalf("unexpected deletion target: %s %s", r.Method, r.URL) }
+		return &http.Response{StatusCode: http.StatusNoContent, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+	})}
+	if err := client.DeleteProject("prj_old_web"); err != nil { t.Fatal(err) }
+}
+
 func TestWorkingManualProjectSettingsArePreserved(t *testing.T) {
 	client := New("test-token")
 	client.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {

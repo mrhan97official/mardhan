@@ -430,6 +430,20 @@ func (c *Client) LatestProduction(projectID string, sha ...string) (string, erro
 	return out.Deployments[0].ID, nil
 }
 
+// ProjectHasDeploymentURL is a fallback for a now-404 immutable URL. Vercel
+// may no longer resolve the hostname even though the original deployment
+// record is still listed under the project. It is used only as positive
+// evidence; an inconclusive lookup must never authorize deletion.
+func (c *Client) ProjectHasDeploymentURL(projectID, rawURL string) (bool, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "https" || !strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".vercel.app") { return false, fmt.Errorf("URL deployment tidak valid") }
+	var out struct { Deployments []struct { URL string `json:"url"` } `json:"deployments"` }
+	query := url.Values{"projectId":{projectID}, "limit":{"20"}}
+	if err := c.Do(http.MethodGet, "/v7/deployments", query, nil, &out); err != nil { return false, err }
+	for _, deployment := range out.Deployments { if strings.EqualFold(deployment.URL, parsed.Hostname()) { return true, nil } }
+	return false, nil
+}
+
 // DeploymentIDForURL resolves a public alias to its current deployment. An
 // alias can move after READY, so a healthy page alone may belong to an older
 // build. The immutable URL from a creation response needs no such lookup.
@@ -691,6 +705,124 @@ func (c *Client) CreateProject(name, framework, rootDirectory, gitRepo string) (
 func (c *Client) LinkProject(projectID, gitRepo string) error {
 	return c.Do(http.MethodPost, "/v9/projects/"+url.PathEscape(projectID)+"/link", nil,
 		map[string]string{"type": "github", "repo": gitRepo}, nil)
+}
+
+// ProjectEnvironment holds a decrypted project variable in server memory.
+// Values are never returned to the browser, logged, or placed in build tickets.
+type ProjectEnvironment struct {
+	Key string
+	Value string
+	Type string
+	Target []string
+	GitBranch string
+}
+
+type projectEnvResponse struct {
+	ID string `json:"id"`
+	Key string `json:"key"`
+	Value *string `json:"value"`
+	Type string `json:"type"`
+	Target json.RawMessage `json:"target"`
+	GitBranch string `json:"gitBranch"`
+	Decrypted bool `json:"decrypted"`
+	System bool `json:"system"`
+	CustomEnvironmentIDs []string `json:"customEnvironmentIds"`
+}
+
+func (c *Client) projectEnvList(projectID string, decrypt bool) ([]projectEnvResponse, error) {
+	query := url.Values{}
+	if decrypt { query.Set("decrypt", "true") }
+	var raw json.RawMessage
+	if err := c.Do(http.MethodGet, "/v10/projects/"+url.PathEscape(projectID)+"/env", query, nil, &raw); err != nil { return nil, err }
+	var entries []projectEnvResponse
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		if err := json.Unmarshal(raw, &entries); err != nil { return nil, err }
+	} else {
+		var wrapper struct { Envs []projectEnvResponse `json:"envs"`; Pagination struct { Next json.RawMessage `json:"next"` } `json:"pagination"` }
+		if err := json.Unmarshal(raw, &wrapper); err != nil { return nil, err }
+		if wrapper.Envs == nil { return nil, fmt.Errorf("Vercel tidak mengembalikan daftar Environment Variables") }
+		if len(wrapper.Pagination.Next) > 0 && string(wrapper.Pagination.Next) != "null" && string(wrapper.Pagination.Next) != "0" {
+			return nil, fmt.Errorf("daftar Environment Variables terpotong; project lama tidak boleh dihapus")
+		}
+		entries = wrapper.Envs
+	}
+	return entries, nil
+}
+
+// ReadProjectEnvironment refuses a destructive replacement if any variable
+// cannot be copied with its complete scope and decrypted value.
+func (c *Client) ReadProjectEnvironment(projectID string) ([]ProjectEnvironment, error) {
+	entries, err := c.projectEnvList(projectID, true)
+	if err != nil { return nil, err }
+	result := make([]ProjectEnvironment, 0, len(entries))
+	for _, entry := range entries {
+		if entry.System { continue }
+		if entry.Key == "" || len(entry.CustomEnvironmentIDs) != 0 { return nil, fmt.Errorf("variabel project lama memakai cakupan custom yang belum bisa dipindahkan secara aman") }
+		targets := parseTargets(entry.Target)
+		if len(targets) == 0 { return nil, fmt.Errorf("cakupan variabel %s belum dapat dipastikan", entry.Key) }
+		for _, target := range targets {
+			if target != "production" && target != "preview" && target != "development" { return nil, fmt.Errorf("cakupan variabel %s tidak didukung", entry.Key) }
+		}
+		if entry.Value == nil || ((entry.Type == "encrypted" || entry.Type == "sensitive") && !entry.Decrypted) {
+			var single projectEnvResponse
+			if entry.ID == "" || c.Do(http.MethodGet, "/v1/projects/"+url.PathEscape(projectID)+"/env/"+url.PathEscape(entry.ID), nil, nil, &single) != nil || single.Value == nil || !single.Decrypted {
+				return nil, fmt.Errorf("nilai variabel %s tidak dapat dibaca; project lama dipertahankan", entry.Key)
+			}
+			entry.Value = single.Value
+		}
+		typ := entry.Type
+		if typ == "plain" || typ == "secret" { typ = "encrypted" }
+		if typ != "encrypted" && typ != "sensitive" { return nil, fmt.Errorf("jenis variabel %s tidak didukung", entry.Key) }
+		result = append(result, ProjectEnvironment{Key:entry.Key, Value:*entry.Value, Type:typ, Target:targets, GitBranch:entry.GitBranch})
+	}
+	return result, nil
+}
+
+func (c *Client) CopyProjectEnvironment(projectID string, variables []ProjectEnvironment) error {
+	if len(variables) == 0 { return nil }
+	post := make([]map[string]interface{}, 0, len(variables))
+	for _, variable := range variables {
+		item := map[string]interface{}{"key":variable.Key, "value":variable.Value, "type":variable.Type, "target":variable.Target}
+		if variable.GitBranch != "" { item["gitBranch"] = variable.GitBranch }
+		post = append(post, item)
+	}
+	var created struct { Failed []json.RawMessage `json:"failed"` }
+	if err := c.Do(http.MethodPost, "/v10/projects/"+url.PathEscape(projectID)+"/env", nil, post, &created); err != nil { return err }
+	if len(created.Failed) != 0 { return fmt.Errorf("Vercel menolak %d Environment Variables", len(created.Failed)) }
+	stored, err := c.projectEnvList(projectID, false)
+	if err != nil { return err }
+	for _, variable := range variables {
+		present := false
+		for _, entry := range stored {
+			if entry.Key != variable.Key || entry.GitBranch != variable.GitBranch { continue }
+			has := map[string]bool{}
+			for _, target := range parseTargets(entry.Target) { has[target] = true }
+			present = true
+			for _, target := range variable.Target { if !has[target] { present = false } }
+			if present { break }
+		}
+		if !present { return fmt.Errorf("variabel %s belum tersalin ke project baru", variable.Key) }
+	}
+	return nil
+}
+
+// CustomDomains excludes automatic .vercel.app aliases and rejects a
+// truncated list, so cleanup cannot silently discard an unseen domain.
+func (c *Client) CustomDomains(projectID string) ([]string, error) {
+	var out struct { Domains []struct { Name string `json:"name"` } `json:"domains"`; Pagination struct { Next json.RawMessage `json:"next"` } `json:"pagination"` }
+	if err := c.Do(http.MethodGet, "/v9/projects/"+url.PathEscape(projectID)+"/domains", url.Values{"limit":{"100"}}, nil, &out); err != nil { return nil, err }
+	if out.Domains == nil || len(out.Pagination.Next) > 0 && string(out.Pagination.Next) != "null" && string(out.Pagination.Next) != "0" { return nil, fmt.Errorf("domain project lama belum dapat dipastikan seluruhnya") }
+	domains := []string{}
+	for _, domain := range out.Domains { if domain.Name != "" && !strings.HasSuffix(strings.ToLower(domain.Name), ".vercel.app") { domains = append(domains, domain.Name) } }
+	return domains, nil
+}
+
+func (c *Client) DeleteProject(projectID string) error {
+	err := c.Do(http.MethodDelete, "/v9/projects/"+url.PathEscape(projectID), nil, nil, nil)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound { return nil }
+	return err
 }
 
 // AlignBuildSettings makes the Git project's build match the isolated ZIP
