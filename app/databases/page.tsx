@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Database, RefreshCw, ShieldCheck } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import D1DataBrowser from "@/components/D1DataBrowser";
+import RepoProjectInventory from "@/components/RepoProjectInventory";
 
 interface TableInfo {
   name: string;
@@ -58,7 +59,7 @@ export default function DatabasesPage() {
 
   const missing = status?.d1.tables.filter((table) => !table.exists || table.missing.length || table.mismatched.length) || [];
   return (
-    <AppShell title="Databases" subtitle="Data tabel D1, pemeriksaan skema, dan penyimpanan R2">
+    <AppShell title="Databases" subtitle="Data tabel D1, repo GitHub vs project Vercel, pemeriksaan skema, dan penyimpanan R2">
       <section className="card space-y-2 p-2">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div><h2 className="flex items-center gap-2 text-lg font-bold"><Database size={19} /> Kesiapan penyimpanan</h2>
@@ -84,6 +85,7 @@ export default function DatabasesPage() {
           </div>
         </div>}
       </section>
+      <RepoProjectInventory />
       {status?.d1.connected && <D1DataBrowser />}
       {status && <section className="card p-2">
         <h2 className="flex items-center gap-2 text-base font-semibold"><ShieldCheck size={18} /> Tabel aplikasi</h2>

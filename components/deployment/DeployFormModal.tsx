@@ -141,14 +141,7 @@ export default function DeployFormModal({
       if (!parsed.ok || !archiveID) { setFailedStep("extract"); return; }
       setCompletedSteps(["extract"]);
       setActiveStep("vercel-test");
-      let autoHidden = false;
       const final = await pollDeploymentJob(archiveID, (job, elapsed) => {
-        if (!autoHidden) {
-          // Job sudah terdeteksi di Pipeline: tutup jendela otomatis dan segarkan daftar Pipeline.
-          autoHidden = true;
-          onHide();
-          onSuccess();
-        }
         const done = job.stages.filter((stage) => stage.status === "Success").map((stage) => STEP_ORDER[stage.position - 1]);
         setCompletedSteps(done.filter((step): step is StepKey => Boolean(step)));
         const running = job.stages.find((stage) => stage.status === "Running") ?? job.stages.find((stage) => stage.status === "Pending");
