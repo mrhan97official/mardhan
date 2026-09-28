@@ -3,6 +3,8 @@ package repoinventory
 import (
 	"encoding/json"
 	"testing"
+
+	"devcontrol/pkg/vercelapp"
 )
 
 func TestClassifyDetectsConnectionStates(t *testing.T) {
@@ -74,5 +76,41 @@ func TestPaginationNext(t *testing.T) {
 		if got := paginationNext(json.RawMessage(raw)); got != want {
 			t.Fatalf("paginationNext(%s) = %q, want %q", raw, got, want)
 		}
+	}
+}
+
+func TestSplitRepoRejectsUnsafeNames(t *testing.T) {
+	if owner, name, ok := splitRepo("hendra/apotik-pintar"); !ok || owner != "hendra" || name != "apotik-pintar" {
+		t.Fatalf("valid repo rejected: %q %q %v", owner, name, ok)
+	}
+	for _, bad := range []string{"", "hendra", "a/b/c", "../x", "a/..", "a b/c", "a/c?x=1"} {
+		if _, _, ok := splitRepo(bad); ok {
+			t.Fatalf("unsafe repo accepted: %q", bad)
+		}
+	}
+}
+
+func TestHasGitLink(t *testing.T) {
+	cases := []struct {
+		project vercelapp.Project
+		want    bool
+	}{
+		{vercelapp.Project{}, false},
+		{vercelapp.Project{LinkType: "github"}, false},
+		{vercelapp.Project{LinkType: "github", LinkOrg: "a", LinkRepo: "b"}, true},
+		{vercelapp.Project{LinkType: "gitlab"}, true},
+	}
+	for _, c := range cases {
+		if got := hasGitLink(c.project); got != c.want {
+			t.Fatalf("hasGitLink(%+v) = %v, want %v", c.project, got, c.want)
+		}
+	}
+}
+
+func TestManagedProjectsWithoutD1(t *testing.T) {
+	t.Setenv("CF_D1_DATABASE_ID", "")
+	managed, err := managedProjects(func(owner, repo string) string { return owner + "-" + repo })
+	if err != nil || len(managed) != 0 {
+		t.Fatalf("got %v, %v", managed, err)
 	}
 }

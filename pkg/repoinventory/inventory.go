@@ -58,6 +58,8 @@ type Project struct {
 	Status           string `json:"status"`
 	SuggestedRepo    string `json:"suggested_repo,omitempty"`
 	URL              string `json:"url,omitempty"`
+	ManagedRepo      string `json:"managed_repo,omitempty"` // app registered in DevControl that uses this project
+	Self             bool   `json:"self,omitempty"`         // the project hosting this DevControl
 }
 
 // Source reports whether one side could be read.
@@ -96,13 +98,22 @@ type vercelProject struct {
 	Link      *vercelLink `json:"link"`
 }
 
-// Handle answers GET /api/databases?view=inventory. It returns false for
+// Handle answers /api/databases?view=inventory: GET returns the inventory,
+// POST runs a connect/delete action on one unconnected project (owner/admin
+// only, enforced by the gateway's permission matrix). It returns false for
 // every other request so the caller can continue routing.
 func Handle(w http.ResponseWriter, r *http.Request, appName func(owner, repo string) string) bool {
-	if r.Method != http.MethodGet || r.URL.Query().Get("view") != "inventory" {
+	if r.URL.Query().Get("view") != "inventory" {
 		return false
 	}
-	util.JSON(w, http.StatusOK, Build(appName))
+	switch r.Method {
+	case http.MethodGet:
+		util.JSON(w, http.StatusOK, Build(appName))
+	case http.MethodPost:
+		handleAction(w, r, appName)
+	default:
+		util.Error(w, http.StatusMethodNotAllowed, fmt.Errorf("gunakan GET atau POST"))
+	}
 	return true
 }
 
@@ -164,6 +175,14 @@ func Build(appName func(owner, repo string) string) Result {
 		repos = []Repo{}
 	}
 	result.Repos, result.Projects = classify(repos, raw, github.OK, appName, scope)
+	// Best effort: an unreadable D1 only hides the "dikelola DevControl" hint;
+	// the delete action re-checks and refuses when it cannot be sure.
+	managed, _ := managedProjects(appName)
+	self := strings.TrimSpace(os.Getenv("VERCEL_PROJECT_ID"))
+	for i := range result.Projects {
+		result.Projects[i].ManagedRepo = managed[strings.ToLower(result.Projects[i].Name)]
+		result.Projects[i].Self = self != "" && (result.Projects[i].ID == self || strings.EqualFold(result.Projects[i].Name, self))
+	}
 	return result
 }
 

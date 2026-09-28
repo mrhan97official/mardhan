@@ -1,18 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Archive, ExternalLink, GitBranch, GitFork, Github, Loader2, Lock, RefreshCw, Search, Triangle, Unlink } from "lucide-react";
+import { Archive, ExternalLink, GitBranch, GitFork, Github, Link2, Loader2, Lock, RefreshCw, Search, Trash2, Triangle, Unlink } from "lucide-react";
+import { ConnectGitDialog, DeleteProjectDialog, type InventoryProject, type InventoryRepo, type InventoryStatus } from "@/components/InventoryProjectActions";
 
-type Status = "connected" | "outside" | "other-git" | "unconnected";
+type Status = InventoryStatus;
 interface Source { configured: boolean; ok: boolean; error?: string; truncated?: boolean }
-interface InventoryRepo {
-  full_name: string; name: string; private: boolean; archived: boolean; fork: boolean;
-  html_url: string; pushed_at: string; default_branch: string; projects: string[];
-}
-interface InventoryProject {
-  id: string; name: string; framework?: string; updated_at?: number; git_provider?: string; repo?: string;
-  production_branch?: string; status: Status; suggested_repo?: string; url?: string;
-}
 interface Inventory { github: Source; vercel: Source; repos: InventoryRepo[]; projects: InventoryProject[]; checked_at: string }
 
 type Tab = "projects" | "repos";
@@ -55,6 +48,9 @@ export default function RepoProjectInventory() {
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>("all");
   const [repoFilter, setRepoFilter] = useState<RepoFilter>("all");
   const [search, setSearch] = useState("");
+  const [connecting, setConnecting] = useState<InventoryProject | null>(null);
+  const [deleting, setDeleting] = useState<InventoryProject | null>(null);
+  const [notice, setNotice] = useState("");
   const focusedOnce = useRef(false);
 
   const load = useCallback(async () => {
@@ -118,6 +114,8 @@ export default function RepoProjectInventory() {
       </div>
 
       {error && <p role="alert" className="rounded-lg bg-accent-red/10 p-2 text-sm text-red-300">{error}</p>}
+      {notice && <p role="status" className="flex items-start justify-between gap-2 rounded-lg bg-accent-green/10 p-2 text-sm text-emerald-300">
+        <span>{notice}</span><button type="button" onClick={() => setNotice("")} className="text-xs text-slate-400 hover:text-slate-200">Tutup</button></p>}
       {!data && !error && <p className="flex items-center gap-2 text-sm text-slate-400"><Loader2 size={14} className="animate-spin" /> Membaca GitHub dan Vercel…</p>}
 
       {data && <>
@@ -178,7 +176,7 @@ export default function RepoProjectInventory() {
             : visibleProjects.length === 0 ? <p className="py-3 text-center text-sm text-slate-400">{projectFilter === "unconnected" && !needle ? "Semua project Vercel sudah terhubung ke repo Git." : "Tidak ada project yang cocok."}</p>
             : <ul className="max-h-[30rem] space-y-1.5 overflow-y-auto pr-0.5">
               {visibleProjects.map((project) => {
-                const link = project.url ? (project.status === "unconnected" ? `${project.url}/settings/git` : project.url) : "";
+                const unconnected = project.status === "unconnected";
                 return (
                   <li key={project.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-base-border bg-base-850 px-2 py-2">
                     <div className="min-w-0 flex-1">
@@ -186,9 +184,11 @@ export default function RepoProjectInventory() {
                         <span className="truncate text-sm font-medium text-slate-100">{project.name}</span>
                         {project.framework && <span className="shrink-0 text-xs text-slate-500">{project.framework}</span>}
                       </div>
-                      {project.status === "unconnected" ? (
+                      {unconnected ? (
                         <p className="mt-0.5 break-words text-xs text-slate-400">
                           {project.suggested_repo ? <>Kemungkinan repo: <span className="text-slate-200">{project.suggested_repo}</span></> : "Tidak ada repo GitHub dengan nama serupa."}
+                          {project.managed_repo && <span className="text-accent-cyan"> · dipakai aplikasi DevControl {project.managed_repo}</span>}
+                          {project.self && <span className="text-accent-cyan"> · project aplikasi ini sendiri</span>}
                         </p>
                       ) : (
                         <p className="mt-0.5 flex min-w-0 items-center gap-1 text-xs text-slate-400">
@@ -200,11 +200,21 @@ export default function RepoProjectInventory() {
                         </p>
                       )}
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[project.status]}`}>{STATUS_LABEL[project.status]}</span>
-                      {link && <a href={link} target="_blank" rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 rounded-md border border-base-border px-2 py-1 text-xs text-slate-300 hover:bg-base-800">
-                        {project.status === "unconnected" ? "Connect Git" : "Buka"} <ExternalLink size={12} /></a>}
+                      {unconnected && !project.self && <>
+                        <button type="button" onClick={() => { setNotice(""); setConnecting(project); }} disabled={!data.github.ok}
+                          title={data.github.ok ? "Hubungkan ke repo GitHub dan impor kodenya" : "Butuh GITHUB_TOKEN"}
+                          className="inline-flex items-center gap-1 rounded-md bg-accent-blue px-2 py-1 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50">
+                          <Link2 size={12} /> Connect Git</button>
+                        <button type="button" onClick={() => { setNotice(""); setDeleting(project); }} disabled={Boolean(project.managed_repo)}
+                          title={project.managed_repo ? `Dipakai aplikasi DevControl ${project.managed_repo}; hapus lewat halaman Projects` : "Hapus project ini dari Vercel"}
+                          aria-label={`Hapus project ${project.name}`}
+                          className="inline-flex items-center gap-1 rounded-md border border-accent-red/40 px-2 py-1 text-xs text-red-300 hover:bg-accent-red/10 disabled:opacity-40">
+                          <Trash2 size={12} /> Hapus</button>
+                      </>}
+                      {project.url && <a href={project.url} target="_blank" rel="noopener noreferrer" title="Buka di Vercel" aria-label={`Buka ${project.name} di Vercel`}
+                        className="inline-flex items-center rounded-md border border-base-border p-1.5 text-slate-300 hover:bg-base-800"><ExternalLink size={12} /></a>}
                     </div>
                   </li>
                 );
@@ -242,6 +252,10 @@ export default function RepoProjectInventory() {
         </>}
         <p className="text-right text-[11px] text-slate-500">Diperiksa {new Date(data.checked_at).toLocaleString("id-ID")}</p>
       </>}
+      {connecting && data && <ConnectGitDialog project={connecting} repos={data.repos}
+        onClose={() => setConnecting(null)} onChanged={() => void load()} />}
+      {deleting && <DeleteProjectDialog project={deleting} onClose={() => setDeleting(null)}
+        onDeleted={(name) => { setDeleting(null); setNotice(`Project ${name} sudah dihapus dari Vercel.`); void load(); }} />}
     </section>
   );
 }

@@ -972,7 +972,7 @@ func handleDatabases(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	// Read-only table browser: ?view=tables and ?table=<name>.
 	if databrowser.Handle(w, r) { return }
-	// GitHub repo vs Vercel project inventory: ?view=inventory (read-only).
+	// GitHub repo vs Vercel project inventory: ?view=inventory (GET list, POST connect/delete).
 	if repoinventory.Handle(w, r, vercelAppProjectName) { return }
 	if r.Method == http.MethodGet {
 		status, err := setup.Inspect()
