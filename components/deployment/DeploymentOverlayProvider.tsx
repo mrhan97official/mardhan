@@ -1,18 +1,10 @@
 "use client";
 
-import { createContext, useCallback, useContext, useState } from "react";
-import Link from "next/link";
-import { Eye, Loader2, Plus, X } from "lucide-react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import DeployFormModal from "./DeployFormModal";
 import SelfUpdateModal from "./SelfUpdateModal";
 
 export type ModalKey = "new_app" | "update_app" | "self_update";
-
-const LABELS: Record<ModalKey, string> = {
-  new_app: "Aplikasi Baru",
-  update_app: "Update Aplikasi",
-  self_update: "Update Diri",
-};
 
 interface Progress {
   running: boolean;
@@ -82,6 +74,16 @@ export default function DeploymentOverlayProvider({ children }: { children: Reac
     setActiveId((current) => current === id ? null : current);
   }, []);
 
+  // Tanpa panel melayang: tugas tersembunyi yang sudah selesai dibersihkan otomatis;
+  // jika gagal, jendela dimunculkan lagi supaya pesan galat tidak hilang.
+  useEffect(() => {
+    const finished = tasks.filter((task) => task.id !== activeId && task.started && !task.progress.running);
+    if (finished.length === 0) return;
+    const failed = finished.find((task) => task.progress.failed);
+    if (failed) { setActiveId(failed.id); return; }
+    setTasks((current) => current.filter((task) => !finished.some((done) => done.id === task.id)));
+  }, [tasks, activeId]);
+
   const onSuccess = useCallback(() => {
     window.dispatchEvent(new Event("deployment:changed"));
   }, []);
@@ -100,41 +102,6 @@ export default function DeploymentOverlayProvider({ children }: { children: Reac
           onProgress={updateProgress}
         />
       ))}
-      {activeId === null && tasks.length > 0 && (
-        <div className="fixed bottom-4 right-4 z-[55] w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-base-border bg-base-850 p-3 shadow-glow" role="status" aria-live="polite">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="text-sm font-semibold text-slate-100">Proses deployment ({tasks.filter((task) => task.progress.running).length} berjalan)</p>
-            <Link href="/deployments" className="text-xs font-medium text-accent-blue hover:underline">Lihat pipeline</Link>
-          </div>
-          <div className="max-h-[45vh] space-y-2 overflow-y-auto">
-            {tasks.map((task) => (
-              <div key={task.id} className="rounded-lg border border-base-border bg-base-900 p-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2 text-xs font-semibold text-slate-100">
-                    {task.progress.running && <Loader2 size={14} className="shrink-0 animate-spin text-accent-blue" />}
-                    <span className="truncate">{LABELS[task.mode]}{task.progress.target ? ` · ${task.progress.target}` : ""}</span>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <button type="button" onClick={() => setActiveId(task.id)} aria-label={`Tampilkan ${LABELS[task.mode]}`} className="text-accent-blue hover:text-blue-300"><Eye size={15} /></button>
-                    {!task.progress.running && <button type="button" onClick={() => closeTask(task.id)} aria-label={`Tutup ${LABELS[task.mode]}`} className="text-slate-400 hover:text-slate-200"><X size={15} /></button>}
-                  </div>
-                </div>
-                <p className={`mt-1 line-clamp-2 text-xs ${task.progress.failed ? "text-red-400" : "text-slate-400"}`}>
-                  {task.started ? task.progress.message : "Form siap diisi."}
-                </p>
-              </div>
-            ))}
-          </div>
-          {tasks.some((task) => task.progress.running) && <p className="mt-2 text-xs text-slate-400">Setelah ZIP tersimpan, laptop boleh ditutup. Runner Cloudflare melanjutkan proses.</p>}
-          <div className="mt-3 flex flex-wrap gap-2 border-t border-base-border pt-3">
-            {(["new_app", "update_app", "self_update"] as const).map((mode) => (
-              <button key={mode} type="button" onClick={() => openModal(mode)} className="inline-flex items-center gap-1 rounded-lg border border-base-border px-2 py-1.5 text-xs font-medium text-accent-blue hover:bg-base-800">
-                <Plus size={12} /> {LABELS[mode]}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </DeploymentOverlayContext.Provider>
   );
 }
