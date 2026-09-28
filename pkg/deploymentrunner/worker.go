@@ -19,8 +19,19 @@ import (
 	"time"
 )
 
+// Every 15 minutes the Worker also asks DevControl to check for events that
+// have no request of their own (application 404, waiting confirmations) and
+// to send Web Push notifications. It only calls when a device subscribed.
 const source = `export default {
-  async scheduled(_event, env) {
+  async scheduled(event, env) {
+    if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 0) {
+      const subscribed = await env.DB.prepare("SELECT 1 AS found FROM push_subscriptions LIMIT 1").first().catch(() => null);
+      if (subscribed) {
+        await fetch(env.TARGET_URL + "/api/push-watch", {
+          method: "POST", headers: { Authorization: "Bearer " + env.RUNNER_SECRET },
+        }).catch(() => {});
+      }
+    }
     const job = await env.DB.prepare("SELECT j.id FROM deployment_jobs j JOIN deployment_runner r ON r.id = j.id WHERE j.status = 'Running' AND r.phase NOT IN ('done', 'error') AND r.claim_until <= CURRENT_TIMESTAMP LIMIT 1").first();
     if (!job) return;
     const response = await fetch(env.TARGET_URL + "/api/deployment-runner", {
@@ -29,6 +40,12 @@ const source = `export default {
     if (!response.ok) throw new Error("Deployment runner returned HTTP " + response.status);
   },
 };`
+
+// Version identifies the Worker source, so an update installs it once.
+func Version() string {
+	sum := sha256.Sum256([]byte(source))
+	return hex.EncodeToString(sum[:6])
+}
 
 func Name() string {
 	sum := sha256.Sum256([]byte(os.Getenv("CF_D1_DATABASE_ID")))

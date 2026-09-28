@@ -287,3 +287,25 @@ func saveVercelZone(ctx context.Context, token, projectID, zoneID string) error 
 	}
 	return nil
 }
+
+// PendingZone mirrors the admin prompt in the app: a matching zone is waiting
+// for approval only when nothing is approved, no monitoring mode is chosen and
+// the Vercel project is readable. It never changes anything (used for push).
+func PendingZone(ctx context.Context) (string, string, error) {
+	cfToken, accountID := strings.TrimSpace(os.Getenv("CF_API_TOKEN")), strings.TrimSpace(os.Getenv("CF_ACCOUNT_ID"))
+	vercelToken := strings.TrimSpace(os.Getenv("VERCEL_TOKEN"))
+	if cfToken == "" || accountID == "" || vercelToken == "" { return "", "", nil }
+	current, err := currentApproval()
+	if err != nil || current != nil { return "", "", err }
+	mode, err := trafficmetrics.Mode()
+	if err != nil || mode != "" { return "", "", err }
+	zones, err := cloudflareZones(ctx, cfToken, accountID)
+	if err != nil { return "", "", err }
+	p, err := vercelProject(ctx, vercelToken)
+	if err != nil { return "", "", nil }
+	host := productionHost()
+	for _, item := range zones {
+		if matchesProject(item, host, p) { return item.ID, item.Name, nil }
+	}
+	return "", "", nil
+}

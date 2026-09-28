@@ -3,11 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import SidebarLogo from "@/components/SidebarLogo";
+import { PushNotificationDialog } from "@/components/PushNotificationSettings";
+import { disablePush, syncPush } from "@/lib/push";
 import { useTheme } from "@/components/ThemeProvider";
 import type { DeploymentJob } from "@/lib/types";
 import { ROLE_LABEL, isAdminRole, useSession } from "@/lib/session";
 import {
   Bell,
+  BellRing,
   Check,
   ChevronDown,
   Clock3,
@@ -53,6 +56,10 @@ export default function Header({
   const [notificationError, setNotificationError] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [profileError, setProfileError] = useState("");
+  const [pushOpen, setPushOpen] = useState(false);
+
+  // Keep this device's push subscription current (browsers may rotate it).
+  useEffect(() => { void syncPush(); }, []);
   const profileRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
 
@@ -115,6 +122,8 @@ export default function Header({
     setLoggingOut(true);
     setProfileError("");
     try {
+      // A signed-out device stops receiving notifications (best effort).
+      await Promise.race([disablePush().catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 3000))]);
       const response = await fetch("/api/session", { method: "DELETE", credentials: "same-origin", cache: "no-store" });
       if (!response.ok) throw new Error();
       setProfileOpen(false);
@@ -224,6 +233,9 @@ export default function Header({
                 {isAdminRole(session.role) && <Link href="/settings" role="menuitem" onClick={() => setProfileOpen(false)} className="mt-1 flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-slate-200 hover:bg-base-800">
                   <Settings size={16} /> Pengaturan
                 </Link>}
+                <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); setPushOpen(true); }} className="mt-1 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-slate-200 hover:bg-base-800">
+                  <BellRing size={16} /> Notifikasi perangkat
+                </button>
                 <div role="group" aria-label="Mode tampilan" className="border-t border-base-border px-2.5 py-2">
                   <p className="mb-1.5 px-1 text-xs text-slate-400">Mode tampilan</p>
                   <div className="grid grid-cols-2 gap-1 rounded-lg bg-base-800/70 p-1">
@@ -241,6 +253,7 @@ export default function Header({
         </div>
         </div>
       </div>
+      {pushOpen && <PushNotificationDialog onClose={() => setPushOpen(false)} />}
     </header>
   );
 }

@@ -32,6 +32,10 @@ var schemaStatements = []string{
   "CREATE INDEX IF NOT EXISTS idx_project_thumbnail_objects_repo ON project_thumbnail_objects (repo)",
   "CREATE TABLE IF NOT EXISTS app_promo_banner (\n  id INTEGER PRIMARY KEY CHECK (id = 1),\n  target_repo TEXT NOT NULL,\n  app_name TEXT NOT NULL DEFAULT '',\n  app_url TEXT NOT NULL DEFAULT '',\n  title TEXT NOT NULL,\n  description TEXT NOT NULL,\n  image_repo TEXT NOT NULL,\n  version TEXT NOT NULL,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE TABLE IF NOT EXISTS app_branding (\n  id INTEGER PRIMARY KEY CHECK (id = 1),\n  version TEXT NOT NULL,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+  "CREATE TABLE IF NOT EXISTS push_config (\n  id INTEGER PRIMARY KEY CHECK (id = 1),\n  public_key TEXT NOT NULL,\n  private_key TEXT NOT NULL,\n  subject TEXT NOT NULL DEFAULT '',\n  runner_version TEXT NOT NULL DEFAULT '',\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+  "CREATE TABLE IF NOT EXISTS push_subscriptions (\n  endpoint TEXT PRIMARY KEY,\n  p256dh TEXT NOT NULL,\n  auth TEXT NOT NULL,\n  subject TEXT NOT NULL,\n  events TEXT NOT NULL DEFAULT '',\n  last_error TEXT NOT NULL DEFAULT '',\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+  "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_subject ON push_subscriptions (subject)",
+  "CREATE TABLE IF NOT EXISTS push_log (\n  event_key TEXT PRIMARY KEY,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE TABLE IF NOT EXISTS schema_migrations (\n  version TEXT PRIMARY KEY,\n  applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE TABLE IF NOT EXISTS managed_apis (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  project TEXT NOT NULL,\n  path TEXT NOT NULL,\n  method TEXT NOT NULL CHECK (method IN ('GET', 'HEAD')),\n  environment TEXT NOT NULL,\n  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE INDEX IF NOT EXISTS idx_managed_apis_project ON managed_apis (project)",
@@ -84,6 +88,9 @@ var expectedColumns = map[string][]string{
   "project_thumbnail_objects": {"object_key", "repo", "created_at"},
   "app_promo_banner": {"id", "target_repo", "app_name", "app_url", "title", "description", "image_repo", "version", "updated_at"},
   "app_branding": {"id", "version", "updated_at"},
+  "push_config": {"id", "public_key", "private_key", "subject", "runner_version", "created_at"},
+  "push_subscriptions": {"endpoint", "p256dh", "auth", "subject", "events", "last_error", "created_at", "updated_at"},
+  "push_log": {"event_key", "created_at"},
   "schema_migrations": {"version", "applied_at"},
   "managed_apis": {"id", "name", "project", "path", "method", "environment", "enabled", "created_at"},
   "api_keys": {"id", "name", "key_prefix", "key_hash", "scopes", "created_at", "revoked_at"},
@@ -115,6 +122,9 @@ var expectedTypes = map[string]map[string]string{
   "project_thumbnail_objects": {"object_key": "TEXT", "repo": "TEXT", "created_at": "TEXT"},
   "app_promo_banner": {"id": "INTEGER", "target_repo": "TEXT", "app_name": "TEXT", "app_url": "TEXT", "title": "TEXT", "description": "TEXT", "image_repo": "TEXT", "version": "TEXT", "updated_at": "TEXT"},
   "app_branding": {"id": "INTEGER", "version": "TEXT", "updated_at": "TEXT"},
+  "push_config": {"id": "INTEGER", "public_key": "TEXT", "private_key": "TEXT", "subject": "TEXT", "runner_version": "TEXT", "created_at": "TEXT"},
+  "push_subscriptions": {"endpoint": "TEXT", "p256dh": "TEXT", "auth": "TEXT", "subject": "TEXT", "events": "TEXT", "last_error": "TEXT", "created_at": "TEXT", "updated_at": "TEXT"},
+  "push_log": {"event_key": "TEXT", "created_at": "TEXT"},
   "schema_migrations": {"version": "TEXT", "applied_at": "TEXT"},
   "managed_apis": {"id": "TEXT", "name": "TEXT", "project": "TEXT", "path": "TEXT", "method": "TEXT", "environment": "TEXT", "enabled": "INTEGER", "created_at": "TEXT"},
   "api_keys": {"id": "TEXT", "name": "TEXT", "key_prefix": "TEXT", "key_hash": "TEXT", "scopes": "TEXT", "created_at": "TEXT", "revoked_at": "TEXT"},
@@ -126,4 +136,4 @@ var expectedTypes = map[string]map[string]string{
   "auth_settings": {"key": "TEXT", "value": "TEXT"},
 }
 
-var expectedIndexes = []string{"idx_deployment_jobs_running_target", "idx_deployment_jobs_updated", "idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_project_thumbnail_uploads_repo", "idx_project_thumbnail_uploads_time", "idx_project_thumbnail_objects_repo", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time", "idx_deployment_history_repo"}
+var expectedIndexes = []string{"idx_deployment_jobs_running_target", "idx_deployment_jobs_updated", "idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_project_thumbnail_uploads_repo", "idx_project_thumbnail_uploads_time", "idx_project_thumbnail_objects_repo", "idx_push_subscriptions_subject", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time", "idx_deployment_history_repo"}

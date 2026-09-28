@@ -11,6 +11,7 @@ npm-debug.log*
 public/sw.js
 public/workbox-*.js
 public/fallback-*.js
+public/worker-*.js
 
 # Go
 /vendor/

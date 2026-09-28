@@ -70,6 +70,7 @@ import (
 	"devcontrol/pkg/util"
 	"devcontrol/pkg/vercelapp"
 	"devcontrol/pkg/vercelenv"
+	"devcontrol/pkg/webpush"
 )
 
 // Handler is the sole entrypoint for the whole API surface.
@@ -86,6 +87,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusUnauthorized, fmt.Errorf("runner tidak diizinkan")); return
 		}
 		handleDeploymentRunner(w, r)
+		return
+	}
+	// Scheduled by the same Cloudflare Worker every 15 minutes; checks events
+	// that have no request of their own and sends Web Push notifications.
+	if resource == "push-watch" {
+		if r.Method != http.MethodPost || !deploymentrunner.Authorized(r.Header.Get("Authorization")) {
+			util.Error(w, http.StatusUnauthorized, fmt.Errorf("runner tidak diizinkan")); return
+		}
+		handlePushWatch(w, r)
 		return
 	}
 	if !auth.SameOrigin(r) { util.Error(w, http.StatusForbidden, fmt.Errorf("permintaan harus berasal dari aplikasi ini")); return }
@@ -154,6 +164,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		handleAppPromo(w, r)
 	case "branding":
 		branding.Handle(w, r)
+	case "push":
+		webpush.Handle(w, r, ensurePushRunner)
 	case "github-branches":
 		handleGithubBranches(w, r)
 	case "zip-archives":
@@ -249,8 +261,9 @@ type deploymentJob struct {
 // Each deployment owns its pipeline and a lease on its repo. The Cloudflare
 // runner renews the lease even when the uploading device is closed.
 func expireDeploymentJobs() error {
-	_, err := d1.Query(`UPDATE deployment_jobs SET status = 'Interrupted', updated_at = CURRENT_TIMESTAMP
-		WHERE status = 'Running' AND lease_until <= CURRENT_TIMESTAMP`)
+	rows, err := d1.Query(`UPDATE deployment_jobs SET status = 'Interrupted', updated_at = CURRENT_TIMESTAMP
+		WHERE status = 'Running' AND lease_until <= CURRENT_TIMESTAMP RETURNING id`)
+	for _, row := range rows { notifyJobResult(rowText(row, "id")) }
 	return err
 }
 
@@ -349,6 +362,7 @@ func updateDeploymentStage(id string, position int, status string) {
 		recordHistory(id, "Success", "")
 		if store, err := archive.New(); err == nil { _ = store.Finalize(id) }
 	}
+	if status == "Failed" || (position == 4 && status == "Success") { notifyJobResult(id) }
 }
 
 // A Go function stops when its HTTP request ends. Cloudflare's scheduled
@@ -359,7 +373,95 @@ func prepareDeploymentRunner(r *http.Request) error {
 	if os.Getenv("VERCEL_ENV") == "preview" {
 		return fmt.Errorf("jalankan deployment dari domain production agar runner tetap tersedia setelah update diri")
 	}
-	return deploymentrunner.Ensure(host)
+	if err := deploymentrunner.Ensure(host); err != nil { return err }
+	webpush.SetRunnerVersion(deploymentrunner.Version())
+	return nil
+}
+
+// ensurePushRunner installs the current scheduled Worker once after an
+// update, so 404 and confirmation checks run without a new deployment.
+func ensurePushRunner(r *http.Request) {
+	if os.Getenv("VERCEL_ENV") == "preview" || webpush.RunnerVersion() == deploymentrunner.Version() { return }
+	host := os.Getenv("VERCEL_PROJECT_PRODUCTION_URL")
+	if host == "" { host = r.Host }
+	if deploymentrunner.Ensure(host) == nil { webpush.SetRunnerVersion(deploymentrunner.Version()) }
+}
+
+// notifyJobResult sends one push per finished pipeline (Success, Failed or
+// Interrupted); the key makes repeated calls harmless.
+func notifyJobResult(id string) {
+	if id == "" { return }
+	rows, err := d1.Query(`SELECT kind, target, display_name, status, diagnosis FROM deployment_jobs WHERE id = ? LIMIT 1`, id)
+	if err != nil || len(rows) == 0 { return }
+	kind, target, name, status := rowText(rows[0], "kind"), rowText(rows[0], "target"), rowText(rows[0], "display_name"), rowText(rows[0], "status")
+	if status != "Success" && status != "Failed" && status != "Interrupted" { return }
+	event, label := webpush.EventDeploy, "Deploy aplikasi"
+	switch kind {
+	case "new_app": label = "Aplikasi baru"
+	case "update_app": label = "Update aplikasi"
+	case "self_update": event, label = webpush.EventSelfUpdate, "Update diri DevControl"
+	}
+	if name == "" { name = target }
+	message := webpush.Message{Event: event, Key: "job:" + id + ":" + status, URL: "/deployments", Tag: "job-" + id}
+	switch status {
+	case "Success":
+		message.Title = "✅ " + label + " berhasil"
+		message.Body = name + " sudah selesai dan online."
+	case "Failed":
+		message.Title = "❌ " + label + " gagal"
+		var found struct { Category string `json:"category"`; Summary string `json:"summary"` }
+		_ = json.Unmarshal([]byte(rowText(rows[0], "diagnosis")), &found)
+		detail := strings.TrimSpace(found.Summary)
+		if detail == "" { detail = "buka Deployments untuk melihat penyebab dan saran perbaikannya." }
+		message.Body = name + ": " + detail
+	default:
+		message.Title = "⚠️ " + label + " terhenti"
+		message.Body = name + ": proses tidak selesai. Periksa hasilnya sebelum mengulang."
+	}
+	webpush.Notify(message)
+}
+
+// handlePushWatch checks application links for Vercel's 404 and a waiting
+// Cloudflare zone confirmation, then notifies subscribed devices once.
+func handlePushWatch(w http.ResponseWriter, r *http.Request) {
+	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	webpush.Prune()
+	checked := 0
+	if webpush.Wants(webpush.EventApp404) {
+		rows, err := d1.Query(`SELECT repo, name, display_name, app_url FROM services WHERE app_url != '' ORDER BY id LIMIT 40`)
+		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		var wait sync.WaitGroup
+		for _, row := range rows {
+			repo, appURL := rowText(row, "repo"), rowText(row, "app_url")
+			name := rowText(row, "display_name")
+			if name == "" { name = rowText(row, "name") }
+			if name == "" { name = repo }
+			checked++
+			wait.Add(1)
+			go func(repo, name, appURL string) {
+				defer wait.Done()
+				broken, err := vercelapp.Platform404(appURL)
+				if err != nil { return }
+				key := "app404:" + strings.ToLower(repo) + ":" + appURL
+				if !broken { webpush.Forget(key); return }
+				webpush.Notify(webpush.Message{Event: webpush.EventApp404, Key: key, URL: "/projects", Tag: "app404-" + strings.ToLower(repo),
+					Title: "⚠️ Aplikasi menampilkan 404", Body: name + " (" + appURL + ") menampilkan 404 Vercel. Buka Projects → menu kartu untuk memperbaikinya."})
+			}(repo, name, appURL)
+		}
+		wait.Wait()
+	}
+	if webpush.Wants(webpush.EventConfirm) {
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		zoneID, zoneName, err := zonemanagement.PendingZone(ctx)
+		cancel()
+		if err == nil && zoneID != "" {
+			// Remind at most once a week, like "Nanti" in the app.
+			week := strconv.FormatInt(time.Now().Unix()/604800, 10)
+			webpush.Notify(webpush.Message{Event: webpush.EventConfirm, Key: "confirm:zone:" + zoneID + ":" + week, URL: "/", Tag: "confirm-zone",
+				Title: "🔔 Konfirmasi menunggu", Body: "Aktifkan metrik trafik Cloudflare untuk zona " + zoneName + "? Buka DevControl untuk menjawab."})
+		}
+	}
+	util.JSON(w, http.StatusOK, map[string]int{"checked_apps": checked})
 }
 
 func enqueueDeployment(id, phase, ticket, branch, environment string) error {
@@ -409,6 +511,7 @@ func haltRunnerWithLog(job runnerJob, message, buildLog string, uncertain bool) 
 	if !uncertain { updateDeploymentStage(job.id, runnerStage(job), "Failed") } else {
 		_, _ = d1.Query(`UPDATE deployment_jobs SET status = 'Interrupted', updated_at = CURRENT_TIMESTAMP
 			WHERE id = ? AND status = 'Running'`, job.id)
+		notifyJobResult(job.id)
 	}
 	_, _ = d1.Query(`UPDATE deployment_runner SET phase = 'error', message = ?, claim_until = CURRENT_TIMESTAMP,
 		updated_at = CURRENT_TIMESTAMP WHERE id = ?`, message, job.id)

@@ -208,6 +208,38 @@ CREATE TABLE IF NOT EXISTS app_branding (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Web Push (v1.0.61). The VAPID key pair is generated once and kept here
+-- unless VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY are set in Vercel. runner_version
+-- records the installed scheduled Worker source.
+CREATE TABLE IF NOT EXISTS push_config (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  public_key TEXT NOT NULL,
+  private_key TEXT NOT NULL,
+  subject TEXT NOT NULL DEFAULT '',
+  runner_version TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- One row per device (browser push endpoint). subject is "owner" or a member
+-- id; events is a comma list of enabled notification kinds.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  endpoint TEXT PRIMARY KEY,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  events TEXT NOT NULL DEFAULT '',
+  last_error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_subject ON push_subscriptions (subject);
+
+-- Keys of notifications already sent, so retries never notify twice.
+CREATE TABLE IF NOT EXISTS push_log (
+  event_key TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Management metadata. Existing application tables and ZIP archives are never reset.
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version TEXT PRIMARY KEY,

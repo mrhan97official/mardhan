@@ -78,6 +78,9 @@ var viewerRead = map[string]bool{
 // Can is the single permission matrix for every API resource.
 func Can(role, resource, method string) bool {
   read := method == http.MethodGet || method == http.MethodHead
+  // Every signed-in role manages push notifications for its own devices;
+  // the handler limits admin-only events (confirmations) itself.
+  if resource == "push" { return role == RoleOwner || role == RoleAdmin || role == RoleOperator || role == RoleViewer }
   switch role {
   case RoleOwner:
     return true
