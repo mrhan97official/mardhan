@@ -45,6 +45,34 @@ func validRepo(repo string) bool {
 	return true
 }
 
+// Extra image slots stored beside the main (light) thumbnail of a project:
+// "owner/repo~dark" and so on. GitHub names cannot contain "~", so a slot
+// never collides with a real repository. Every slot keeps the original bytes.
+var imageSlots = []string{"dark", "logo", "design-light", "design-dark"}
+
+func splitImageRepo(repo string) (string, string) {
+	base, slot, found := strings.Cut(repo, "~")
+	if !found { return repo, "" }
+	return base, slot
+}
+
+// validImageRepo accepts a repo or one of its image slots.
+func validImageRepo(repo string) bool {
+	base, slot := splitImageRepo(repo)
+	if !validRepo(base) { return false }
+	if slot == "" { return !strings.Contains(repo, "~") }
+	for _, known := range imageSlots { if slot == known { return true } }
+	return false
+}
+
+// ImageRepos lists every image slot owned by a repo, the main one last.
+func ImageRepos(repo string) []string {
+	base, _ := splitImageRepo(repo)
+	repos := make([]string, 0, len(imageSlots)+1)
+	for _, slot := range imageSlots { repos = append(repos, base+"~"+slot) }
+	return append(repos, base)
+}
+
 func objectKey(repo string) string {
 	sum := sha256.Sum256([]byte(strings.ToLower(repo)))
 	return "thumbnails/" + hex.EncodeToString(sum[:]) + ".img"
@@ -76,14 +104,23 @@ func currentKey(repo string, row map[string]interface{}) (string, error) {
 	return key, nil
 }
 
-// HasActiveUploads prevents project deletion while a signed PUT can still
-// finish. A closed tab is released when its upload URL expires.
-func HasActiveUploads(repo string) (bool, error) {
+func activeUploads(repos ...string) (bool, error) {
+	if len(repos) == 0 { return false, nil }
+	marks := strings.TrimSuffix(strings.Repeat("?, ", len(repos)), ", ")
+	params := make([]interface{}, len(repos))
+	for i, repo := range repos { params[i] = repo }
 	rows, err := d1.Query(`SELECT u.id FROM project_thumbnail_uploads u
 		LEFT JOIN project_thumbnails t ON t.object_key = u.object_key
-		WHERE u.repo = ? AND u.created_at > datetime('now', '-1 hour')
-		AND t.repo IS NULL LIMIT 1`, repo)
+		WHERE u.repo IN (`+marks+`) AND u.created_at > datetime('now', '-1 hour')
+		AND t.repo IS NULL LIMIT 1`, params...)
 	return len(rows) > 0, err
+}
+
+// HasActiveUploads prevents project deletion while a signed PUT can still
+// finish, for the main thumbnail and every extra image slot. A closed tab is
+// released when its upload URL expires.
+func HasActiveUploads(repo string) (bool, error) {
+	return activeUploads(ImageRepos(repo)...)
 }
 
 // Large thumbnails are uploaded through R2's S3 API. Delete through the same
@@ -101,11 +138,22 @@ func deleteStoredThumbnail(key string, store *archive.Store) error {
 	return nil
 }
 
-// Delete removes both the current image and pending objects for this repo.
-// Old rows with no object_key retain their original deterministic R2 key.
+// Delete removes one image slot, or for a plain repo every slot (dark
+// thumbnail, logo, designs) and then the main thumbnail.
 func Delete(repo string, store *archive.Store) error {
-	if !validRepo(repo) { return fmt.Errorf("nama repo tidak valid") }
-	active, err := HasActiveUploads(repo)
+	if !validImageRepo(repo) { return fmt.Errorf("nama repo tidak valid") }
+	if _, slot := splitImageRepo(repo); slot != "" { return deleteOne(repo, store) }
+	for _, item := range ImageRepos(repo) {
+		if err := deleteOne(item, store); err != nil { return err }
+	}
+	return nil
+}
+
+// deleteOne removes both the current image and pending objects for one slot.
+// Old rows with no object_key retain their original deterministic R2 key.
+func deleteOne(repo string, store *archive.Store) error {
+	if !validImageRepo(repo) { return fmt.Errorf("nama repo tidak valid") }
+	active, err := activeUploads(repo)
 	if err != nil { return err }
 	if active { return fmt.Errorf("thumbnail sedang diunggah; tunggu sampai selesai sebelum menghapus") }
 	objects, err := d1.Query(`SELECT object_key FROM project_thumbnail_objects WHERE repo = ?`, repo)
@@ -163,7 +211,7 @@ func pruneExpired(store *archive.Store) error {
 		id, _ := row["id"].(string)
 		repo, _ := row["repo"].(string)
 		key, _ := row["object_key"].(string)
-		if !validID(id) || !validRepo(repo) || key != uploadedKey(repo, id) { return fmt.Errorf("data unggahan lama tidak valid") }
+		if !validID(id) || !validImageRepo(repo) || key != uploadedKey(repo, id) { return fmt.Errorf("data unggahan lama tidak valid") }
 		if err := cleanupPending(id, repo, key, store); err != nil { return err }
 	}
 	return nil
@@ -189,7 +237,7 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 			util.JSON(w, http.StatusOK, rows)
 			return
 		}
-		if !validRepo(repo) { util.Error(w, http.StatusBadRequest, fmt.Errorf("nama repo tidak valid")); return }
+		if !validImageRepo(repo) { util.Error(w, http.StatusBadRequest, fmt.Errorf("nama repo tidak valid")); return }
 		rows, err := d1.Query(`SELECT object_key FROM project_thumbnails WHERE repo = ? LIMIT 1`, repo)
 		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
 		if len(rows) == 0 { util.Error(w, http.StatusNotFound, fmt.Errorf("thumbnail tidak ditemukan")); return }
@@ -227,7 +275,7 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusBadRequest, fmt.Errorf("permintaan thumbnail tidak valid")); return
 		}
 		if input.Action == "begin" {
-			if !validRepo(input.Repo) || !allowedType(input.ContentType) ||
+			if !validImageRepo(input.Repo) || !allowedType(input.ContentType) ||
 				input.SizeBytes <= 0 || input.SizeBytes > maxSingleUpload {
 				util.Error(w, http.StatusBadRequest, fmt.Errorf("gunakan JPG/PNG/WebP asli; batas unggah tunggal R2 adalah 5 GiB")); return
 			}
@@ -270,7 +318,7 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 			key, _ := row["object_key"].(string)
 			kind, _ := row["content_type"].(string)
 			size, _ := row["size_bytes"].(float64)
-			if !validRepo(repo) || key != uploadedKey(repo, input.UploadID) || !allowedType(kind) || size <= 0 || size > float64(maxSingleUpload) {
+			if !validImageRepo(repo) || key != uploadedKey(repo, input.UploadID) || !allowedType(kind) || size <= 0 || size > float64(maxSingleUpload) {
 				util.Error(w, http.StatusBadGateway, fmt.Errorf("metadata unggahan tidak valid")); return
 			}
 			storage, err := newSignedStorage()
@@ -310,14 +358,16 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 			if err != nil { util.Error(w, http.StatusBadRequest, err); return }
 			repo, _ := row["repo"].(string)
 			key, _ := row["object_key"].(string)
-			if !validRepo(repo) || key != uploadedKey(repo, id) { util.Error(w, http.StatusBadGateway, fmt.Errorf("kunci unggahan tidak valid")); return }
+			if !validImageRepo(repo) || key != uploadedKey(repo, id) { util.Error(w, http.StatusBadGateway, fmt.Errorf("kunci unggahan tidak valid")); return }
 			if err := cleanupPending(id, repo, key, store); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 			util.JSON(w, http.StatusOK, map[string]bool{"cancelled": true})
 			return
 		}
+		// The card removes one image at a time; a plain repo means only its
+		// main (light) thumbnail. Project deletion calls Delete for all slots.
 		repo := r.URL.Query().Get("repo")
-		if !validRepo(repo) { util.Error(w, http.StatusBadRequest, fmt.Errorf("nama repo tidak valid")); return }
-		if err := Delete(repo, store); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		if !validImageRepo(repo) { util.Error(w, http.StatusBadRequest, fmt.Errorf("nama repo tidak valid")); return }
+		if err := deleteOne(repo, store); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 		util.JSON(w, http.StatusOK, map[string]bool{"deleted": true})
 	default:
 		util.Error(w, http.StatusMethodNotAllowed, fmt.Errorf("gunakan GET, POST, atau DELETE"))

@@ -217,9 +217,12 @@ func Handle(w http.ResponseWriter, r *http.Request, stableProjectName func(strin
     selfRows, err := d1.Query(`SELECT DISTINCT target FROM zip_archives WHERE scope = 'self'
         AND lower(substr(target, 1, instr(target, '@') - 1)) = lower(?)`, input.Repo)
     if err != nil { util.Error(w, http.StatusBadGateway, err); return }
-    thumbnailRows, err := d1.Query(`SELECT repo FROM project_thumbnails WHERE repo = ?
-        UNION SELECT repo FROM project_thumbnail_uploads WHERE repo = ?
-        UNION SELECT repo FROM project_thumbnail_objects WHERE repo = ? LIMIT 1`, input.Repo, input.Repo, input.Repo)
+    // Include extra image slots (owner/repo~dark, ~logo, ~design-light, ~design-dark).
+    slotPrefix := strings.ToLower(input.Repo) + "~"
+    thumbnailRows, err := d1.Query(`SELECT repo FROM project_thumbnails WHERE repo = ? OR lower(substr(repo, 1, length(?))) = ?
+        UNION SELECT repo FROM project_thumbnail_uploads WHERE repo = ? OR lower(substr(repo, 1, length(?))) = ?
+        UNION SELECT repo FROM project_thumbnail_objects WHERE repo = ? OR lower(substr(repo, 1, length(?))) = ? LIMIT 1`,
+        input.Repo, slotPrefix, slotPrefix, input.Repo, slotPrefix, slotPrefix, input.Repo, slotPrefix, slotPrefix)
     if err != nil { util.Error(w, http.StatusBadGateway, err); return }
     projects, err := vercelProjects(vercelToken, input.Repo, stableProjectName(owner, repoName))
     if err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("Vercel: %w", err)); return }

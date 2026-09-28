@@ -2,8 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertCircle, Archive, ExternalLink, FileArchive, GitBranch, History, ImagePlus, Lock, MoreVertical, RotateCcw, Star, Trash2, X } from "lucide-react";
+import { AlertCircle, Archive, ExternalLink, FileArchive, GitBranch, History, ImageIcon, Lock, MoreVertical, RotateCcw, Star, Trash2, X } from "lucide-react";
 import { UpdateHistoryDialog, ZipArchiveDialog } from "@/components/ProjectDialogs";
+import ProjectImagesDialog from "@/components/ProjectImagesDialog";
+import { useTheme } from "@/components/ThemeProvider";
+import { cardThumbnail, imageURL, type ImageSlot, type ProjectImages } from "@/lib/projectImages";
 import { notifyDataChanged } from "@/lib/liveUpdates";
 import { isAdminRole, useSession } from "@/lib/session";
 import type { GithubRepo } from "@/lib/types";
@@ -47,24 +50,28 @@ function timeAgo(iso?: string): string | null {
   return `${value} ${label} lalu`;
 }
 
-export default function ProjectCard({ repo, displayName, appUrl, linked = false, source = "github", thumbnailVersion, uploading = false, uploadProgress = null, imageError, onUpload, onRemoveThumbnail, onDelete }: {
+export default function ProjectCard({ repo, displayName, appUrl, linked = false, source = "github", images = {}, uploading = false, uploadingSlot = null, uploadProgress = null, imageError, onUploadImage, onRemoveImage, onDelete }: {
   repo: GithubRepo;
   displayName?: string;
   appUrl?: string | null;
   linked?: boolean;
   source?: "github" | "stored";
-  thumbnailVersion?: string;
+  images?: ProjectImages;
   uploading?: boolean;
+  uploadingSlot?: ImageSlot | null;
   uploadProgress?: number | null;
   imageError?: string;
-  onUpload: (file: File) => void;
-  onRemoveThumbnail: () => void;
+  onUploadImage: (slot: ImageSlot, file: File) => void;
+  onRemoveImage: (slot: ImageSlot) => void;
   onDelete: () => void;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
-  const [dialog, setDialog] = useState<"zip" | "history" | null>(null);
+  const [dialog, setDialog] = useState<"zip" | "history" | "images" | null>(null);
+  const { theme } = useTheme();
+  // Light mode shows the light thumbnail, dark mode the dark one; with only
+  // one of them set, that one is used in both modes.
+  const thumbnail = cardThumbnail(images, theme);
   const [repairBroken, setRepairBroken] = useState(false);
   const [repairDialog, setRepairDialog] = useState(false);
   const [repairMode, setRepairMode] = useState<"repair" | "reimport">("repair");
@@ -219,10 +226,10 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
               <rect x="210" y="169" width="97" height="53" rx="8" fill="#a78bfa" fillOpacity=".16" />
             </svg>
           </div>
-          {thumbnailVersion && failedVersion !== thumbnailVersion && (
-            // This authenticated same-origin image endpoint serves JPG/PNG from private R2.
+          {thumbnail && failedVersion !== thumbnail.version && (
+            // This authenticated same-origin endpoint serves the untouched original from private R2.
             // eslint-disable-next-line @next/next/no-img-element
-            <img key={thumbnailVersion} src={`/api/project-thumbnails?repo=${encodeURIComponent(repo.full_name)}&v=${encodeURIComponent(thumbnailVersion)}`} alt={`Thumbnail aplikasi ${repo.full_name}`} loading="lazy" className="absolute inset-0 h-full w-full object-cover" onLoad={() => setFailedVersion(null)} onError={() => setFailedVersion(thumbnailVersion)} />
+            <img key={thumbnail.version} src={imageURL(repo.full_name, thumbnail.slot, thumbnail.version)} alt={`Thumbnail aplikasi ${repo.full_name}`} loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-cover" onLoad={() => setFailedVersion(null)} onError={() => setFailedVersion(thumbnail.version)} />
           )}
         </div>
         <div ref={menuRef} className="absolute right-2 top-2 z-10" onBlur={(event) => {
@@ -234,13 +241,10 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
           {actionsOpen && (
             <div role="menu" aria-label={`Aksi proyek ${repo.full_name}`} className="absolute right-0 top-full z-30 mt-2 w-52 rounded-xl border border-base-border bg-base-900 p-1.5 text-sm shadow-2xl">
               <span aria-hidden="true" className="pointer-events-none absolute -top-[5px] right-2.5 h-2.5 w-2.5 rotate-45 border-l border-t border-base-border bg-base-900" />
-              {admin && <>
-              <button type="button" role="menuitem" disabled={uploading} onClick={() => { setActionsOpen(false); inputRef.current?.click(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800 disabled:opacity-50">
-                <ImagePlus size={14} /> {thumbnailVersion ? "Ganti thumbnail" : "Tambah thumbnail"}
+              <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("images"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800">
+                <ImageIcon size={14} /> Gambar aplikasi
               </button>
-              {thumbnailVersion && <button type="button" role="menuitem" disabled={uploading} onClick={() => { setActionsOpen(false); onRemoveThumbnail(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-300 hover:bg-base-800 disabled:opacity-50"><X size={14} /> Hapus gambar</button>}
               <div className="my-1 border-t border-base-border" />
-              </>}
               {admin && <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("zip"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><FileArchive size={14} /> Arsip ZIP</button>}
               <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("history"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><History size={14} /> Riwayat update</button>
               {admin && repairBroken && <>
@@ -257,6 +261,9 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
       </div>
       {dialog === "zip" && <ZipArchiveDialog repo={repo.full_name} onClose={() => setDialog(null)} />}
       {dialog === "history" && <UpdateHistoryDialog repo={repo.full_name} onClose={() => setDialog(null)} />}
+      {dialog === "images" && <ProjectImagesDialog repo={repo.full_name} images={images} admin={admin}
+        uploadingSlot={uploading ? uploadingSlot : null} uploadProgress={uploadProgress} error={imageError}
+        onUpload={onUploadImage} onRemove={onRemoveImage} onClose={() => setDialog(null)} />}
       {repairDialog && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setRepairDialog(false); }}>
           <section role="dialog" aria-modal="true" aria-label={`Pemulihan 404 ${repo.full_name}`} className="w-full max-w-md rounded-2xl border border-base-border bg-base-900 p-5 shadow-2xl">
@@ -283,11 +290,6 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
           </section>
         </div>, document.body,
       )}
-      <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" disabled={uploading} aria-label={`Unggah thumbnail ${repo.full_name}`} onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          if (file) onUpload(file);
-          event.currentTarget.value = "";
-        }} />
       {uploading && <p role="status" className="text-xs text-slate-400">{uploadProgress === null ? "Menyiapkan gambar…" : uploadProgress < 100 ? `Mengunggah ${uploadProgress}%` : "Memverifikasi gambar…"}</p>}
       {imageError && <p role="alert" className="text-xs text-red-300">{imageError}</p>}
       <div className="flex items-start justify-between gap-2">

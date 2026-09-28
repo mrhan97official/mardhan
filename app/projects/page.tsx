@@ -12,6 +12,7 @@ import { fallbackGithubRepos, fallbackServices } from "@/lib/fallbackData";
 import { mergeProjects } from "@/lib/projectRepos";
 import { cacheSet } from "@/lib/db";
 import { notifyDataChanged } from "@/lib/liveUpdates";
+import { groupProjectImages, imageContentType, slotRepo, type ImageSlot } from "@/lib/projectImages";
 import type { GithubRepo, Service } from "@/lib/types";
 
 interface Thumbnail { repo: string; version: string }
@@ -45,9 +46,10 @@ export default function ProjectsPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleted, setDeleted] = useState<string[]>([]);
   const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadingSlot, setUploadingSlot] = useState<ImageSlot | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [imageError, setImageError] = useState<{ repo: string; message: string } | null>(null);
-  const thumbnailByRepo = new Map(thumbnails.data.map((item) => [item.repo.toLowerCase(), item.version]));
+  const imagesByRepo = groupProjectImages(thumbnails.data);
   const apps = mergeProjects(repos.data, services.data).filter(({ repo }) => !deleted.includes(repo.full_name.toLowerCase()));
   const loading = repos.loading || services.loading;
 
@@ -58,15 +60,19 @@ export default function ProjectsPage() {
     setDeleted((current) => current.filter((key) => repos.data.some((repo) => repo.full_name.toLowerCase() === key) || services.data.some((service) => service.repo?.toLowerCase() === key)));
   }, [repos.data, services.data, repos.error, services.error]);
 
-  async function changeThumbnail(repo: string, file?: File) {
+  // Uploads or removes one image slot (thumbnail terang/gelap, logo, desain
+  // terang/gelap). The original file goes straight to R2 without compression.
+  async function changeImage(appRepo: string, slot: ImageSlot, file?: File) {
     if (uploading) return;
     setImageError(null);
-    const contentType = file?.type || (file && /\.jpe?g$/i.test(file.name) ? "image/jpeg" : file && /\.png$/i.test(file.name) ? "image/png" : file && /\.webp$/i.test(file.name) ? "image/webp" : "");
-    if (file && (!file.size || file.size > 5 * 1024 ** 3 || !["image/jpeg", "image/png", "image/webp"].includes(contentType))) {
-      setImageError({ repo, message: "Pilih JPG/PNG/WebP asli. R2 membatasi satu unggahan hingga 5 GiB." });
+    const repo = slotRepo(appRepo, slot);
+    const contentType = file ? imageContentType(file) : "";
+    if (file && (!file.size || file.size > 5 * 1024 ** 3 || !contentType)) {
+      setImageError({ repo: appRepo, message: "Pilih JPG/PNG/WebP asli. R2 membatasi satu unggahan hingga 5 GiB." });
       return;
     }
-    setUploading(repo);
+    setUploading(appRepo);
+    setUploadingSlot(slot);
     setUploadProgress(null);
     let uploadID: string | null = null;
     try {
@@ -104,9 +110,10 @@ export default function ProjectsPage() {
           method: "DELETE", credentials: "same-origin", cache: "no-store",
         }).catch(() => {});
       }
-      setImageError({ repo, message: cause instanceof Error ? cause.message : "Gagal mengubah thumbnail." });
+      setImageError({ repo: appRepo, message: cause instanceof Error ? cause.message : "Gagal mengubah gambar." });
     } finally {
       setUploading(null);
+      setUploadingSlot(null);
       setUploadProgress(null);
     }
   }
@@ -206,11 +213,12 @@ export default function ProjectsPage() {
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
           {apps.map(({ service, repo, source }) => (
             <ProjectCard key={repo.full_name.toLowerCase()} repo={repo} displayName={service?.display_name} appUrl={service?.app_url} linked={!!service} source={source}
-              thumbnailVersion={thumbnailByRepo.get(repo.full_name.toLowerCase())} uploading={uploading === repo.full_name}
+              images={imagesByRepo.get(repo.full_name.toLowerCase())} uploading={uploading === repo.full_name}
+              uploadingSlot={uploading === repo.full_name ? uploadingSlot : null}
               uploadProgress={uploading === repo.full_name ? uploadProgress : null}
               imageError={imageError?.repo === repo.full_name ? imageError.message : undefined}
-              onUpload={(file) => { void changeThumbnail(repo.full_name, file); }}
-              onRemoveThumbnail={() => { void changeThumbnail(repo.full_name); }} onDelete={() => openDelete(repo.full_name)} />
+              onUploadImage={(slot, file) => { void changeImage(repo.full_name, slot, file); }}
+              onRemoveImage={(slot) => { void changeImage(repo.full_name, slot); }} onDelete={() => openDelete(repo.full_name)} />
           ))}
         </div>
       )}
