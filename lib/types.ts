@@ -45,6 +45,7 @@ export interface DeploymentJob {
 export interface Diagnosis {
   stage: string;
   category: string;
+  origin?: "zip" | "devcontrol" | "platform" | "unknown";
   summary: string;
   location?: { file: string; line?: number; column?: number };
   cause: string;

@@ -27,6 +27,13 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
+const ORIGIN_BADGE: Record<string, { label: string; tone: string }> = {
+  zip: { label: "Asal: ZIP Anda", tone: "border-amber-400/40 text-amber-300" },
+  devcontrol: { label: "Asal: DevControl", tone: "border-accent-blue/40 text-accent-blue" },
+  platform: { label: "Asal: layanan luar (Vercel/GitHub/Cloudflare)", tone: "border-accent-purple/40 text-accent-purple" },
+  unknown: { label: "Asal belum pasti", tone: "border-slate-500/40 text-slate-300" },
+};
+
 export default function ErrorDiagnosis({
   jobId,
   diagnosis: provided,
@@ -83,6 +90,8 @@ export default function ErrorDiagnosis({
     return failed ? <p className="text-xs text-slate-500">Diagnosis otomatis belum tersedia: {failed}</p> : null;
   }
 
+  const origin = diagnosis.origin ? ORIGIN_BADGE[diagnosis.origin] : undefined;
+  const notZip = diagnosis.origin === "devcontrol" || diagnosis.origin === "platform";
   const where = diagnosis.location
     ? `${diagnosis.location.file}${diagnosis.location.line ? ` baris ${diagnosis.location.line}` : ""}${diagnosis.location.column ? `, kolom ${diagnosis.location.column}` : ""}`
     : "";
@@ -99,6 +108,7 @@ export default function ErrorDiagnosis({
         <Stethoscope size={16} className="text-red-300" />
         <h3 className="text-sm font-bold text-white">Diagnosis error</h3>
         <span className="rounded-full border border-red-400/40 px-2 py-0.5 text-[11px] font-medium text-red-300">{diagnosis.category}</span>
+        {origin && <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${origin.tone}`}>{origin.label}</span>}
       </div>
 
       <dl className="space-y-1.5 text-xs">
@@ -141,13 +151,16 @@ export default function ErrorDiagnosis({
           {copied === "ok" ? "Prompt tersalin" : "Salin prompt untuk AI"}
         </button>
         <span className="text-[11px] text-slate-500">
-          {copied === "fail" ? "Gagal menyalin otomatis; blok teks prompt di bawah lalu salin manual." : "Tempel ke AI, terapkan perbaikannya, ZIP ulang, lalu deploy lagi."}
+          {copied === "fail" ? "Gagal menyalin otomatis; blok teks prompt di bawah lalu salin manual." : notZip ? "Tempel ke AI untuk memperbaiki DevControl atau pengaturannya; isi ZIP tidak perlu diubah." : "Tempel ke AI, terapkan perbaikannya, ZIP ulang, lalu deploy lagi."}
         </span>
       </div>
       {copied === "fail" && (
         <textarea readOnly value={diagnosis.prompt} className="h-40 w-full rounded-lg border border-base-border bg-base-950 p-2 font-mono text-[11px] text-slate-300" />
       )}
-      <p className="text-[11px] text-slate-500">ZIP yang gagal tidak disimpan. ZIP terakhir yang berhasil (jika ada) tetap aktif.</p>
+      <p className="text-[11px] text-slate-500">
+        {notZip ? "ZIP Anda kemungkinan sehat: setelah penyebab di atas diperbaiki, jalankan ulang dengan ZIP yang sama. " : ""}
+        ZIP yang gagal tidak disimpan. ZIP terakhir yang berhasil (jika ada) tetap aktif.
+      </p>
     </section>
   );
 }
