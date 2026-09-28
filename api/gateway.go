@@ -1786,10 +1786,18 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 	if step == "vercel-test" && ticket.Probe {
 		// READY only means the build finished. Open the test page itself:
 		// Vercel's own 404 there means the app would be unreachable online.
-		if protectErr := vercelapp.New(token).DisableProtection(ticket.Project); protectErr != nil {
-			logLiveLog("WARN", "Proteksi project uji tidak dapat dilepas; pemeriksaan halaman dapat gagal: "+protectErr.Error())
+		testClient := vercelapp.New(token)
+		if protectErr := testClient.DisableProtection(ticket.Project); protectErr != nil {
+			logLiveLog("WARN", "Proteksi project uji tidak dapat dilepas; pemeriksaan halaman memakai bypass otomatis: "+protectErr.Error())
 		}
-		if pageErr := vercelapp.CheckHomePage(ticket.URL); pageErr != nil {
+		// Pelepasan proteksi bisa terlambat sampai ke edge Vercel (HTTP 302 ke login);
+		// secret bypass otomatis membuat pemeriksaan tetap lolos di project uji sementara ini.
+		bypassSecret, bypassErr := testClient.CreateProtectionBypass(ticket.Project)
+		if bypassErr != nil {
+			bypassSecret = ""
+			logLiveLog("WARN", "Bypass proteksi project uji tidak dapat dibuat: "+bypassErr.Error())
+		}
+		if pageErr := vercelapp.CheckTestHomePage(ticket.URL, bypassSecret); pageErr != nil {
 			_ = store.Fail(ticket.ArchiveID)
 			msg := unavailableHomePageMessage("Uji Build Vercel", ticket.URL, pageErr) +
 				" Tidak ada yang didorong ke GitHub dan production tidak berubah. Project uji " + ticket.Project + " tetap tersedia untuk memeriksa Output Vercel."
