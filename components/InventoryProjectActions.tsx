@@ -123,7 +123,7 @@ export function ConnectGitDialog({ project, repos, onClose, onChanged }: {
   );
 }
 
-interface DeletePreview { managed_repo?: string; domains: string[]; domains_error?: string }
+interface DeletePreview { managed_repo?: string; linked_repo?: string; domains: string[]; domains_error?: string }
 
 export function DeleteProjectDialog({ project, onClose, onDeleted }: {
   project: InventoryProject; onClose: () => void; onDeleted: (name: string) => void;
@@ -165,6 +165,8 @@ export function DeleteProjectDialog({ project, onClose, onDeleted }: {
         {preview && blocked && <p className="rounded-lg bg-accent-amber/10 p-2 text-xs text-amber-300">
           Project ini dipakai aplikasi DevControl <b>{preview.managed_repo}</b>. Hapus aplikasinya lewat halaman Projects agar data D1, arsip ZIP, dan thumbnail ikut dibersihkan, atau pilih Connect Git.</p>}
         {preview && !blocked && <>
+          {preview.linked_repo && <p className="rounded-lg border border-base-border bg-base-850 p-2 text-xs text-slate-400">
+            Project ini masih tersambung ke repo <b className="text-slate-200">{preview.linked_repo}</b> yang tidak terlihat oleh GITHUB_TOKEN. Hanya project Vercel yang dihapus; repo GitHub tersebut tidak disentuh.</p>}
           {preview.domains.length > 0 && <div className="rounded-lg border border-base-border bg-base-850 p-2 text-xs">
             <p className="text-slate-400">Domain custom yang ikut dilepas:</p>
             <p className="mt-1 break-words text-slate-200">{preview.domains.join(", ")}</p>

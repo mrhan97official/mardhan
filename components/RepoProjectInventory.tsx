@@ -202,11 +202,11 @@ export default function RepoProjectInventory() {
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[project.status]}`}>{STATUS_LABEL[project.status]}</span>
-                      {unconnected && !project.self && <>
-                        <button type="button" onClick={() => { setNotice(""); setConnecting(project); }} disabled={!data.github.ok}
+                      {(unconnected || project.status === "outside") && !project.self && <>
+                        {unconnected && <button type="button" onClick={() => { setNotice(""); setConnecting(project); }} disabled={!data.github.ok}
                           title={data.github.ok ? "Hubungkan ke repo GitHub dan impor kodenya" : "Butuh GITHUB_TOKEN"}
                           className="inline-flex items-center gap-1 rounded-md bg-accent-blue px-2 py-1 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50">
-                          <Link2 size={12} /> Connect Git</button>
+                          <Link2 size={12} /> Connect Git</button>}
                         <button type="button" onClick={() => { setNotice(""); setDeleting(project); }} disabled={Boolean(project.managed_repo)}
                           title={project.managed_repo ? `Dipakai aplikasi DevControl ${project.managed_repo}; hapus lewat halaman Projects` : "Hapus project ini dari Vercel"}
                           aria-label={`Hapus project ${project.name}`}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Circle, CheckCircle2, Loader2, Lock, LockOpen, RefreshCw, UploadCloud, XCircle } from "lucide-react";
+import { Loader2, Lock, LockOpen, RefreshCw, UploadCloud } from "lucide-react";
 import Modal from "./Modal";
 import ErrorDiagnosis from "./ErrorDiagnosis";
 import { useOfflineData } from "@/lib/useOfflineData";
@@ -25,7 +25,6 @@ interface SelfUpdateResponse {
 
 const STEP_ORDER = ["extract", "vercel-test", "github-push", "vercel-production"] as const;
 type StepKey = (typeof STEP_ORDER)[number];
-type StepState = "pending" | "active" | "done" | "failed";
 
 const STEPS: { key: StepKey; label: string }[] = [
   { key: "extract", label: "Ekstrak file zip" },
@@ -40,12 +39,18 @@ export default function SelfUpdateModal({
   onClose,
   onSuccess,
   onProgress,
+  onStarted,
+  onFinished,
 }: {
   hidden: boolean;
   onHide: () => void;
   onClose: () => void;
   onSuccess: () => void;
   onProgress: (progress: { running: boolean; failed: boolean; message: string; target?: string }) => void;
+  /** Deploy accepted by the form: the provider hides it (progress lives in the Pipeline card). */
+  onStarted: () => void;
+  /** Run over. showForm=true when it stopped before a Pipeline job existed, so the error must be shown here. */
+  onFinished: (showForm: boolean) => void;
 }) {
   const repos = useOfflineData<GithubRepo[]>("github-repos", "/api/github-repos", fallbackGithubRepos);
   const [repo, setRepo] = useState("");
@@ -159,17 +164,6 @@ export default function SelfUpdateModal({
     if (found?.default_branch) setBranch(found.default_branch);
   }
 
-  function stepState(step: StepKey): StepState {
-    if (submitting && step === activeStep) return "active";
-    if (!result) return "pending";
-    if (result.step === "done") return "done";
-    const currentIndex = STEP_ORDER.indexOf(result.step);
-    const thisIndex = STEP_ORDER.indexOf(step);
-    if (thisIndex < currentIndex) return "done";
-    if (thisIndex === currentIndex) return result.ok ? result.status === "pending" ? "active" : "done" : "failed";
-    return "pending";
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -192,6 +186,8 @@ export default function SelfUpdateModal({
     }
 
     setSubmitting(true);
+    onStarted();
+    let reachedPipeline = false;
     setResult(null);
     setArchiveSaved(false);
     setServerError(null);
@@ -215,6 +211,7 @@ export default function SelfUpdateModal({
       if (!parsed.ok) return;
       if (!parsed.archive_id) throw new Error("ID ZIP yang tersimpan tidak tersedia.");
       setActiveStep("vercel-test");
+      reachedPipeline = true;
       const final = await pollDeploymentJob(parsed.archive_id, (job, elapsed) => {
         const active = job.stages.find((stage) => stage.status === "Running") ?? job.stages.find((stage) => stage.status === "Pending");
         const step = STEP_ORDER[(active?.position ?? 2) - 1];
@@ -239,6 +236,7 @@ export default function SelfUpdateModal({
     } finally {
       setActiveStep(null);
       setSubmitting(false);
+      onFinished(!reachedPipeline);
     }
   }
 
@@ -395,33 +393,6 @@ export default function SelfUpdateModal({
               onChange={(e) => setZipFile(e.target.files?.[0] ?? null)}
             />
           </label>
-        </div>
-
-        <div className="space-y-2 rounded-xl border border-base-border bg-base-850/60 p-3">
-          {STEPS.map((s) => {
-            const state = stepState(s.key);
-            return (
-              <div key={s.key} className="flex items-center gap-2 text-sm">
-                {state === "done" && <CheckCircle2 size={16} className="text-emerald-400" />}
-                {state === "failed" && <XCircle size={16} className="text-red-400" />}
-                {state === "active" && <Loader2 size={16} className="animate-spin text-accent-blue" />}
-                {state === "pending" && <Circle size={16} className="text-slate-600" />}
-                <span
-                  className={
-                    state === "done"
-                      ? "text-emerald-400"
-                      : state === "failed"
-                      ? "text-red-400"
-                      : state === "active"
-                      ? "text-slate-200"
-                      : "text-slate-500"
-                  }
-                >
-                  {s.label}
-                </span>
-              </div>
-            );
-          })}
         </div>
 
         {result && (

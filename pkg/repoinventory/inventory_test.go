@@ -137,3 +137,19 @@ func TestProductionURLAndTemporary(t *testing.T) {
 		t.Fatalf("got %+v", projects[0])
 	}
 }
+
+func TestLookupManagedByNameOrLinkedRepo(t *testing.T) {
+	managed := map[string]string{"devcontrol-a-shop": "a/shop", repoKey("A/Shop"): "a/shop"}
+	if got := lookupManaged(managed, "DevControl-A-Shop", ""); got != "a/shop" {
+		t.Fatalf("by name = %q", got)
+	}
+	if got := lookupManaged(managed, "manual-import", "a/SHOP"); got != "a/shop" {
+		t.Fatalf("by linked repo = %q", got)
+	}
+	if got := lookupManaged(managed, "other", "b/other"); got != "" {
+		t.Fatalf("unrelated = %q", got)
+	}
+	if got := lookupManaged(nil, "x", "a/shop"); got != "" {
+		t.Fatalf("nil map = %q", got)
+	}
+}

@@ -21,7 +21,11 @@ import (
 //	link-project:   connect an unconnected project to a GitHub repo, then
 //	                (unless deploy=false) build its default branch from GitHub.
 //	delete-preview: what a delete would remove, for the confirmation dialog.
-//	delete-project: delete the unconnected project; confirm must equal its name.
+//	delete-project: delete the project; confirm must equal its name.
+//
+// Deleting is allowed for projects without a Git repository and for projects
+// linked to a GitHub repo that GITHUB_TOKEN cannot list ("di luar token").
+// The linked repo itself is never touched.
 type actionInput struct {
 	Action    string `json:"action"`
 	ProjectID string `json:"project_id"`
@@ -56,10 +60,26 @@ func handleAction(w http.ResponseWriter, r *http.Request, appName func(owner, re
 		util.Error(w, http.StatusNotFound, fmt.Errorf("project Vercel tidak ditemukan; muat ulang daftar"))
 		return
 	}
-	// Both actions exist only for projects without a Git repository.
+	linkedRepo := ""
 	if hasGitLink(project) {
-		util.Error(w, http.StatusConflict, fmt.Errorf("project %s sudah terhubung ke Git; muat ulang daftar", project.Name))
-		return
+		if input.Action != "delete-preview" && input.Action != "delete-project" {
+			util.Error(w, http.StatusConflict, fmt.Errorf("project %s sudah terhubung ke Git; muat ulang daftar", project.Name))
+			return
+		}
+		repo, outside, err := outsideGithubRepo(project)
+		if err != nil {
+			util.Error(w, http.StatusBadGateway, err)
+			return
+		}
+		if !outside {
+			message := fmt.Sprintf("project %s terhubung ke repo yang ada di akun GitHub Anda; hapus lewat kartu repo di halaman Projects", project.Name)
+			if !strings.EqualFold(project.LinkType, "github") {
+				message = fmt.Sprintf("project %s terhubung ke %s; hapus langsung di Vercel", project.Name, project.LinkType)
+			}
+			util.Error(w, http.StatusConflict, errors.New(message))
+			return
+		}
+		linkedRepo = repo
 	}
 	if isSelf(project) {
 		util.Error(w, http.StatusForbidden, fmt.Errorf("project %s adalah project aplikasi DevControl ini sendiri", project.Name))
@@ -70,9 +90,9 @@ func handleAction(w http.ResponseWriter, r *http.Request, appName func(owner, re
 	case "link-project":
 		linkProject(w, client, project, input)
 	case "delete-preview":
-		previewDelete(w, client, project, appName)
+		previewDelete(w, client, project, linkedRepo, appName)
 	case "delete-project":
-		deleteProject(w, client, project, input, appName)
+		deleteProject(w, client, project, linkedRepo, input, appName)
 	default:
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("aksi tidak dikenal"))
 	}
@@ -83,6 +103,33 @@ func hasGitLink(project vercelapp.Project) bool {
 		return false
 	}
 	return !(strings.EqualFold(project.LinkType, "github") && strings.TrimSpace(project.LinkRepo) == "")
+}
+
+// outsideGithubRepo reports the GitHub repo a project is linked to and
+// whether GITHUB_TOKEN cannot list it — the same test the inventory uses for
+// "Repo di luar token". GitLab/Bitbucket links are never "outside".
+func outsideGithubRepo(project vercelapp.Project) (string, bool, error) {
+	if !strings.EqualFold(project.LinkType, "github") {
+		return "", false, nil
+	}
+	full := githubLinkRepo(project.LinkOrg, project.LinkRepo)
+	token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+	if token == "" {
+		return full, false, fmt.Errorf("GITHUB_TOKEN diperlukan untuk memastikan repo %s memang di luar token", full)
+	}
+	repos, truncated, err := fetchGithub(token)
+	if err != nil {
+		return full, false, err
+	}
+	for _, repo := range repos {
+		if strings.EqualFold(repo.FullName, full) {
+			return full, false, nil
+		}
+	}
+	if truncated {
+		return full, false, fmt.Errorf("daftar repo GitHub terpotong; tidak dapat memastikan repo %s di luar token", full)
+	}
+	return full, true, nil
 }
 
 func isSelf(project vercelapp.Project) bool {
@@ -143,14 +190,14 @@ func linkProject(w http.ResponseWriter, client *vercelapp.Client, project vercel
 	util.JSON(w, http.StatusOK, result)
 }
 
-func previewDelete(w http.ResponseWriter, client *vercelapp.Client, project vercelapp.Project, appName func(owner, repo string) string) {
-	managed, err := managedRepoFor(project.Name, appName)
+func previewDelete(w http.ResponseWriter, client *vercelapp.Client, project vercelapp.Project, linkedRepo string, appName func(owner, repo string) string) {
+	managed, err := managedRepoFor(project.Name, linkedRepo, appName)
 	if err != nil {
 		util.Error(w, http.StatusBadGateway, err)
 		return
 	}
 	domains, domainErr := client.CustomDomains(project.ID)
-	out := map[string]interface{}{"project": project.Name, "managed_repo": managed, "domains": domains}
+	out := map[string]interface{}{"project": project.Name, "managed_repo": managed, "domains": domains, "linked_repo": linkedRepo}
 	if domains == nil {
 		out["domains"] = []string{}
 	}
@@ -160,12 +207,12 @@ func previewDelete(w http.ResponseWriter, client *vercelapp.Client, project verc
 	util.JSON(w, http.StatusOK, out)
 }
 
-func deleteProject(w http.ResponseWriter, client *vercelapp.Client, project vercelapp.Project, input actionInput, appName func(owner, repo string) string) {
+func deleteProject(w http.ResponseWriter, client *vercelapp.Client, project vercelapp.Project, linkedRepo string, input actionInput, appName func(owner, repo string) string) {
 	if strings.TrimSpace(input.Confirm) != project.Name {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("ketik nama project %s untuk mengonfirmasi penghapusan", project.Name))
 		return
 	}
-	managed, err := managedRepoFor(project.Name, appName)
+	managed, err := managedRepoFor(project.Name, linkedRepo, appName)
 	if err != nil {
 		util.Error(w, http.StatusBadGateway, err)
 		return
@@ -180,7 +227,11 @@ func deleteProject(w http.ResponseWriter, client *vercelapp.Client, project verc
 		util.Error(w, http.StatusBadGateway, fmt.Errorf("Vercel menolak penghapusan: %w", err))
 		return
 	}
-	audit("delete_vercel_project", project.Name+" ("+project.ID+")")
+	target := project.Name + " (" + project.ID + ")"
+	if linkedRepo != "" {
+		target += " linked " + linkedRepo
+	}
+	audit("delete_vercel_project", target)
 	activity("Project Vercel dihapus", project.Name+" beserta deployment, domain, dan environment variable-nya", "database")
 	util.JSON(w, http.StatusOK, map[string]interface{}{"ok": true, "project": project.Name})
 }
@@ -206,6 +257,8 @@ func managedProjects(appName func(owner, repo string) string) (map[string]string
 		if appName != nil {
 			out[strings.ToLower(appName(owner, name))] = repo
 		}
+		// Vercel names cannot contain ':', so repo keys never clash with names.
+		out[repoKey(repo)] = repo
 		if raw, _ := row["app_url"].(string); raw != "" {
 			if parsed, err := url.Parse(strings.TrimSpace(raw)); err == nil {
 				host := strings.ToLower(parsed.Hostname())
@@ -218,12 +271,26 @@ func managedProjects(appName func(owner, repo string) string) (map[string]string
 	return out, nil
 }
 
-func managedRepoFor(projectName string, appName func(owner, repo string) string) (string, error) {
+func repoKey(repo string) string { return "repo:" + strings.ToLower(strings.TrimSpace(repo)) }
+
+// managedRepoFor names the DevControl app that uses this project, by the
+// project's name or by the repo it is linked to.
+func managedRepoFor(projectName, linkedRepo string, appName func(owner, repo string) string) (string, error) {
 	managed, err := managedProjects(appName)
 	if err != nil {
 		return "", err
 	}
-	return managed[strings.ToLower(projectName)], nil
+	return lookupManaged(managed, projectName, linkedRepo), nil
+}
+
+func lookupManaged(managed map[string]string, projectName, linkedRepo string) string {
+	if repo := managed[strings.ToLower(projectName)]; repo != "" {
+		return repo
+	}
+	if linkedRepo != "" {
+		return managed[repoKey(linkedRepo)]
+	}
+	return ""
 }
 
 func splitRepo(full string) (string, string, bool) {

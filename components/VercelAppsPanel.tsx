@@ -144,10 +144,10 @@ export default function VercelAppsPanel() {
                     {project.managed_repo && <span className="rounded-full bg-accent-cyan/15 px-2 py-0.5 text-[11px] text-accent-cyan">Dikelola DevControl</span>}
                     {project.temporary && <span className="rounded-full bg-accent-amber/10 px-2 py-0.5 text-[11px] text-amber-300">Sisa uji update diri, aman dihapus</span>}
                   </div>}
-                  {admin && unconnected && !project.self && <div className="mt-auto flex flex-wrap justify-end gap-1.5 border-t border-base-border pt-2">
-                    <button type="button" onClick={() => { setNotice(""); setConnecting(project); }} disabled={!data.github.ok}
+                  {admin && (unconnected || project.status === "outside") && !project.self && <div className="mt-auto flex flex-wrap justify-end gap-1.5 border-t border-base-border pt-2">
+                    {unconnected && <button type="button" onClick={() => { setNotice(""); setConnecting(project); }} disabled={!data.github.ok}
                       className="inline-flex items-center gap-1 rounded-md bg-accent-blue px-2 py-1 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50">
-                      <Link2 size={12} /> Connect Git</button>
+                      <Link2 size={12} /> Connect Git</button>}
                     <button type="button" onClick={() => { setNotice(""); setDeleting(project); }} disabled={Boolean(project.managed_repo)}
                       title={project.managed_repo ? `Dipakai aplikasi DevControl ${project.managed_repo}; hapus lewat kartu repo di bawah` : undefined}
                       className="inline-flex items-center gap-1 rounded-md border border-accent-red/40 px-2 py-1 text-xs text-red-300 hover:bg-accent-red/10 disabled:opacity-40">

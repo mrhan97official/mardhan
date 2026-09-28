@@ -232,7 +232,7 @@ func Build(appName func(owner, repo string) string) Result {
 	managed, _ := managedProjects(appName)
 	self := strings.TrimSpace(os.Getenv("VERCEL_PROJECT_ID"))
 	for i := range result.Projects {
-		result.Projects[i].ManagedRepo = managed[strings.ToLower(result.Projects[i].Name)]
+		result.Projects[i].ManagedRepo = lookupManaged(managed, result.Projects[i].Name, result.Projects[i].Repo)
 		result.Projects[i].Self = self != "" && (result.Projects[i].ID == self || strings.EqualFold(result.Projects[i].Name, self))
 	}
 	return result

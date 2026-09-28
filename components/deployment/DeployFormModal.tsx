@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, Circle, Loader2, UploadCloud, XCircle } from "lucide-react";
+import { Loader2, UploadCloud } from "lucide-react";
 import Modal from "./Modal";
 import ErrorDiagnosis from "./ErrorDiagnosis";
 import { useOfflineData } from "@/lib/useOfflineData";
@@ -25,7 +25,6 @@ interface DeployResponse {
 
 const STEP_ORDER = ["extract", "vercel-test", "github", "vercel-live"] as const;
 type StepKey = (typeof STEP_ORDER)[number];
-type StepState = "pending" | "active" | "done" | "failed";
 
 const STEPS: { key: StepKey; label: string }[] = [
   { key: "extract", label: "Ekstrak file zip" },
@@ -41,6 +40,8 @@ export default function DeployFormModal({
   onClose,
   onSuccess,
   onProgress,
+  onStarted,
+  onFinished,
 }: {
   mode: Mode;
   hidden: boolean;
@@ -48,6 +49,10 @@ export default function DeployFormModal({
   onClose: () => void;
   onSuccess: () => void;
   onProgress: (progress: { running: boolean; failed: boolean; message: string; target?: string }) => void;
+  /** Deploy accepted by the form: the provider hides it (progress lives in the Pipeline card). */
+  onStarted: () => void;
+  /** Run over. showForm=true when it stopped before a Pipeline job existed, so the error must be shown here. */
+  onFinished: (showForm: boolean) => void;
 }) {
   const services = useOfflineData<Service[]>("services", "/api/services", fallbackServices, 10000);
   const isUpdate = mode === "update_app";
@@ -59,8 +64,8 @@ export default function DeployFormModal({
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [activeStep, setActiveStep] = useState<StepKey | null>(null);
-  const [failedStep, setFailedStep] = useState<StepKey | null>(null);
-  const [completedSteps, setCompletedSteps] = useState<StepKey[]>([]);
+  const [, setFailedStep] = useState<StepKey | null>(null);
+  const [, setCompletedSteps] = useState<StepKey[]>([]);
   const [result, setResult] = useState<DeployResponse | null>(null);
   const [archiveSaved, setArchiveSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,14 +81,6 @@ export default function DeployFormModal({
       target: name.trim(),
     });
   }, [submitting, activeStep, result, error, name, onProgress]);
-
-  function stepState(step: StepKey): StepState {
-    if (completedSteps.includes(step)) return "done";
-    if (failedStep === step) return "failed";
-    if (result?.step === step && !result.ok) return "failed";
-    if (activeStep === step) return "active";
-    return "pending";
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -115,6 +112,8 @@ export default function DeployFormModal({
     }
 
     setSubmitting(true);
+    onStarted();
+    let reachedPipeline = false;
     setResult(null);
     setArchiveSaved(false);
     setCompletedSteps([]);
@@ -141,6 +140,7 @@ export default function DeployFormModal({
       if (!parsed.ok || !archiveID) { setFailedStep("extract"); return; }
       setCompletedSteps(["extract"]);
       setActiveStep("vercel-test");
+      reachedPipeline = true;
       const final = await pollDeploymentJob(archiveID, (job, elapsed) => {
         const done = job.stages.filter((stage) => stage.status === "Success").map((stage) => STEP_ORDER[stage.position - 1]);
         setCompletedSteps(done.filter((step): step is StepKey => Boolean(step)));
@@ -168,6 +168,7 @@ export default function DeployFormModal({
     } finally {
       setActiveStep(null);
       setSubmitting(false);
+      onFinished(!reachedPipeline);
     }
   }
 
@@ -266,33 +267,6 @@ export default function DeployFormModal({
               className="w-full rounded-xl border border-base-border bg-base-850 px-3 py-2.5 text-sm text-slate-200 placeholder:text-slate-500 focus:border-accent-blue/60 disabled:opacity-60"
             />
           </div>
-        </div>
-
-        <div className="space-y-2 rounded-xl border border-base-border bg-base-850/60 p-3">
-          {STEPS.map((s) => {
-            const state = stepState(s.key);
-            return (
-              <div key={s.key} className="flex items-center gap-2 text-sm">
-                {state === "done" && <CheckCircle2 size={16} className="text-emerald-400" />}
-                {state === "failed" && <XCircle size={16} className="text-red-400" />}
-                {state === "active" && <Loader2 size={16} className="animate-spin text-accent-blue" />}
-                {state === "pending" && <Circle size={16} className="text-slate-600" />}
-                <span
-                  className={
-                    state === "done"
-                      ? "text-emerald-400"
-                      : state === "failed"
-                      ? "text-red-400"
-                      : state === "active"
-                      ? "text-slate-200"
-                      : "text-slate-500"
-                  }
-                >
-                  {s.label}
-                </span>
-              </div>
-            );
-          })}
         </div>
 
         {result && (
