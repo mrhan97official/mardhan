@@ -96,7 +96,7 @@ export default function DeploymentOverlayProvider({ children }: { children: Reac
           key={task.id}
           task={task}
           hidden={activeId !== task.id}
-          onHide={() => setActiveId(null)}
+          onHide={() => setActiveId((current) => current === task.id ? null : current)}
           onClose={() => closeTask(task.id)}
           onSuccess={onSuccess}
           onProgress={updateProgress}

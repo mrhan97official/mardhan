@@ -215,7 +215,14 @@ export default function SelfUpdateModal({
       if (!parsed.ok) return;
       if (!parsed.archive_id) throw new Error("ID ZIP yang tersimpan tidak tersedia.");
       setActiveStep("vercel-test");
+      let autoHidden = false;
       const final = await pollDeploymentJob(parsed.archive_id, (job, elapsed) => {
+        if (!autoHidden) {
+          // Job sudah terdeteksi di Pipeline: tutup jendela otomatis dan segarkan daftar Pipeline.
+          autoHidden = true;
+          onHide();
+          onSuccess();
+        }
         const active = job.stages.find((stage) => stage.status === "Running") ?? job.stages.find((stage) => stage.status === "Pending");
         const step = STEP_ORDER[(active?.position ?? 2) - 1];
         setActiveStep(step);
