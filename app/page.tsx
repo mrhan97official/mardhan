@@ -58,9 +58,13 @@ export default function OverviewPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-        <ServicesTable services={services.data} />
-        <RecentActivity items={activity.data} />
-        <div className="min-w-0">
+        <div className="relative h-[22rem] min-w-0 md:h-auto [&>.card]:absolute [&>.card]:inset-0 [&>.card]:overflow-y-auto">
+          <ServicesTable services={services.data} />
+        </div>
+        <div className="relative h-[22rem] min-w-0 md:h-auto [&>.card]:absolute [&>.card]:inset-0 [&>.card]:overflow-y-auto">
+          <RecentActivity items={activity.data} />
+        </div>
+        <div className="min-w-0 md:min-h-[18rem] [&>.card]:h-full">
           <LiveLogs logs={logs.data} />
         </div>
       </div>
