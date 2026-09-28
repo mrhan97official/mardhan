@@ -58,10 +58,10 @@ export default function OverviewPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-        <div className="relative h-[22rem] min-w-0 md:h-auto [&>.card]:absolute [&>.card]:inset-0 [&>.card]:overflow-y-auto">
+        <div className="relative h-[22rem] min-w-0 md:h-auto [&>.card]:absolute [&>.card]:inset-0 [&>.card]:flex [&>.card]:flex-col [&>.card]:overflow-hidden [&>.card>.scroll-x]:min-h-0 [&>.card>.scroll-x]:flex-1 [&>.card>.scroll-x]:overflow-y-auto [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:bg-base-850">
           <ServicesTable services={services.data} />
         </div>
-        <div className="relative h-[22rem] min-w-0 md:h-auto [&>.card]:absolute [&>.card]:inset-0 [&>.card]:overflow-y-auto">
+        <div className="relative h-[22rem] min-w-0 md:h-auto [&>.card]:absolute [&>.card]:inset-0 [&>.card]:flex [&>.card]:flex-col [&>.card]:overflow-hidden [&>.card>ul]:min-h-0 [&>.card>ul]:flex-1 [&>.card>ul]:overflow-y-auto">
           <RecentActivity items={activity.data} />
         </div>
         <div className="min-w-0 md:min-h-[18rem] [&>.card]:h-full">
