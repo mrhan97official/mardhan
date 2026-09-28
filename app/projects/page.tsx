@@ -202,7 +202,7 @@ export default function ProjectsPage() {
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
           {apps.map(({ service, repo, source }) => (
-            <ProjectCard key={repo.full_name.toLowerCase()} repo={repo} appUrl={service?.app_url} linked={!!service} source={source}
+            <ProjectCard key={repo.full_name.toLowerCase()} repo={repo} displayName={service?.display_name} appUrl={service?.app_url} linked={!!service} source={source}
               thumbnailVersion={thumbnailByRepo.get(repo.full_name.toLowerCase())} uploading={uploading === repo.full_name}
               uploadProgress={uploading === repo.full_name ? uploadProgress : null}
               imageError={imageError?.repo === repo.full_name ? imageError.message : undefined}

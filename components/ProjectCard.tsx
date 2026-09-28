@@ -47,8 +47,9 @@ function timeAgo(iso?: string): string | null {
   return `${value} ${label} lalu`;
 }
 
-export default function ProjectCard({ repo, appUrl, linked = false, source = "github", thumbnailVersion, uploading = false, uploadProgress = null, imageError, onUpload, onRemoveThumbnail, onDelete }: {
+export default function ProjectCard({ repo, displayName, appUrl, linked = false, source = "github", thumbnailVersion, uploading = false, uploadProgress = null, imageError, onUpload, onRemoveThumbnail, onDelete }: {
   repo: GithubRepo;
+  displayName?: string;
   appUrl?: string | null;
   linked?: boolean;
   source?: "github" | "stored";
@@ -291,7 +292,8 @@ export default function ProjectCard({ repo, appUrl, linked = false, source = "gi
       {imageError && <p role="alert" className="text-xs text-red-300">{imageError}</p>}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="truncate text-sm font-bold text-white sm:text-base">{name}</h3>
+          <h3 className="truncate text-sm font-bold text-white sm:text-base" title={displayName || name}>{displayName || name}</h3>
+          {displayName && displayName !== name && <p className="truncate text-xs text-slate-500" title={repo.full_name}>Repo: {repo.full_name}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {source === "stored" && (

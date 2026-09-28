@@ -53,6 +53,8 @@ export default function DeployFormModal({
   const isUpdate = mode === "update_app";
 
   const [name, setName] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [repoEdited, setRepoEdited] = useState(false);
   const [branch, setBranch] = useState("");
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -88,7 +90,15 @@ export default function DeployFormModal({
     setError(null);
 
     if (!name.trim()) {
-      setError(isUpdate ? "Pilih aplikasi yang akan diperbarui." : "Nama aplikasi wajib diisi.");
+      setError(isUpdate ? "Pilih aplikasi yang akan diperbarui." : "Nama repo GitHub wajib diisi.");
+      return;
+    }
+    if (!isUpdate && !displayName.trim()) {
+      setError("Nama tampilan aplikasi wajib diisi.");
+      return;
+    }
+    if (!isUpdate && (!/^[a-zA-Z0-9._-]+$/.test(name.trim()) || name.trim().startsWith("-") || name.trim().endsWith("-") || name.trim() === "." || name.trim() === "..")) {
+      setError("Nama repo hanya boleh memakai huruf, angka, titik, garis bawah, atau tanda hubung.");
       return;
     }
     if (!zipFile) {
@@ -118,6 +128,7 @@ export default function DeployFormModal({
       form.append("type", mode);
       form.append("phase", "extract");
       form.append("name", name.trim());
+      if (!isUpdate) form.append("display_name", displayName.trim());
       if (branch.trim()) form.append("branch", branch.trim());
       form.append("environment", "Production");
       form.append("zip", zipFile);
@@ -183,21 +194,43 @@ export default function DeployFormModal({
               <option value="">Pilih aplikasi...</option>
               {services.data.filter((s) => s.repo).map((s) => (
                 <option key={s.id} value={s.name}>
-                  {s.name} · v{s.version}
+                  {s.display_name || s.name} · {s.repo} · v{s.version}
                 </option>
               ))}
             </select>
           </div>
         ) : (
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-400">Nama aplikasi</label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={submitting || finished}
-              placeholder="mis. customer-portal"
-              className="w-full rounded-xl border border-base-border bg-base-850 px-3 py-2.5 text-sm text-slate-200 placeholder:text-slate-500 focus:border-accent-blue/60 disabled:opacity-60"
-            />
+          <div className="space-y-3">
+            <div>
+              <label htmlFor="new-app-display-name" className="mb-1.5 block text-xs font-medium text-slate-400">Nama aplikasi yang ditampilkan</label>
+              <input
+                id="new-app-display-name"
+                value={displayName}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setDisplayName(value);
+                  if (!repoEdited) setName(value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, ""));
+                }}
+                maxLength={100}
+                disabled={submitting || finished}
+                placeholder="mis. Portal Pelanggan"
+                className="w-full rounded-xl border border-base-border bg-base-850 px-3 py-2.5 text-sm text-slate-200 placeholder:text-slate-500 focus:border-accent-blue/60 disabled:opacity-60"
+              />
+            </div>
+            <div>
+              <label htmlFor="new-app-repo-name" className="mb-1.5 block text-xs font-medium text-slate-400">Nama repo GitHub</label>
+              <input
+                id="new-app-repo-name"
+                value={name}
+                onChange={(e) => { setName(e.target.value); setRepoEdited(Boolean(e.target.value)); }}
+                maxLength={100}
+                disabled={submitting || finished}
+                placeholder="mis. portal-pelanggan"
+                spellCheck={false}
+                className="w-full rounded-xl border border-base-border bg-base-850 px-3 py-2.5 text-sm text-slate-200 placeholder:text-slate-500 focus:border-accent-blue/60 disabled:opacity-60"
+              />
+              <p className="mt-1 text-xs text-slate-500">Terisi otomatis dari nama tampilan. Anda dapat mengubah nama repo tanpa mengubah nama yang tampil di halaman aplikasi.</p>
+            </div>
           </div>
         )}
 

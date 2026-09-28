@@ -41,7 +41,7 @@ export default function ServicesTable({ services }: { services: Service[] }) {
                     <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-base-800 text-slate-400">
                       {ICON_BY_NAME[s.name] ?? <Layers3 size={15} />}
                     </span>
-                    {s.name}
+                    {s.display_name || s.name}
                   </span>
                 </td>
                 <td className="py-3 pr-2">

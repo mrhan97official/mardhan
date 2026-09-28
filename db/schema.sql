@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS deployment_jobs (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   diagnosis TEXT NOT NULL DEFAULT '',
-  sync_note TEXT NOT NULL DEFAULT ''
+  sync_note TEXT NOT NULL DEFAULT '',
+  display_name TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_deployment_jobs_running_target ON deployment_jobs (lock_key) WHERE status = 'Running';
 CREATE INDEX IF NOT EXISTS idx_deployment_jobs_updated ON deployment_jobs (updated_at DESC);
@@ -72,7 +73,8 @@ CREATE TABLE IF NOT EXISTS services (
   version TEXT NOT NULL,
   repo TEXT,
   branch TEXT DEFAULT 'main',
-  app_url TEXT
+  app_url TEXT,
+  display_name TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS activity_log (

@@ -288,7 +288,7 @@ func handleDeployments(w http.ResponseWriter, r *http.Request) {
 	util.JSON(w, http.StatusOK, jobs)
 }
 
-func startDeploymentPipeline(id, kind, target, lockKey string, names [4]string) error {
+func startDeploymentPipeline(id, kind, target, lockKey, displayName string, names [4]string) error {
 	if err := pruneDeploymentJobs(); err != nil { return err }
 	stages := make([]deploymentStage, 0, 4)
 	startedAt := time.Now().Unix()
@@ -301,8 +301,8 @@ func startDeploymentPipeline(id, kind, target, lockKey string, names [4]string) 
 	}
 	encoded, err := json.Marshal(stages)
 	if err != nil { return err }
-	_, err = d1.Query(`INSERT INTO deployment_jobs (id, kind, target, lock_key, status, stages, lease_until)
-		VALUES (?, ?, ?, ?, 'Running', ?, datetime('now', '+10 minutes'))`, id, kind, target, lockKey, string(encoded))
+	_, err = d1.Query(`INSERT INTO deployment_jobs (id, kind, target, lock_key, display_name, status, stages, lease_until)
+		VALUES (?, ?, ?, ?, ?, 'Running', ?, datetime('now', '+10 minutes'))`, id, kind, target, lockKey, displayName, string(encoded))
 	if err != nil {
 		rows, queryErr := d1.Query(`SELECT id FROM deployment_jobs WHERE lock_key = ? AND status = 'Running' LIMIT 1`, lockKey)
 		if queryErr == nil && len(rows) > 0 { return fmt.Errorf("repo ini sedang diproses oleh deployment lain; tunggu sampai selesai") }
@@ -549,8 +549,9 @@ func handleDeploymentRunner(w http.ResponseWriter, _ *http.Request) {
 
 // GET /api/services -> services status table.
 func handleServices(w http.ResponseWriter, r *http.Request) {
+	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	rows, err := d1.Query(`
-		SELECT id, name, status, uptime, version, repo, branch, app_url
+		SELECT id, name, display_name, status, uptime, version, repo, branch, app_url
 		FROM services
 		ORDER BY id ASC
 	`)
@@ -1264,6 +1265,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
+	displayName := strings.TrimSpace(r.FormValue("display_name"))
 	branchInput := strings.TrimSpace(r.FormValue("branch"))
 	environment := orDefault(r.FormValue("environment"), "Production")
 	isUpdate := deployType == "update_app"
@@ -1271,6 +1273,18 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("nama aplikasi wajib diisi"))
 		return
+	}
+	if deployType == "new_app" && phase == "extract" {
+		if name != sanitizeGithubRepoName(name) || name == "." || name == ".." || len(name) > 100 {
+			util.Error(w, http.StatusBadRequest, fmt.Errorf("nama repo GitHub tidak valid (maksimal 100 karakter; gunakan huruf, angka, titik, garis bawah, atau tanda hubung)"))
+			return
+		}
+		// Older clients did not send a display name; keep their current behavior.
+		if displayName == "" { displayName = name }
+		if utf8.RuneCountInString(displayName) > 100 {
+			util.Error(w, http.StatusBadRequest, fmt.Errorf("nama tampilan aplikasi maksimal 100 karakter"))
+			return
+		}
 	}
 	if phase == "vercel-test-status" || phase == "vercel-live-status" {
 		handleDeployStatus(w, r, vercelToken, deployType, name, phase)
@@ -1318,7 +1332,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		archiveID = record.ID
 		lockKey, lockErr := appDeploymentLockKey(githubToken, name, isUpdate)
 		if lockErr != nil { _ = store.Fail(archiveID); util.Error(w, http.StatusBadGateway, lockErr); return }
-		if err := startDeploymentPipeline(archiveID, deployType, name, lockKey,
+		if err := startDeploymentPipeline(archiveID, deployType, name, lockKey, displayName,
 			[4]string{"Ekstrak ZIP", "Uji Vercel", "GitHub", "Online Vercel"}); err != nil {
 			_ = store.Fail(archiveID)
 			util.Error(w, http.StatusConflict, err)
@@ -1842,10 +1856,16 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 	if mode == "update_app" {
 		_, err = d1.Query(`UPDATE services SET repo = ?, branch = ?, app_url = ?, status = 'Healthy' WHERE name = ?`, ticket.Repo, ticket.Branch, liveURL, name)
 	} else {
+		// The runner survives the browser closing; keep the original label on
+		// its durable job and associate it with the repo only after success.
+		displayName := name
+		rows, lookupErr := d1.Query(`SELECT display_name FROM deployment_jobs WHERE id = ? AND kind = 'new_app' LIMIT 1`, ticket.ArchiveID)
+		if lookupErr != nil { util.Error(w, http.StatusBadGateway, lookupErr); return }
+		if len(rows) > 0 { if saved, ok := rows[0]["display_name"].(string); ok && saved != "" { displayName = saved } }
 		// A repeated status request must not insert a second service row.
-		_, err = d1.Query(`INSERT INTO services (name, status, uptime, version, repo, branch, app_url)
-			SELECT ?, 'Healthy', 100, 'v1.0.0', ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM services WHERE name = ?)`,
-			name, ticket.Repo, ticket.Branch, liveURL, name)
+		_, err = d1.Query(`INSERT INTO services (name, display_name, status, uptime, version, repo, branch, app_url)
+			SELECT ?, ?, 'Healthy', 100, 'v1.0.0', ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM services WHERE name = ?)`,
+			name, displayName, ticket.Repo, ticket.Branch, liveURL, name)
 	}
 	if err != nil {
 		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: "[Simpan tautan aplikasi] URL gagal disimpan: " + err.Error(), Repo: ticket.Repo, AppURL: liveURL})
@@ -2481,7 +2501,7 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusBadGateway, fmt.Errorf("ZIP tidak dapat disimpan, update dibatalkan: %w", saveErr)); return
 		}
 		archiveID = record.ID
-		if err := startDeploymentPipeline(archiveID, "self_update", target, strings.ToLower(repo),
+		if err := startDeploymentPipeline(archiveID, "self_update", target, strings.ToLower(repo), "",
 			[4]string{"Ekstrak ZIP", "Uji Vercel", "Perbarui GitHub", "Production Vercel"}); err != nil {
 			_ = store.Fail(archiveID)
 			util.Error(w, http.StatusConflict, err)

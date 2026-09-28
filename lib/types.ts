@@ -59,6 +59,7 @@ export interface Diagnosis {
 export interface Service {
   id: number;
   name: string;
+  display_name?: string;
   status: "Healthy" | "Degraded" | "Down";
   uptime: number;
   version: string;
