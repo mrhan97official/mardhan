@@ -71,7 +71,7 @@ var cache struct {
 
 var viewerRead = map[string]bool{
   "overview": true, "deployments": true, "environments": true, "health": true, "performance": true,
-  "services": true, "activity": true, "logs": true, "github-repos": true, "github-branches": true,
+  "services": true, "activity": true, "logs": true, "github-repos": true, "github-branches": true, "vercel-projects": true,
   "project-thumbnails": true, "app-promo": true, "branding": true, "deploy-history": true,
 }
 

@@ -13,6 +13,7 @@ export interface InventoryProject {
   id: string; name: string; framework?: string; updated_at?: number; git_provider?: string; repo?: string;
   production_branch?: string; status: InventoryStatus; suggested_repo?: string; url?: string;
   managed_repo?: string; self?: boolean;
+  production_url?: string; production_state?: string; temporary?: boolean;
 }
 
 async function inventoryAction<T>(payload: Record<string, unknown>): Promise<T> {

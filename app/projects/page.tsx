@@ -6,6 +6,7 @@ import AppShell from "@/components/AppShell";
 import ComingSoon from "@/components/ComingSoon";
 import ProjectCard from "@/components/ProjectCard";
 import AppsPromoBanner from "@/components/AppsPromoBanner";
+import VercelAppsPanel from "@/components/VercelAppsPanel";
 import { useOfflineData } from "@/lib/useOfflineData";
 import { fallbackGithubRepos, fallbackServices } from "@/lib/fallbackData";
 import { mergeProjects } from "@/lib/projectRepos";
@@ -148,14 +149,16 @@ export default function ProjectsPage() {
   return (
     <AppShell
       title="Projects"
-      subtitle="Repository GitHub yang dapat diakses dan aplikasi yang tersimpan"
+      subtitle="Aplikasi online di Vercel dan repository GitHub sumbernya"
       isOffline={repos.isOffline || services.isOffline}
     >
       <AppsPromoBanner apps={apps} />
 
+      <VercelAppsPanel />
+
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-400">
-          {loading && apps.length === 0 ? "Memuat repo GitHub..." : `${apps.length} repository ditemukan`}
+          <b className="text-slate-200">Repository GitHub</b> · {loading && apps.length === 0 ? "memuat…" : `${apps.length} repo (thumbnail, arsip ZIP, riwayat update, hapus tuntas)`}
         </p>
         <button
           type="button"

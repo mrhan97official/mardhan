@@ -114,3 +114,26 @@ func TestManagedProjectsWithoutD1(t *testing.T) {
 		t.Fatalf("got %v, %v", managed, err)
 	}
 }
+
+func TestProductionURLAndTemporary(t *testing.T) {
+	cases := []struct {
+		target *vercelTarget
+		want   string
+	}{
+		{nil, ""},
+		{&vercelTarget{URL: "app-abc123.vercel.app"}, "https://app-abc123.vercel.app"},
+		{&vercelTarget{Alias: []string{"app-git-main.vercel.app", "app.vercel.app"}}, "https://app.vercel.app"},
+		{&vercelTarget{Alias: []string{"app.vercel.app", "toko.example.com"}}, "https://toko.example.com"},
+	}
+	for _, c := range cases {
+		if got := productionURL("app", c.target); got != c.want {
+			t.Fatalf("productionURL = %q, want %q", got, c.want)
+		}
+	}
+	raw := []vercelProject{{ID: "1", Name: "devcontrol-selfupdate-test-1700000000"}}
+	raw[0].Targets.Production = &vercelTarget{ReadyState: "ready", URL: "x.vercel.app"}
+	_, projects := classify([]Repo{}, raw, true, nil, "")
+	if !projects[0].Temporary || projects[0].ProductionState != "READY" || projects[0].ProductionURL != "https://x.vercel.app" {
+		t.Fatalf("got %+v", projects[0])
+	}
+}

@@ -60,6 +60,9 @@ type Project struct {
 	URL              string `json:"url,omitempty"`
 	ManagedRepo      string `json:"managed_repo,omitempty"` // app registered in DevControl that uses this project
 	Self             bool   `json:"self,omitempty"`         // the project hosting this DevControl
+	ProductionURL    string `json:"production_url,omitempty"`
+	ProductionState  string `json:"production_state,omitempty"` // READY, ERROR, BUILDING, ... ("" = never deployed to production)
+	Temporary        bool   `json:"temporary,omitempty"`        // leftover "update diri" test project
 }
 
 // Source reports whether one side could be read.
@@ -90,12 +93,61 @@ type vercelLink struct {
 	Slug             string `json:"slug"`
 }
 
+type vercelTarget struct {
+	Alias      []string `json:"alias"`
+	URL        string   `json:"url"`
+	ReadyState string   `json:"readyState"`
+}
+
 type vercelProject struct {
 	ID        string      `json:"id"`
 	Name      string      `json:"name"`
 	Framework *string     `json:"framework"`
 	UpdatedAt int64       `json:"updatedAt"`
 	Link      *vercelLink `json:"link"`
+	Targets   struct {
+		Production *vercelTarget `json:"production"`
+	} `json:"targets"`
+}
+
+// productionURL prefers a custom domain, then <name>.vercel.app, then any
+// alias, then the deployment's own URL.
+func productionURL(name string, target *vercelTarget) string {
+	if target == nil {
+		return ""
+	}
+	pick := ""
+	for _, alias := range target.Alias {
+		host := strings.ToLower(strings.TrimSpace(alias))
+		if host == "" {
+			continue
+		}
+		if !strings.HasSuffix(host, ".vercel.app") {
+			pick = host
+			break
+		}
+		if host == strings.ToLower(name)+".vercel.app" || pick == "" {
+			pick = host
+		}
+	}
+	if pick == "" {
+		pick = strings.TrimSpace(target.URL)
+	}
+	if pick == "" {
+		return ""
+	}
+	pick = strings.TrimPrefix(strings.TrimPrefix(pick, "https://"), "http://")
+	return "https://" + pick
+}
+
+// HandleList answers GET /api/vercel-projects: the same inventory, readable by
+// every role that can open the Projects page. Actions stay admin-only.
+func HandleList(w http.ResponseWriter, r *http.Request, appName func(owner, repo string) string) {
+	if r.Method != http.MethodGet {
+		util.Error(w, http.StatusMethodNotAllowed, fmt.Errorf("gunakan GET"))
+		return
+	}
+	util.JSON(w, http.StatusOK, Build(appName))
 }
 
 // Handle answers /api/databases?view=inventory: GET returns the inventory,
@@ -199,6 +251,11 @@ func classify(repos []Repo, raw []vercelProject, githubOK bool, appName func(own
 	projects := make([]Project, 0, len(raw))
 	for _, item := range raw {
 		p := Project{ID: item.ID, Name: item.Name, UpdatedAt: item.UpdatedAt, Status: StatusUnconnected}
+		p.ProductionURL = productionURL(item.Name, item.Targets.Production)
+		if item.Targets.Production != nil {
+			p.ProductionState = strings.ToUpper(strings.TrimSpace(item.Targets.Production.ReadyState))
+		}
+		p.Temporary = strings.Contains(strings.ToLower(item.Name), "selfupdate-test-")
 		if item.Framework != nil {
 			p.Framework = *item.Framework
 		}

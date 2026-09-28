@@ -142,6 +142,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		handleSelfUpdate(w, r)
 	case "github-repos":
 		handleGithubRepos(w, r)
+	case "vercel-projects":
+		repoinventory.HandleList(w, r, vercelAppProjectName)
 	case "project":
 		projectdelete.Handle(w, r, vercelAppProjectName)
 	case "app-repair":

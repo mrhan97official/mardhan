@@ -90,6 +90,10 @@
       "destination": "/api/gateway?resource=github-repos"
     },
     {
+      "source": "/api/vercel-projects",
+      "destination": "/api/gateway?resource=vercel-projects"
+    },
+    {
       "source": "/api/project",
       "destination": "/api/gateway?resource=project"
     },
