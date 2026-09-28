@@ -48,7 +48,7 @@ func validRepo(repo string) bool {
 // Extra image slots stored beside the main (light) thumbnail of a project:
 // "owner/repo~dark" and so on. GitHub names cannot contain "~", so a slot
 // never collides with a real repository. Every slot keeps the original bytes.
-var imageSlots = []string{"dark", "logo", "design-light", "design-dark"}
+var imageSlots = []string{"dark", "logo-light", "logo-dark", "design-light", "design-dark"}
 
 func splitImageRepo(repo string) (string, string) {
 	base, slot, found := strings.Cut(repo, "~")

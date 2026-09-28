@@ -3,13 +3,14 @@
 // "owner/repo~<slot>" in the same private R2 flow. Files are never
 // compressed or resized, so a 4K upload stays 4K.
 
-export type ImageSlot = "thumbnail-light" | "thumbnail-dark" | "logo" | "design-light" | "design-dark";
+export type ImageSlot = "thumbnail-light" | "thumbnail-dark" | "logo-light" | "logo-dark" | "design-light" | "design-dark";
 export type ProjectImages = Partial<Record<ImageSlot, string>>;
 
 export const IMAGE_SLOTS: { slot: ImageSlot; suffix: string; label: string; hint: string }[] = [
   { slot: "thumbnail-light", suffix: "", label: "Thumbnail mode terang", hint: "Tampil di kartu saat mode terang." },
   { slot: "thumbnail-dark", suffix: "~dark", label: "Thumbnail mode gelap", hint: "Tampil di kartu saat mode gelap." },
-  { slot: "logo", suffix: "~logo", label: "Logo aplikasi", hint: "Disimpan, tidak tampil di kartu." },
+  { slot: "logo-light", suffix: "~logo-light", label: "Logo mode terang", hint: "Disimpan, tidak tampil di kartu." },
+  { slot: "logo-dark", suffix: "~logo-dark", label: "Logo mode gelap", hint: "Disimpan, tidak tampil di kartu." },
   { slot: "design-light", suffix: "~design-light", label: "Desain mode terang", hint: "Disimpan, tidak tampil di kartu." },
   { slot: "design-dark", suffix: "~design-dark", label: "Desain mode gelap", hint: "Disimpan, tidak tampil di kartu." },
 ];
