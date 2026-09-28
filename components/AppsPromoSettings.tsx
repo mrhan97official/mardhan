@@ -17,59 +17,51 @@ interface Promotion {
 
 interface PreparedImage {
   blob: Blob;
+  contentType: string;
   preview: string;
   originalBytes: number;
   originalWidth: number;
   originalHeight: number;
-  optimized: boolean;
 }
 
+// Display ratio only. The uploaded file is stored and served untouched (no
+// canvas, crop, resize, or re-encode), so a 4K source stays 4K.
 const WIDTH = 1440;
 const HEIGHT = 450;
-const MAX_INPUT_BYTES = 30 * 1024 * 1024;
+const R2_SINGLE_UPLOAD = 5 * 1024 ** 3;
 const IMAGE_PREFIX = "__devcontrol__/banner-";
+const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toLocaleString("id-ID", { maximumFractionDigits: 2 })} MB`;
 }
 
+function imageType(file: File) {
+  if (IMAGE_TYPES.includes(file.type)) return file.type;
+  if (/\.jpe?g$/i.test(file.name)) return "image/jpeg";
+  if (/\.png$/i.test(file.name)) return "image/png";
+  if (/\.webp$/i.test(file.name)) return "image/webp";
+  return "";
+}
+
 async function prepareImage(file: File): Promise<PreparedImage> {
-  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || !file.size || file.size > MAX_INPUT_BYTES) {
-    throw new Error("Pilih JPG, PNG, atau WebP berukuran maksimal 30 MB.");
+  const contentType = imageType(file);
+  if (!contentType || !file.size || file.size > R2_SINGLE_UPLOAD) {
+    throw new Error("Pilih JPG, PNG, atau WebP. R2 membatasi satu unggahan hingga 5 GiB.");
   }
-  const source = URL.createObjectURL(file);
+  const preview = URL.createObjectURL(file);
   try {
+    // Decode only to read the true resolution; the bytes are never re-encoded.
     const image = new Image();
-    image.src = source;
+    image.src = preview;
     await image.decode();
     const originalWidth = image.naturalWidth;
     const originalHeight = image.naturalHeight;
     if (!originalWidth || !originalHeight) throw new Error("Gambar tidak dapat dibaca.");
-
-    const canvas = document.createElement("canvas");
-    canvas.width = WIDTH;
-    canvas.height = HEIGHT;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Perangkat tidak dapat mengolah gambar banner.");
-    // Keep the central composition, never stretch a source with another ratio.
-    const cropWidth = Math.min(originalWidth, originalHeight * WIDTH / HEIGHT);
-    const cropHeight = Math.min(originalHeight, originalWidth * HEIGHT / WIDTH);
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, WIDTH, HEIGHT);
-    context.drawImage(image, (originalWidth - cropWidth) / 2, (originalHeight - cropHeight) / 2,
-      cropWidth, cropHeight, 0, 0, WIDTH, HEIGHT);
-    const jpeg = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
-      (result) => result ? resolve(result) : reject(new Error("Gambar gagal dikompres.")),
-      "image/jpeg", 0.84,
-    ));
-    if (jpeg.type !== "image/jpeg" || !jpeg.size) throw new Error("Format hasil kompresi tidak didukung.");
-    const keepOriginal = originalWidth === WIDTH && originalHeight === HEIGHT &&
-      file.type !== "image/webp" && file.size <= jpeg.size;
-    const output = keepOriginal ? file : jpeg;
-    return { blob: output, preview: URL.createObjectURL(output), originalBytes: file.size,
-      originalWidth, originalHeight, optimized: !keepOriginal };
-  } finally {
-    URL.revokeObjectURL(source);
+    return { blob: file, contentType, preview, originalBytes: file.size, originalWidth, originalHeight };
+  } catch (cause) {
+    URL.revokeObjectURL(preview);
+    throw cause instanceof Error ? cause : new Error("Gambar tidak dapat dibaca.");
   }
 }
 
@@ -130,12 +122,12 @@ export default function AppsPromoSettings() {
         stagedRepo = `${IMAGE_PREFIX}${crypto.randomUUID().replace(/-/g, "")}`;
         const ticket = await apiRequest("/api/project-thumbnails", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "begin", repo: stagedRepo, content_type: prepared.blob.type, size_bytes: prepared.blob.size }),
+          body: JSON.stringify({ action: "begin", repo: stagedRepo, content_type: prepared.contentType, size_bytes: prepared.blob.size }),
         });
         uploadID = ticket.upload_id;
         if (!uploadID || !ticket.upload_url) throw new Error("Tiket unggahan banner tidak valid.");
         const upload = await fetch(ticket.upload_url, {
-          method: "PUT", headers: { "Content-Type": prepared.blob.type }, body: prepared.blob,
+          method: "PUT", headers: { "Content-Type": prepared.contentType }, body: prepared.blob,
         });
         if (!upload.ok) throw new Error(`R2 menolak unggahan banner (HTTP ${upload.status}). Periksa izin dan CORS bucket.`);
         const result = await apiRequest("/api/project-thumbnails", {
@@ -191,7 +183,7 @@ export default function AppsPromoSettings() {
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h3 id="promo-title" className="text-lg font-semibold text-white">Banner halaman Aplikasi</h3>
-          <p className="mt-1 text-sm text-slate-400">Gambar ditampilkan bersih dengan rasio 1440 × 450. Nama aplikasi, tautan, judul, dan deskripsi boleh kosong untuk banner umum.</p>
+          <p className="mt-1 text-sm text-slate-400">Gambar asli disimpan dan ditampilkan tanpa kompresi atau pengecilan resolusi, dengan bingkai rasio 1440 × 450. Nama aplikasi, tautan, judul, dan deskripsi boleh kosong untuk banner umum.</p>
         </div>
         <button type="button" onClick={() => editing ? setEditing(false) : openEditor()} disabled={busy || preparing || promotion.loading} className="inline-flex items-center gap-2 rounded-lg border border-base-border bg-base-800 px-3 py-2 text-xs font-medium text-white hover:bg-base-700 disabled:opacity-50">
           <Pencil size={14} /> {editing ? "Tutup pengaturan" : promotion.data ? "Ubah banner" : "Buat banner"}
@@ -223,20 +215,20 @@ export default function AppsPromoSettings() {
           <ImagePlus size={15} /> {prepared ? "Ganti gambar pilihan" : promotion.data ? "Ganti gambar banner" : "Pilih gambar banner"}
           <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy || preparing} className="sr-only" onChange={(event) => { void chooseImage(event.target.files?.[0]); event.target.value = ""; }} />
         </label>
-        {preparing && <p role="status" className="text-xs text-slate-400">Mengolah dan mengompres gambar…</p>}
+        {preparing && <p role="status" className="text-xs text-slate-400">Membaca ukuran gambar…</p>}
         {prepared && <div className="flex flex-wrap items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={prepared.preview} alt="Pratinjau gambar banner" className="aspect-[16/5] w-48 rounded-lg border border-base-border bg-white object-cover" />
           <div className="text-xs text-slate-400">
-            <p>{prepared.originalWidth} × {prepared.originalHeight} → 1440 × 450 piksel</p>
-            <p>{formatSize(prepared.originalBytes)} → {formatSize(prepared.blob.size)}{!prepared.optimized && " · berkas asli lebih ringan"}</p>
-            {prepared.originalWidth / prepared.originalHeight !== WIDTH / HEIGHT && <p className="mt-1 text-amber-300">Gambar dipotong di bagian tengah agar sesuai rasio banner.</p>}
+            <p>{prepared.originalWidth} × {prepared.originalHeight} piksel · {formatSize(prepared.originalBytes)}</p>
+            <p>Disimpan utuh: resolusi dan kualitas asli tidak diubah.</p>
+            {prepared.originalWidth / prepared.originalHeight !== WIDTH / HEIGHT && <p className="mt-1 text-amber-300">Rasio berbeda: tampilan banner memperlihatkan bagian tengah, berkas asli tetap utuh.</p>}
             {(prepared.originalWidth < WIDTH || prepared.originalHeight < HEIGHT) && <p className="mt-1 text-amber-300">Gambar kecil mungkin terlihat kurang tajam setelah diperbesar.</p>}
           </div>
         </div>}
         {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-base-border pt-2">
-          <p className="text-[11px] text-slate-500">Gunakan gambar 1440 × 450. JPG, PNG, atau WebP hingga 30 MB; gambar lain dipotong tengah dan hasilnya dikompres bila lebih ringan.</p>
+          <p className="text-[11px] text-slate-500">JPG, PNG, atau WebP resolusi berapa pun (termasuk 4K), tanpa kompresi. Rasio ideal 1440 × 450 (16:5); rasio lain dipotong tengah hanya pada tampilan.</p>
           <div className="flex gap-2">
             {promotion.data && <button type="button" disabled={busy || preparing} onClick={() => void remove()} className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs font-medium text-red-300 disabled:opacity-50"><Trash2 size={14} /> Hapus</button>}
             <button type="submit" disabled={busy || preparing || (!prepared && !promotion.data)} className="rounded-lg bg-accent-blue px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{busy ? "Menyimpan…" : "Simpan banner"}</button>

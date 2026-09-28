@@ -61,9 +61,9 @@ export default function ProjectsPage() {
   async function changeThumbnail(repo: string, file?: File) {
     if (uploading) return;
     setImageError(null);
-    const contentType = file?.type || (file && /\.jpe?g$/i.test(file.name) ? "image/jpeg" : file && /\.png$/i.test(file.name) ? "image/png" : "");
-    if (file && (!file.size || file.size > 5 * 1024 ** 3 || !["image/jpeg", "image/png"].includes(contentType))) {
-      setImageError({ repo, message: "Pilih JPG/PNG asli. R2 membatasi satu unggahan hingga 5 GiB." });
+    const contentType = file?.type || (file && /\.jpe?g$/i.test(file.name) ? "image/jpeg" : file && /\.png$/i.test(file.name) ? "image/png" : file && /\.webp$/i.test(file.name) ? "image/webp" : "");
+    if (file && (!file.size || file.size > 5 * 1024 ** 3 || !["image/jpeg", "image/png", "image/webp"].includes(contentType))) {
+      setImageError({ repo, message: "Pilih JPG/PNG/WebP asli. R2 membatasi satu unggahan hingga 5 GiB." });
       return;
     }
     setUploading(repo);

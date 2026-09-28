@@ -283,7 +283,7 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
           </section>
         </div>, document.body,
       )}
-      <input ref={inputRef} type="file" accept="image/jpeg,image/png" className="sr-only" disabled={uploading} aria-label={`Unggah thumbnail ${repo.full_name}`} onChange={(event) => {
+      <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" disabled={uploading} aria-label={`Unggah thumbnail ${repo.full_name}`} onChange={(event) => {
           const file = event.currentTarget.files?.[0];
           if (file) onUpload(file);
           event.currentTarget.value = "";

@@ -227,6 +227,6 @@ func (s *signedStorage) verify(key, contentType string, size int64) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusPartialContent { return fmt.Errorf("R2 tidak mengembalikan cuplikan gambar (HTTP %d)", resp.StatusCode) }
 	prefix, err := io.ReadAll(io.LimitReader(resp.Body, 512))
-	if err != nil || imageType(prefix) != contentType { return fmt.Errorf("isi gambar di R2 tidak sesuai tipe JPG/PNG") }
+	if err != nil || imageType(prefix) != contentType { return fmt.Errorf("isi gambar di R2 tidak sesuai tipe JPG/PNG/WebP") }
 	return nil
 }

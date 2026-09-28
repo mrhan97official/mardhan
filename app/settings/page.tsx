@@ -5,14 +5,55 @@ import { Cloud, ImagePlus, RotateCcw, Save, Settings } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import CloudflareZoneSettings from "@/components/CloudflareZoneSettings";
 import AppsPromoSettings from "@/components/AppsPromoSettings";
-import { useBranding } from "@/components/BrandingProvider";
+import { logoOriginalURL, useBranding } from "@/components/BrandingProvider";
 import { notifyDataChanged } from "@/lib/liveUpdates";
 
 type LogoBackground = "transparent" | "black" | "white";
-type PreparedLogo = { icon192: Blob; icon512: Blob; maskable: Blob; preview: string; filename: string };
+// The original file is kept byte-for-byte for display inside the app. Only the
+// PWA/tab icons are rendered at the fixed sizes browsers require (192/512).
+type PreparedLogo = {
+  icon192: Blob; icon512: Blob; maskable: Blob; preview: string; filename: string;
+  original: File; contentType: string; width: number; height: number;
+};
+
+const LOGO_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const R2_SINGLE_UPLOAD = 5 * 1024 ** 3;
+
+function logoType(file: File) {
+  if (LOGO_TYPES.includes(file.type)) return file.type;
+  if (/\.png$/i.test(file.name)) return "image/png";
+  if (/\.jpe?g$/i.test(file.name)) return "image/jpeg";
+  if (/\.webp$/i.test(file.name)) return "image/webp";
+  return "";
+}
+
+async function uploadOriginalLogo(logoRepo: string, prepared: PreparedLogo) {
+  const call = async (init: RequestInit, path = "/api/project-thumbnails") => {
+    const response = await fetch(path, { credentials: "same-origin", cache: "no-store", ...init });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || `Permintaan gagal (HTTP ${response.status}).`);
+    return body;
+  };
+  const ticket = await call({
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "begin", repo: logoRepo, content_type: prepared.contentType, size_bytes: prepared.original.size }),
+  });
+  const uploadID: string | undefined = ticket?.upload_id;
+  if (!uploadID || !ticket?.upload_url) throw new Error("Tiket unggahan logo asli tidak valid.");
+  try {
+    const upload = await fetch(ticket.upload_url, { method: "PUT", headers: { "Content-Type": prepared.contentType }, body: prepared.original });
+    if (!upload.ok) throw new Error(`R2 menolak logo asli (HTTP ${upload.status}). Periksa izin dan CORS bucket.`);
+    await call({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "finish", upload_id: uploadID }) });
+  } catch (cause) {
+    await fetch(`/api/project-thumbnails?upload_id=${encodeURIComponent(uploadID)}`, { method: "DELETE", credentials: "same-origin" }).catch(() => {});
+    throw cause;
+  }
+}
 
 async function prepareLogo(file: File, background: LogoBackground): Promise<PreparedLogo> {
-  if (file.type !== "image/png" && file.type !== "image/jpeg") throw new Error("Pilih gambar PNG atau JPG.");
+  const contentType = logoType(file);
+  if (!contentType) throw new Error("Pilih gambar PNG, JPG, atau WebP.");
+  if (!file.size || file.size > R2_SINGLE_UPLOAD) throw new Error("Batas unggah tunggal R2 adalah 5 GiB.");
   const source = URL.createObjectURL(file);
   try {
     const image = new Image();
@@ -39,12 +80,14 @@ async function prepareLogo(file: File, background: LogoBackground): Promise<Prep
       canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Gagal membuat ikon PNG.")), "image/png");
     });
     const [icon192, icon512, maskable] = await Promise.all([render(192), render(512), render(512, 0.13)]);
-    return { icon192, icon512, maskable, preview: URL.createObjectURL(icon512), filename: file.name };
+    return { icon192, icon512, maskable, preview: URL.createObjectURL(icon512), filename: file.name,
+      original: file, contentType, width: image.naturalWidth, height: image.naturalHeight };
   } finally { URL.revokeObjectURL(source); }
 }
 
 export default function SettingsPage() {
-  const { version, reload } = useBranding();
+  const { version, original, reload } = useBranding();
+  const [status, setStatus] = useState("");
   const picker = useRef<HTMLInputElement>(null);
   const selectedFile = useRef<File | null>(null);
   const selection = useRef(0);
@@ -97,16 +140,27 @@ export default function SettingsPage() {
       form.append("192", prepared.icon192, "192.png");
       form.append("512", prepared.icon512, "512.png");
       form.append("maskable", prepared.maskable, "maskable.png");
+      setStatus("Menyimpan ikon tab dan PWA…");
       const response = await fetch("/api/branding", { method: "POST", body: form, credentials: "same-origin", cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || "Gagal menyimpan logo.");
+      let originalError = "";
+      if (typeof body.logo_repo === "string" && body.logo_repo) {
+        setStatus("Mengunggah logo asli tanpa kompresi…");
+        try { await uploadOriginalLogo(body.logo_repo, prepared); }
+        catch (cause) { originalError = cause instanceof Error ? cause.message : "Logo asli gagal diunggah."; }
+      }
       await reload();
       notifyDataChanged();
       setPrepared(null);
       selectedFile.current = null;
-      setMessage("Logo tersimpan. Sidebar, ikon tab, dan ikon untuk pemasangan baru sudah diperbarui.");
+      if (originalError) {
+        setError(`Ikon tab dan PWA tersimpan, tetapi logo asli belum tersimpan: ${originalError} Sidebar sementara memakai ikon 512 px; simpan logo lagi setelah R2 siap.`);
+      } else {
+        setMessage(`Logo tersimpan. Logo asli ${prepared.width} × ${prepared.height} piksel dipakai di dalam aplikasi; ikon tab dan PWA sudah diperbarui.`);
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Gagal menyimpan logo."); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setStatus(""); }
   }
 
   async function resetLogo() {
@@ -137,7 +191,7 @@ export default function SettingsPage() {
       <section className="card max-w-3xl space-y-2 p-2" aria-labelledby="logo-title">
         <div>
           <h3 id="logo-title" className="text-lg font-semibold text-white">Logo aplikasi</h3>
-          <p className="mt-1 text-sm text-slate-400">Unggah PNG atau JPG, lalu pilih latar ikon untuk browser dan PWA. Untuk latar bening, gunakan PNG transparan.</p>
+          <p className="mt-1 text-sm text-slate-400">Unggah PNG, JPG, atau WebP. File asli disimpan dan ditampilkan di dalam aplikasi tanpa kompresi atau pengecilan resolusi. Pilihan latar hanya berlaku untuk ikon tab browser dan PWA (192 &amp; 512 px, ukuran wajib browser). Untuk latar bening, gunakan PNG transparan.</p>
         </div>
         <div role="group" aria-label="Latar belakang logo" className="flex flex-wrap items-center gap-2">
           {(["transparent", "black", "white"] as const).map((mode) => (
@@ -150,22 +204,26 @@ export default function SettingsPage() {
         <div className="flex flex-wrap items-center gap-2">
           <div className="space-y-2 text-center">
             <div className="logo-transparency-bg flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl border border-base-border">
-              {version ? <img src={`/api/branding/icon?size=512&v=${version}`} alt="Logo aplikasi saat ini" className="h-full w-full object-contain" /> : <Cloud size={37} className="text-accent-blue" />}
+              {version
+                ? <img key={original || version} src={original ? logoOriginalURL(version, original) : `/api/branding/icon?size=512&v=${version}`} alt="Logo aplikasi saat ini" className="h-full w-full object-contain" />
+                : <Cloud size={37} className="text-accent-blue" />}
             </div>
             <p className="text-xs text-slate-400">Saat ini</p>
           </div>
           {prepared && (
             <div className="space-y-2 text-center">
               <img src={prepared.preview} alt={`Pratinjau ${prepared.filename}`} className="logo-transparency-bg h-24 w-24 rounded-2xl border border-accent-blue/60 object-contain" />
-              <p className="max-w-28 truncate text-xs text-slate-400">Pratinjau</p>
+              <p className="max-w-28 truncate text-xs text-slate-400">Pratinjau ikon</p>
             </div>
           )}
           <div className="min-w-0 flex-1 space-y-2">
-            <input ref={picker} type="file" accept="image/png,image/jpeg" onChange={(event) => void chooseLogo(event)} className="sr-only" aria-label="Pilih file logo" />
+            <input ref={picker} type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void chooseLogo(event)} className="sr-only" aria-label="Pilih file logo" />
             <button type="button" disabled={busy} onClick={() => picker.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-base-border bg-base-800 px-4 py-2.5 text-sm font-medium text-slate-100 hover:bg-base-700 disabled:opacity-50">
               <ImagePlus size={16} /> {busy ? "Memproses…" : version ? "Pilih logo baru" : "Pilih logo"}
             </button>
             {prepared && <p className="truncate text-xs text-slate-400">{prepared.filename}</p>}
+            {prepared && <p className="text-xs text-slate-400">Asli {prepared.width} × {prepared.height} piksel · disimpan utuh tanpa kompresi</p>}
+            {status && <p role="status" className="text-xs text-slate-400">{status}</p>}
           </div>
         </div>
         <div className="flex flex-wrap gap-2 border-t border-base-border pt-2">

@@ -19,6 +19,19 @@ import (
 
 const maxSingleUpload = int64(5) << 30 // R2 single-part PUT limit, not an application MB cap.
 
+// LogoRepoPrefix reserves image slots for the original application logo.
+// Each slot is bound to one app_branding version, so a new logo never shows
+// an older original. GitHub owners cannot contain "_", so it never collides.
+const LogoRepoPrefix = "__devcontrol__/logo-"
+
+// LogoRepo returns the reserved image slot for a branding version.
+func LogoRepo(version string) string { return LogoRepoPrefix + version }
+
+// Original bytes are stored and served untouched; only the type is checked.
+func allowedType(kind string) bool {
+	return kind == "image/jpeg" || kind == "image/png" || kind == "image/webp"
+}
+
 func validRepo(repo string) bool {
 	parts := strings.Split(repo, "/")
 	if len(parts) != 2 { return false }
@@ -52,7 +65,7 @@ func validID(id string) bool { return len(id) == 32 && strings.Trim(id, "0123456
 
 func imageType(data []byte) string {
 	kind := http.DetectContentType(data)
-	if kind == "image/jpeg" || kind == "image/png" { return kind }
+	if allowedType(kind) { return kind }
 	return ""
 }
 
@@ -214,9 +227,16 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusBadRequest, fmt.Errorf("permintaan thumbnail tidak valid")); return
 		}
 		if input.Action == "begin" {
-			if !validRepo(input.Repo) || (input.ContentType != "image/jpeg" && input.ContentType != "image/png") ||
+			if !validRepo(input.Repo) || !allowedType(input.ContentType) ||
 				input.SizeBytes <= 0 || input.SizeBytes > maxSingleUpload {
-				util.Error(w, http.StatusBadRequest, fmt.Errorf("gunakan JPG/PNG asli; batas unggah tunggal R2 adalah 5 GiB")); return
+				util.Error(w, http.StatusBadRequest, fmt.Errorf("gunakan JPG/PNG/WebP asli; batas unggah tunggal R2 adalah 5 GiB")); return
+			}
+			if strings.HasPrefix(input.Repo, LogoRepoPrefix) {
+				rows, err := d1.Query(`SELECT version FROM app_branding WHERE id = 1 LIMIT 1`)
+				if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+				if len(rows) != 1 || rows[0]["version"] != strings.TrimPrefix(input.Repo, LogoRepoPrefix) {
+					util.Error(w, http.StatusConflict, fmt.Errorf("versi logo sudah berubah; pilih dan simpan logo lagi")); return
+				}
 			}
 			store, err := archive.New()
 			if err != nil { util.Error(w, http.StatusPreconditionFailed, err); return }
@@ -250,7 +270,7 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 			key, _ := row["object_key"].(string)
 			kind, _ := row["content_type"].(string)
 			size, _ := row["size_bytes"].(float64)
-			if !validRepo(repo) || key != uploadedKey(repo, input.UploadID) || (kind != "image/jpeg" && kind != "image/png") || size <= 0 || size > float64(maxSingleUpload) {
+			if !validRepo(repo) || key != uploadedKey(repo, input.UploadID) || !allowedType(kind) || size <= 0 || size > float64(maxSingleUpload) {
 				util.Error(w, http.StatusBadGateway, fmt.Errorf("metadata unggahan tidak valid")); return
 			}
 			storage, err := newSignedStorage()

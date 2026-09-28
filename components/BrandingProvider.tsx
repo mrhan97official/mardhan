@@ -4,8 +4,18 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { usePathname } from "next/navigation";
 import { subscribeDataChanges } from "@/lib/liveUpdates";
 
-type Branding = { version: string; reload: () => Promise<void> };
+// version: PWA/tab icon set. original: untouched original logo (any
+// resolution) stored beside it; empty when only the icon set exists.
+type Branding = { version: string; original: string; reload: () => Promise<void> };
 const BrandingContext = createContext<Branding | null>(null);
+
+export const LOGO_REPO_PREFIX = "__devcontrol__/logo-";
+
+// The original logo is served untouched from private R2 through the same
+// endpoint as thumbnails and banners.
+export function logoOriginalURL(version: string, original: string) {
+  return `/api/project-thumbnails?repo=${encodeURIComponent(LOGO_REPO_PREFIX + version)}&v=${encodeURIComponent(original)}`;
+}
 
 export function useBranding() {
   const branding = useContext(BrandingContext);
@@ -15,6 +25,7 @@ export function useBranding() {
 
 export default function BrandingProvider({ children }: { children: ReactNode }) {
   const [version, setVersion] = useState("");
+  const [original, setOriginal] = useState("");
   const pathname = usePathname();
   const reload = useCallback(async () => {
     try {
@@ -23,6 +34,7 @@ export default function BrandingProvider({ children }: { children: ReactNode }) 
       const body = await response.json();
       if (typeof body.version === "string" && (body.version === "" || /^[0-9a-f]{32}$/.test(body.version))) {
         setVersion(body.version);
+        setOriginal(typeof body.original === "string" && /^[0-9a-f]{32}$/.test(body.original) ? body.original : "");
       }
     } catch { /* Keep the last logo when the connection is unavailable. */ }
   }, []);
@@ -58,5 +70,5 @@ export default function BrandingProvider({ children }: { children: ReactNode }) 
     }
   }, [version, pathname]);
 
-  return <BrandingContext.Provider value={{ version, reload }}>{children}</BrandingContext.Provider>;
+  return <BrandingContext.Provider value={{ version, original, reload }}>{children}</BrandingContext.Provider>;
 }

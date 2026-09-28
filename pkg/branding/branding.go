@@ -1,5 +1,7 @@
 // Package branding keeps the current PWA icon in private R2 and serves only
 // generated PNG variants publicly for favicons and installation metadata.
+// The untouched original logo (any resolution) is stored separately in the
+// private image slot projectthumbnail.LogoRepo(version) and shown in the app.
 package branding
 
 import (
@@ -15,6 +17,7 @@ import (
 
 	"devcontrol/pkg/archive"
 	"devcontrol/pkg/d1"
+	"devcontrol/pkg/projectthumbnail"
 	"devcontrol/pkg/setup"
 	"devcontrol/pkg/util"
 )
@@ -34,6 +37,21 @@ func currentVersion() (string, error) {
 }
 
 func iconKey(version, name string) string { return "branding/" + version + "/" + name }
+
+// originalVersion reports the committed original logo for a branding version.
+func originalVersion(version string) (string, error) {
+	if version == "" { return "", nil }
+	rows, err := d1.Query(`SELECT version FROM project_thumbnails WHERE repo = ? LIMIT 1`, projectthumbnail.LogoRepo(version))
+	if err != nil || len(rows) == 0 { return "", err }
+	original, _ := rows[0]["version"].(string)
+	return original, nil
+}
+
+// removeOriginal deletes the original logo bound to a branding version.
+func removeOriginal(store *archive.Store, version string) error {
+	if !validVersion(version) { return nil }
+	return projectthumbnail.Delete(projectthumbnail.LogoRepo(version), store)
+}
 
 func removeVersion(store *archive.Store, version string) {
 	if !validVersion(version) { return }
@@ -63,14 +81,22 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 	previous, err := currentVersion()
 	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	if r.Method == http.MethodGet {
-		util.JSON(w, http.StatusOK, map[string]string{"version": previous}); return
+		original, err := originalVersion(previous)
+		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		util.JSON(w, http.StatusOK, map[string]string{"version": previous, "original": original}); return
 	}
 	if r.Method == http.MethodDelete {
+		if previous != "" {
+			store, storeErr := archive.New()
+			if storeErr != nil { util.Error(w, http.StatusPreconditionFailed, storeErr); return }
+			// The original is removed first so a failure leaves a retryable state.
+			if err := removeOriginal(store, previous); err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("logo asli belum terhapus: %w", err)); return }
+		}
 		if _, err := d1.Query(`DELETE FROM app_branding WHERE id = 1`); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 		if previous != "" {
 			if store, storeErr := archive.New(); storeErr == nil { removeVersion(store, previous) }
 		}
-		util.JSON(w, http.StatusOK, map[string]string{"version": ""}); return
+		util.JSON(w, http.StatusOK, map[string]string{"version": "", "original": ""}); return
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
@@ -101,8 +127,13 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		removeVersion(store, version)
 		util.Error(w, http.StatusBadGateway, err); return
 	}
-	if previous != "" { removeVersion(store, previous) }
-	util.JSON(w, http.StatusOK, map[string]string{"version": version})
+	if previous != "" {
+		removeVersion(store, previous)
+		// Best effort: the old original is bound to the old version and is
+		// never shown with the new icons even when this cleanup fails.
+		_ = removeOriginal(store, previous)
+	}
+	util.JSON(w, http.StatusOK, map[string]string{"version": version, "logo_repo": projectthumbnail.LogoRepo(version)})
 }
 
 // HandlePublic may be called without login. Read errors fall back to the
