@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { Cloud, ImagePlus, RotateCcw, Save, Settings } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import CloudflareZoneSettings from "@/components/CloudflareZoneSettings";
+import ImageLightbox from "@/components/ImageLightbox";
 import AppsPromoSettings from "@/components/AppsPromoSettings";
 import PushNotificationSettings from "@/components/PushNotificationSettings";
 import { logoOriginalURL, useBranding } from "@/components/BrandingProvider";
@@ -97,6 +98,9 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  // Image opened in the pop-up viewer (with download) from the logo section.
+  const [viewing, setViewing] = useState<{ src: string; label: string; filename: string } | null>(null);
+  const currentLogoURL = version ? (original ? logoOriginalURL(version, original) : `/api/branding/icon?size=512&v=${version}`) : "";
 
   useEffect(() => () => { if (prepared) URL.revokeObjectURL(prepared.preview); }, [prepared]);
 
@@ -204,16 +208,22 @@ export default function SettingsPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="space-y-2 text-center">
-            <div className="logo-transparency-bg flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl border border-base-border">
+            <button type="button" disabled={!version} title={version ? "Lihat & unduh logo" : undefined} aria-label={version ? "Lihat logo aplikasi saat ini" : "Logo bawaan"}
+              onClick={() => setViewing({ src: currentLogoURL, label: original ? "Logo aplikasi (asli)" : "Logo aplikasi (ikon 512 px)", filename: original ? "logo-devcontrol" : "logo-devcontrol-512" })}
+              className="logo-transparency-bg flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl border border-base-border transition hover:border-accent-blue focus-visible:border-accent-blue disabled:cursor-default disabled:hover:border-base-border">
               {version
-                ? <img key={original || version} src={original ? logoOriginalURL(version, original) : `/api/branding/icon?size=512&v=${version}`} alt="Logo aplikasi saat ini" className="h-full w-full object-contain" />
+                ? <img key={original || version} src={currentLogoURL} alt="Logo aplikasi saat ini" className="h-full w-full object-contain" />
                 : <Cloud size={37} className="text-accent-blue" />}
-            </div>
+            </button>
             <p className="text-xs text-slate-400">Saat ini</p>
           </div>
           {prepared && (
             <div className="space-y-2 text-center">
-              <img src={prepared.preview} alt={`Pratinjau ${prepared.filename}`} className="logo-transparency-bg h-24 w-24 rounded-2xl border border-accent-blue/60 object-contain" />
+              <button type="button" title="Lihat & unduh pratinjau ikon" aria-label={`Lihat pratinjau ${prepared.filename}`}
+                onClick={() => setViewing({ src: prepared.preview, label: "Pratinjau ikon 512 px", filename: "pratinjau-ikon-512" })}
+                className="block rounded-2xl">
+                <img src={prepared.preview} alt={`Pratinjau ${prepared.filename}`} className="logo-transparency-bg h-24 w-24 rounded-2xl border border-accent-blue/60 object-contain transition hover:border-accent-blue" />
+              </button>
               <p className="max-w-28 truncate text-xs text-slate-400">Pratinjau ikon</p>
             </div>
           )}
@@ -235,7 +245,8 @@ export default function SettingsPage() {
         </div>
         {error && <p role="alert" className="rounded-lg bg-red-500/10 p-2 text-sm text-red-300">{error}</p>}
         {message && <p role="status" className="rounded-lg bg-emerald-500/10 p-2 text-sm text-emerald-300">{message}</p>}
-        <p className="text-xs text-slate-500">Untuk menghilangkan latar hitam pada logo lama, pilih lagi file PNG asli yang transparan sebelum menyimpan.</p>
+        {viewing && <ImageLightbox src={viewing.src} label={viewing.label} filename={viewing.filename} onClose={() => setViewing(null)} />}
+        <p className="text-xs text-slate-500">Ketuk gambar logo untuk melihatnya dalam ukuran penuh dan mengunduhnya. Untuk menghilangkan latar hitam pada logo lama, pilih lagi file PNG asli yang transparan sebelum menyimpan.</p>
       </section>
 
       <PushNotificationSettings />

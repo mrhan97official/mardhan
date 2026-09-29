@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { ImagePlus, Pencil, Trash2 } from "lucide-react";
+import ImageLightbox from "@/components/ImageLightbox";
 import { notifyDataChanged } from "@/lib/liveUpdates";
 import { useOfflineData } from "@/lib/useOfflineData";
 
@@ -83,6 +84,8 @@ export default function AppsPromoSettings() {
   const [preparing, setPreparing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Banner opened in the pop-up viewer (with download).
+  const [viewing, setViewing] = useState<{ src: string; label: string; filename: string } | null>(null);
 
   useEffect(() => () => { if (prepared) URL.revokeObjectURL(prepared.preview); }, [prepared]);
 
@@ -190,10 +193,12 @@ export default function AppsPromoSettings() {
         </button>
       </div>
       {promotion.data && (
-        <div className="overflow-hidden rounded-xl border border-base-border bg-white">
+        <button type="button" title="Lihat & unduh banner" aria-label="Lihat banner saat ini"
+          onClick={() => setViewing({ src: imageURL, label: "Banner halaman Aplikasi (asli)", filename: "banner-aplikasi" })}
+          className="block w-full overflow-hidden rounded-xl border border-base-border bg-white transition hover:border-accent-blue focus-visible:border-accent-blue">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={imageURL} alt="Banner saat ini" className="aspect-[16/5] w-full object-cover" />
-        </div>
+        </button>
       )}
       {promotion.error && <p role="alert" className="text-xs text-amber-300">Banner belum dapat dimuat: {promotion.error}</p>}
       {editing && <form onSubmit={(event) => void save(event)} className="space-y-2 border-t border-base-border pt-2">
@@ -217,8 +222,12 @@ export default function AppsPromoSettings() {
         </label>
         {preparing && <p role="status" className="text-xs text-slate-400">Membaca ukuran gambar…</p>}
         {prepared && <div className="flex flex-wrap items-center gap-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={prepared.preview} alt="Pratinjau gambar banner" className="aspect-[16/5] w-48 rounded-lg border border-base-border bg-white object-cover" />
+          <button type="button" title="Lihat & unduh pratinjau banner" aria-label="Lihat pratinjau gambar banner"
+            onClick={() => setViewing({ src: prepared.preview, label: "Pratinjau banner (asli)", filename: "pratinjau-banner" })}
+            className="block rounded-lg">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={prepared.preview} alt="Pratinjau gambar banner" className="aspect-[16/5] w-48 rounded-lg border border-base-border bg-white object-cover transition hover:border-accent-blue" />
+          </button>
           <div className="text-xs text-slate-400">
             <p>{prepared.originalWidth} × {prepared.originalHeight} piksel · {formatSize(prepared.originalBytes)}</p>
             <p>Disimpan utuh: resolusi dan kualitas asli tidak diubah.</p>
@@ -236,6 +245,7 @@ export default function AppsPromoSettings() {
         </div>
       </form>}
       {!editing && error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+      {viewing && <ImageLightbox src={viewing.src} label={viewing.label} filename={viewing.filename} onClose={() => setViewing(null)} />}
     </section>
   );
 }
