@@ -298,7 +298,7 @@ func handleDeployments(w http.ResponseWriter, r *http.Request) {
 		}
 		job := deploymentJob{ID: value("id"), Kind: value("kind"), Target: value("target"),
 			Status: value("status"), Stages: stages, CreatedAt: value("created_at"), UpdatedAt: value("updated_at"), Message: value("message")}
-		if raw := value("diagnosis"); raw != "" && json.Valid([]byte(raw)) { job.Diagnosis = json.RawMessage(raw) }
+		if raw := value("diagnosis"); raw != "" && json.Valid([]byte(raw)) { job.Diagnosis = enrichDiagnosis(raw) }
 		jobs = append(jobs, job)
 	}
 	util.JSON(w, http.StatusOK, jobs)
@@ -3779,6 +3779,46 @@ func diagnosisStage(kind string, position int) string {
 	return names[position-1]
 }
 
+// enrichDiagnosis adds the source to a stored diagnosis written by an older
+// version, so the Pipeline never shows "sumber belum bisa dipastikan" merely
+// because the record predates source classification. No network calls.
+func enrichDiagnosis(raw string) json.RawMessage {
+	var stored diagnose.Diagnosis
+	if json.Unmarshal([]byte(raw), &stored) != nil { return json.RawMessage(raw) }
+	diagnose.Reclassify(&stored)
+	encoded, err := json.Marshal(stored)
+	if err != nil { return json.RawMessage(raw) }
+	return encoded
+}
+
+// rereadBuildLog retries reading the Vercel build log of a run whose log was
+// still empty when it failed. Minutes later Vercel usually has it; the
+// diagnosis is then rebuilt with the real error, its source and location,
+// and the leftover test project is removed right away.
+func rereadBuildLog(id string, row map[string]interface{}) (diagnose.Diagnosis, bool) {
+	token := os.Getenv("VERCEL_TOKEN")
+	raw := rowText(row, "ticket")
+	if token == "" || raw == "" { return diagnose.Diagnosis{}, false }
+	ticket, err := verifyBuildTicket(token, raw)
+	if err != nil || ticket.DeploymentID == "" { return diagnose.Diagnosis{}, false }
+	buildLog, err := getVercelBuildLogOnce(token, ticket.DeploymentID)
+	if err != nil || buildLog == "" { return diagnose.Diagnosis{}, false }
+	position := 2
+	var stages []deploymentStage
+	if json.Unmarshal([]byte(rowText(row, "stages")), &stages) == nil {
+		for _, stage := range stages { if stage.Status == "Failed" { position = stage.Position } }
+	}
+	message := rowText(row, "message")
+	if cut := strings.Index(message, ". Log belum dapat dibaca"); cut > 0 { message = message[:cut] }
+	message += ": " + vercelFailureSummary(buildLog)
+	fresh := recordDiagnosis(id, rowText(row, "kind"), rowText(row, "target"), position, message, buildLog)
+	if ticket.Project != "" && strings.Contains(ticket.Project, "-test-") {
+		cleanupTestProject(token, ticket.Project)
+		_, _ = d1.Query(`DELETE FROM vercel_orphan_projects WHERE project = ?`, ticket.Project)
+	}
+	return fresh, true
+}
+
 // recordDiagnosis stores where the run failed and how to fix it, including
 // the offending code read from the uploaded ZIP while it still exists.
 func recordDiagnosis(id, kind, target string, position int, message, buildLog string) diagnose.Diagnosis {
@@ -3815,11 +3855,20 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusBadRequest, fmt.Errorf("ID pipeline tidak valid")); return
 		}
 		if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
-		rows, err := d1.Query(`SELECT j.kind, j.target, j.stages, j.diagnosis, COALESCE(r.message, '') AS message
-			FROM deployment_jobs j LEFT JOIN deployment_runner r ON r.id = j.id WHERE j.id = ? LIMIT 1`, input.JobID)
+		rows, err := d1.Query(`SELECT j.kind, j.target, j.stages, j.diagnosis, COALESCE(r.message, '') AS message,
+			COALESCE(r.ticket, '') AS ticket FROM deployment_jobs j LEFT JOIN deployment_runner r ON r.id = j.id WHERE j.id = ? LIMIT 1`, input.JobID)
 		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
 		if len(rows) == 0 { util.Error(w, http.StatusNotFound, fmt.Errorf("pipeline sudah tidak tersedia")); return }
 		if raw := rowText(rows[0], "diagnosis"); raw != "" && json.Valid([]byte(raw)) {
+			var stored diagnose.Diagnosis
+			if json.Unmarshal([]byte(raw), &stored) == nil {
+				diagnose.Reclassify(&stored)
+				if stored.LogMissing {
+					if fresh, ok := rereadBuildLog(input.JobID, rows[0]); ok { stored = fresh }
+				}
+				util.JSON(w, http.StatusOK, stored)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-store")
 			_, _ = w.Write([]byte(raw))

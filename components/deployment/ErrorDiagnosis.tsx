@@ -30,8 +30,16 @@ async function copyText(text: string): Promise<boolean> {
 // One clear answer to "apakah ini dari DevControl atau dari ZIP saya?",
 // shown before anything else in the diagnosis. Wording adapts to whether
 // this run was deploying the person's own app or updating DevControl itself.
-function sourceBanner(source: Diagnosis["source"] | undefined, kind?: string) {
+function sourceBanner(source: Diagnosis["source"] | undefined, kind?: string, logMissing?: boolean) {
   const selfUpdate = kind === "self_update";
+  if (logMissing) {
+    return {
+      Icon: Loader2,
+      tone: "border-slate-500/30 bg-slate-500/[0.06] text-slate-300",
+      title: "Sumber sedang dipastikan: log build dibaca ulang dari Vercel",
+      detail: "Build berhenti dengan ERROR, tetapi Vercel belum menyimpan log-nya saat itu. DevControl membacanya ulang otomatis; sumber dan letak error tampil di sini begitu log tersedia.",
+    };
+  }
   switch (source) {
     case "code":
       return {
@@ -91,6 +99,30 @@ export default function ErrorDiagnosis({
 
   useEffect(() => { if (provided) setDiagnosis(provided); }, [provided]);
 
+  // When the build log was not available yet, ask the server to read it
+  // again every 10 seconds for about two minutes; it rebuilds the diagnosis
+  // (real error, source, location) as soon as Vercel returns the log.
+  const waitingForLog = !!jobId && !!diagnosis?.log_missing;
+  useEffect(() => {
+    if (!waitingForLog || !jobId) return;
+    let cancelled = false;
+    let attempts = 0;
+    const timer = setInterval(async () => {
+      attempts += 1;
+      if (attempts > 12) { clearInterval(timer); return; }
+      try {
+        const response = await fetch("/api/diagnose", {
+          method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", cache: "no-store",
+          body: JSON.stringify({ job_id: jobId }),
+        });
+        if (!response.ok) return;
+        const body = (await response.json()) as Diagnosis;
+        if (!cancelled && body && !body.log_missing) { setDiagnosis(body); clearInterval(timer); }
+      } catch { /* try again on the next tick */ }
+    }, 10000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [waitingForLog, jobId]);
+
   useEffect(() => {
     if (provided || (!jobId && !message)) return;
     let cancelled = false;
@@ -124,7 +156,7 @@ export default function ErrorDiagnosis({
     return failed ? <p className="text-xs text-slate-500">Diagnosis otomatis belum tersedia: {failed}</p> : null;
   }
 
-  const banner = sourceBanner(diagnosis.source, kind);
+  const banner = sourceBanner(diagnosis.source, kind, diagnosis.log_missing);
   const where = diagnosis.location
     ? `${diagnosis.location.file}${diagnosis.location.line ? ` baris ${diagnosis.location.line}` : ""}${diagnosis.location.column ? `, kolom ${diagnosis.location.column}` : ""}`
     : "";
@@ -144,7 +176,7 @@ export default function ErrorDiagnosis({
       </div>
 
       <div className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 ${banner.tone}`}>
-        <banner.Icon size={16} className="mt-0.5 shrink-0" />
+        <banner.Icon size={16} className={`mt-0.5 shrink-0 ${diagnosis.log_missing ? "animate-spin" : ""}`} />
         <div className="text-xs">
           <p className="font-semibold">{banner.title}</p>
           <p className="mt-0.5 opacity-90">{banner.detail}</p>

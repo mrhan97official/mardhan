@@ -47,6 +47,9 @@ type Diagnosis struct {
 	LogExcerpt string    `json:"log_excerpt,omitempty"`
 	Stack      string    `json:"stack,omitempty"`
 	Retryable  bool      `json:"retryable"`
+	// LogMissing: the build failed but Vercel had not stored its log yet when
+	// it was read. The source is decided once the log is read again.
+	LogMissing bool      `json:"log_missing,omitempty"`
 	Prompt     string    `json:"prompt"`
 }
 
@@ -79,6 +82,10 @@ type rule struct {
 }
 
 var rules = []rule{
+	{keys: []string{"log belum dapat dibaca", "log build kosong"}, source: SourceUnknown, category: "Log build Vercel belum tersedia",
+		cause: "Build di Vercel berhenti dengan ERROR, tetapi Vercel belum menyimpan log-nya saat DevControl membacanya. Tanpa log, sumbernya belum bisa dipastikan; DevControl membaca ulang log ini secara otomatis.",
+		fixes: []string{"Tunggu sebentar: diagnosis ini diperbarui otomatis begitu log terbaca, lengkap dengan sumber dan letak errornya.",
+			"Bila tetap kosong, jalankan ulang deployment dengan ZIP yang sama; pembacaan log kini dicoba ulang otomatis."}, retry: true},
 	{keys: []string{"halaman utama menampilkan 404", "http 404", "404 not_found"}, source: SourceConfig, category: "Hasil build tidak disajikan (404 NOT_FOUND)",
 		cause: "Build selesai, tetapi Vercel tidak menemukan halaman pada URL deployment. Penyebabnya bisa framework/Root Directory/Output Directory yang tidak sesuai, project Git berbeda dari project import manual, atau alias mengarah ke deployment lama.",
 		fixes: []string{"Pastikan package.json berada di akar ZIP dan mencantumkan framework-nya (vite, react-scripts, next, dll.) di dependencies/devDependencies.",
@@ -165,6 +172,69 @@ var rules = []rule{
 	{keys: []string{"bukan zip", "zip tidak valid", "zip rusak", "not a valid zip"}, source: SourceCode, category: "File ZIP tidak valid",
 		cause: "File yang diunggah rusak atau bukan arsip ZIP standar.",
 		fixes: []string{"Kompres ulang folder proyek sebagai .zip biasa (bukan .rar/.7z), lalu unggah lagi."}},
+}
+
+// Hints for errors no specific rule recognised. Order matters in classify:
+// DevControl's own service messages first, then evidence of the project's
+// own build failing.
+var platformHints = []string{
+	"gagal memeriksa status vercel", "penyiapan d1/r2", "zip tidak dapat disimpan", "arsip zip wajib tersimpan",
+	"runner tidak dapat", "runner cloudflare", "sesi deployment tidak valid", "sesi pemantauan build",
+	"api.vercel.com", "api.github.com", "api.cloudflare.com", "http 401", "http 403", "http 500", "http 504",
+	"gagal membaca akun github", "workers scripts edit",
+}
+
+var buildHints = []string{
+	"exited with 1", "exited with 2", "exited with code 1", "build failed", "failed to compile", "compilation failed",
+	"npm err!", "npm error", "yarn error", "pnpm err", "error: command", "go: ", "# devcontrol", "✗", "error ts",
+	"error:", "err!",
+}
+
+// classify decides where to act when no specific rule matched: a file of
+// the ZIP named in the error, or the project's own build command failing,
+// points at the uploaded code; DevControl's messages about its services
+// point at DevControl; otherwise the stage the run stopped at decides.
+func classify(d Diagnosis, message, buildLog string) Source {
+	lower := strings.ToLower(message + "\n" + buildLog)
+	if strings.Contains(lower, "log belum dapat dibaca") || strings.Contains(lower, "log build kosong") { return SourceUnknown }
+	for _, hint := range platformHints { if strings.Contains(lower, hint) { return SourcePlatform } }
+	// A file:line counts only when it was found in the ZIP (snippet read) or
+	// came from Vercel's build output, never from DevControl's own messages.
+	if d.Location != nil && d.Location.File != "" && (d.Snippet != "" || strings.TrimSpace(buildLog) != "") { return SourceCode }
+	stage := strings.ToLower(d.Stage)
+	buildStage := strings.Contains(stage, "uji build") || strings.Contains(stage, "online") || strings.Contains(stage, "production")
+	// Build-output wording is trusted from Vercel's build log, or from the
+	// message only when the run stopped while Vercel was building.
+	buildText := strings.ToLower(buildLog)
+	if strings.TrimSpace(buildText) == "" && buildStage { buildText = lower }
+	for _, hint := range buildHints { if buildText != "" && strings.Contains(buildText, hint) { return SourceCode } }
+	switch {
+	case strings.Contains(stage, "uji build") && strings.TrimSpace(buildLog) != "":
+		// Vercel ran the project's own build and it produced output.
+		return SourceCode
+	case strings.Contains(stage, "github"), strings.Contains(stage, "simpan"):
+		// Pushing to GitHub and storing the ZIP are DevControl's own steps.
+		return SourcePlatform
+	}
+	return SourceUnknown
+}
+
+func logMissing(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "log belum dapat dibaca") || strings.Contains(lower, "log build kosong")
+}
+
+// Reclassify fills in the source of a diagnosis stored by an older version
+// (before sources existed) or one left unknown, without any network call.
+func Reclassify(d *Diagnosis) {
+	if d == nil { return }
+	if d.Source == "" || d.Source == SourceUnknown {
+		for _, candidate := range rules {
+			if candidate.category == d.Category && candidate.source != SourceUnknown { d.Source = candidate.source; break }
+		}
+	}
+	if d.Source == "" || d.Source == SourceUnknown { d.Source = classify(*d, d.Summary, d.LogExcerpt) }
+	if !d.LogMissing { d.LogMissing = logMissing(d.Summary + "\n" + d.LogExcerpt) }
 }
 
 func clean(text string) string {
@@ -407,6 +477,19 @@ func Analyze(in Input) Diagnosis {
 		d.Location = location
 	}
 	if buildLog != "" { d.LogExcerpt = tail(buildLog, 40, 3500) } else { d.LogExcerpt = tail(message, 20, 1500) }
+	if d.Source == "" || d.Source == SourceUnknown { d.Source = classify(d, message, buildLog) }
+	d.LogMissing = logMissing(message)
+	if !matched || d.Category == "Error belum dikenali otomatis" {
+		switch d.Source {
+		case SourceCode:
+			d.Category = "Error build aplikasi (pola belum dikenali)"
+			d.Cause = "Error muncul dari build proyek di ZIP (kode, dependensi, atau konfigurasi build-nya), tetapi jenis error spesifiknya belum ada di daftar DevControl. Baris error di log dan potongan kode di bawah menunjukkan letaknya."
+		case SourcePlatform:
+			d.Category = "Error layanan DevControl (pola belum dikenali)"
+			d.Cause = "Error muncul saat DevControl berkomunikasi dengan GitHub, Vercel, Cloudflare, atau penyimpanan D1/R2 — bukan dari kode di ZIP. Jenis error spesifiknya belum ada di daftar DevControl."
+			d.Fixes = []string{"Periksa token dan izin DevControl (GITHUB_TOKEN, VERCEL_TOKEN, CF_API_TOKEN) di Vercel.", "Jika tidak ada yang berubah, tunggu beberapa menit lalu jalankan ulang dengan ZIP yang sama."}
+		}
+	}
 	d.Prompt = buildPrompt(in, d)
 	return d
 }

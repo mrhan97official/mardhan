@@ -58,6 +58,9 @@ export interface Diagnosis {
   log_excerpt?: string;
   stack?: string;
   retryable: boolean;
+  // Build gagal tetapi log Vercel belum tersedia saat dibaca; DevControl
+  // membacanya ulang otomatis lalu memperbarui sumber dan letak error.
+  log_missing?: boolean;
   prompt: string;
 }
 
