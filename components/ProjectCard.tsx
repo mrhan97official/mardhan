@@ -219,9 +219,9 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
   }, [actionsOpen]);
 
   return (
-    <div className={`card relative flex min-w-0 flex-col gap-2 p-2 ${actionsOpen ? "z-30" : "z-0"}`}>
-      <div className="relative aspect-[4/3] rounded-xl border border-base-border bg-base-800">
-        <div className="absolute inset-0 overflow-hidden rounded-xl">
+    <div className={`card relative flex min-w-0 flex-col gap-1.5 p-1.5 ${actionsOpen ? "z-30" : "z-0"}`}>
+      <div className="relative aspect-[16/10] rounded-lg border border-base-border bg-base-800">
+        <div className="absolute inset-0 overflow-hidden rounded-lg">
           <div className="absolute inset-0 bg-gradient-to-br from-blue-500/25 via-base-800 to-violet-500/20" aria-hidden="true">
             <svg viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" className="h-full w-full text-blue-300/20" fill="none">
               <path d="M0 72h400M0 144h400M0 216h400M80 0v300M160 0v300M240 0v300M320 0v300" stroke="currentColor" strokeWidth="1" />
@@ -241,11 +241,11 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
             <img key={thumbnail.version} src={imageURL(repo.full_name, thumbnail.slot, thumbnail.version)} alt={`Thumbnail aplikasi ${repo.full_name}`} loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-cover" onLoad={() => setFailedVersion(null)} onError={() => setFailedVersion(thumbnail.version)} />
           )}
         </div>
-        <div ref={menuRef} className="absolute right-2 top-2 z-10" onBlur={(event) => {
+        <div ref={menuRef} className="absolute right-1.5 top-1.5 z-10" onBlur={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false);
         }}>
-          <button type="button" aria-label={`Aksi proyek ${repo.full_name}`} aria-expanded={actionsOpen} aria-haspopup="menu" onClick={() => setActionsOpen((open) => !open)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-base-900/35 text-slate-100 shadow-sm backdrop-blur-sm hover:bg-base-900/60">
-            <MoreVertical size={17} />
+          <button type="button" aria-label={`Aksi proyek ${repo.full_name}`} aria-expanded={actionsOpen} aria-haspopup="menu" onClick={() => setActionsOpen((open) => !open)} className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-base-900/35 text-slate-100 shadow-sm backdrop-blur-sm hover:bg-base-900/60">
+            <MoreVertical size={15} />
           </button>
           {actionsOpen && (
             <div role="menu" aria-label={`Aksi proyek ${repo.full_name}`} className="absolute right-0 top-full z-30 mt-2 w-52 rounded-xl border border-base-border bg-base-900 p-1.5 text-sm shadow-2xl">
@@ -299,35 +299,35 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
           </section>
         </div>, document.body,
       )}
-      {uploading && <p role="status" className="text-xs text-slate-400">{uploadProgress === null ? "Menyiapkan gambar…" : uploadProgress < 100 ? `Mengunggah ${uploadProgress}%` : "Memverifikasi gambar…"}</p>}
-      {imageError && <p role="alert" className="text-xs text-red-300">{imageError}</p>}
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="truncate text-sm font-bold text-white sm:text-base" title={displayName || name}>{displayName || name}</h3>
-          {displayName && displayName !== name && <p className="truncate text-xs text-slate-500" title={repo.full_name}>Repo: {repo.full_name}</p>}
+      {uploading && <p role="status" className="text-[11px] text-slate-400">{uploadProgress === null ? "Menyiapkan gambar…" : uploadProgress < 100 ? `Mengunggah ${uploadProgress}%` : "Memverifikasi gambar…"}</p>}
+      {imageError && <p role="alert" className="text-[11px] text-red-300">{imageError}</p>}
+      <div className="flex flex-wrap items-start justify-between gap-1">
+        <div className="min-w-0 max-w-full">
+          <h3 className="truncate text-xs font-bold text-white sm:text-sm" title={displayName || name}>{displayName || name}</h3>
+          {displayName && displayName !== name && <p className="truncate text-[11px] text-slate-500" title={repo.full_name}>Repo: {repo.full_name}</p>}
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 flex-wrap items-center gap-1">
           {source === "stored" && (
-            <span className="rounded-full bg-base-800 px-2 py-1 text-[11px] text-slate-400">Tersimpan di aplikasi</span>
+            <span className="rounded-full bg-base-800 px-1.5 py-0.5 text-[10px] text-slate-400">Tersimpan di aplikasi</span>
           )}
           {repo.private && (
-            <span className="flex items-center gap-1 rounded-full bg-base-800 px-2 py-1 text-[11px] font-medium text-slate-400">
-              <Lock size={11} /> Private
+            <span className="flex items-center gap-1 rounded-full bg-base-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
+              <Lock size={10} /> Private
             </span>
           )}
           {repo.archived && (
-            <span className="flex items-center gap-1 rounded-full bg-amber-400/15 px-2 py-1 text-[11px] font-medium text-amber-400">
-              <Archive size={11} /> Archived
+            <span className="flex items-center gap-1 rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-400">
+              <Archive size={10} /> Archived
             </span>
           )}
         </div>
       </div>
 
-      <p className="line-clamp-2 min-h-[2.5rem] text-xs text-slate-400 sm:text-sm">
+      <p className="line-clamp-2 min-h-[2rem] text-[11px] leading-4 text-slate-400 sm:text-xs">
         {repo.description || "Tidak ada deskripsi."}
       </p>
 
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-slate-500">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
         {repo.language && (
           <span className="flex items-center gap-1.5">
             <span className={`h-2 w-2 rounded-full ${languageDot}`} />
@@ -352,11 +352,11 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
         )}
       </div>
 
-      <div className="mt-1 flex flex-wrap items-center justify-between gap-2 border-t border-base-border/70 pt-2">
-        <span className="text-[11px] text-slate-500">{pushed ? `Diperbarui ${pushed}` : linked ? "Tercatat di deployment" : "Repo GitHub"}</span>
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-base-border/70 pt-1.5">
+        <span className="text-[10px] text-slate-500">{pushed ? `Diperbarui ${pushed}` : linked ? "Tercatat di deployment" : "Repo GitHub"}</span>
         {repo.html_url && (
-          <a href={repo.html_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs text-slate-300 hover:underline">
-            GitHub <ExternalLink size={12} />
+          <a href={repo.html_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[11px] text-slate-300 hover:underline">
+            GitHub <ExternalLink size={11} />
           </a>
         )}
         {shownURL ? (
@@ -364,11 +364,11 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
             href={shownURL}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 text-xs font-medium text-accent-blue hover:underline"
+            className="flex items-center gap-1 text-[11px] font-medium text-accent-blue hover:underline"
           >
-            Buka aplikasi <ExternalLink size={12} />
+            Buka aplikasi <ExternalLink size={11} />
           </a>
-        ) : <span className="text-xs text-slate-500">{linked ? "URL aplikasi belum tersimpan" : "Belum terhubung ke deployment"}</span>}
+        ) : <span className="text-[11px] text-slate-500">{linked ? "URL aplikasi belum tersimpan" : "Belum terhubung ke deployment"}</span>}
       </div>
       {canUpdate && (
         // The app to change is the card being looked at, so the form opens
@@ -378,9 +378,9 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
           disabled={updating}
           onClick={() => openDeploy("update_app", { app: serviceName!, label: displayName || repo.name })}
           aria-label={updating ? `${displayName || repo.name} sedang di-update` : `Update ${displayName || repo.name}`}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-accent-blue/40 bg-accent-blue/10 px-3 py-2 text-sm font-semibold text-accent-blue hover:bg-accent-blue/20 disabled:cursor-not-allowed disabled:border-base-border disabled:bg-base-800/60 disabled:text-slate-400"
+          className="mt-0.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent-blue/40 bg-accent-blue/10 px-2 py-1.5 text-xs font-semibold text-accent-blue hover:bg-accent-blue/20 disabled:cursor-not-allowed disabled:border-base-border disabled:bg-base-800/60 disabled:text-slate-400"
         >
-          {updating ? <><Loader2 size={15} className="animate-spin" /> Sedang di-update…</> : <><RefreshCw size={15} /> Update</>}
+          {updating ? <><Loader2 size={13} className="animate-spin" /> Sedang di-update…</> : <><RefreshCw size={13} /> Update</>}
         </button>
       )}
     </div>

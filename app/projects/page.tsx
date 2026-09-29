@@ -196,9 +196,9 @@ export default function ProjectsPage() {
       )}
 
       {loading && apps.length === 0 ? (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="card h-44 animate-pulse bg-base-800/40" />
+            <div key={i} className="card h-36 animate-pulse bg-base-800/40" />
           ))}
         </div>
       ) : apps.length === 0 ? (
@@ -212,7 +212,7 @@ export default function ProjectsPage() {
           }
         />
       ) : (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
           {apps.map(({ service, repo, source }) => (
             <ProjectCard key={repo.full_name.toLowerCase()} repo={repo} displayName={service?.display_name} appUrl={service?.app_url} linked={!!service} source={source}
               serviceName={service?.repo ? service.name : undefined} updating={!!service && updatingApps.has(service.name.toLowerCase())}

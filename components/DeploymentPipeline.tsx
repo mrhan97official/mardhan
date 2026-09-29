@@ -38,6 +38,27 @@ const KIND_TEXT: Record<DeploymentJob["kind"], string> = {
   self_update: "Update Diri",
 };
 
+// Update Diri targets DevControl's own repo ("owner/repo@branch"). The card
+// shows only the app name so viewers don't see the GitHub account or branch.
+const SELF_APP_NAME = "DevControl";
+
+function jobTitle(job: DeploymentJob): string {
+  return job.kind === "self_update" ? SELF_APP_NAME : job.target;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Runner messages may quote "owner/repo@branch"; show the app name instead.
+function jobMessage(job: DeploymentJob): string | undefined {
+  if (job.kind !== "self_update" || !job.message) return job.message;
+  const at = job.target.lastIndexOf("@");
+  const repo = at > 0 ? job.target.slice(0, at) : job.target;
+  const hidden = [job.target, repo].filter(Boolean).map(escapeRegExp).join("|");
+  return hidden ? job.message.replace(new RegExp(`(?:GitHub\\s+)?(?:${hidden})(?:@[\\w./-]+)?`, "gi"), SELF_APP_NAME) : job.message;
+}
+
 function utcMillis(value: string): number | null {
   const parsed = Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
   return Number.isFinite(parsed) ? parsed : null;
@@ -218,17 +239,17 @@ export default function DeploymentPipeline({
           </section>
         )}
         {visibleJobs.map((job) => (
-          <section key={job.id} className={`min-h-[clamp(136px,10rem,160px)] snap-start rounded-xl border bg-base-900 p-2 transition-shadow duration-700 ${freshId === job.id ? "border-purple-400/60 shadow-[0_0_0_3px_rgba(168,85,247,0.25)]" : "border-base-border"}`} aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
+          <section key={job.id} className={`min-h-[clamp(136px,10rem,160px)] snap-start rounded-xl border bg-base-900 p-2 transition-shadow duration-700 ${freshId === job.id ? "border-purple-400/60 shadow-[0_0_0_3px_rgba(168,85,247,0.25)]" : "border-base-border"}`} aria-label={`${KIND_TEXT[job.kind]} ${jobTitle(job)}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-slate-100">{KIND_TEXT[job.kind]} · <span className="break-all">{job.target}</span></p>
+                <p className="text-sm font-semibold text-slate-100">{KIND_TEXT[job.kind]} · <span className="break-all">{jobTitle(job)}</span></p>
                 <p className="mt-1 text-[11px] text-slate-500"><Clock3 size={11} className="mr-1 inline" />{job.created_at} UTC</p>
               </div>
               <span className={`rounded-full border px-2 py-1 text-xs font-medium ${job.status === "Running" ? "border-purple-400/40 text-purple-400" : job.status === "Success" ? "border-emerald-400/40 text-emerald-400" : job.status === "Failed" ? "border-red-400/40 text-red-400" : "border-amber-400/40 text-amber-400"}`}>
                 {job.status === "Running" && <Loader2 size={12} className="mr-1 inline animate-spin" />}{STATUS_TEXT[job.status]}
               </span>
             </div>
-            {job.message && <p className={`mt-2 text-xs ${job.status === "Failed" ? "text-red-400" : job.status === "Interrupted" ? "text-amber-400" : "text-slate-400"}`}>{job.message}</p>}
+            {job.message && <p className={`mt-2 text-xs ${job.status === "Failed" ? "text-red-400" : job.status === "Interrupted" ? "text-amber-400" : "text-slate-400"}`}>{jobMessage(job)}</p>}
             <JobStages stages={job.stages} job={job} now={now} />
             {(job.status === "Failed" || job.status === "Interrupted") && (
               <div className="mt-2 space-y-2">
