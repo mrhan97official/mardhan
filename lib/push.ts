@@ -1,13 +1,14 @@
 // Web Push on this device: notifications arrive even when DevControl is
 // closed. The server keeps one subscription per device (browser endpoint).
 
-export type PushEvent = "deploy" | "self_update" | "confirm" | "app404";
+export type PushEvent = "deploy" | "self_update" | "confirm" | "app404" | "security";
 
 export const PUSH_EVENTS: { id: PushEvent; label: string; hint: string }[] = [
   { id: "deploy", label: "Deploy aplikasi", hint: "Aplikasi Baru dan Update Aplikasi berhasil, gagal, atau terhenti." },
   { id: "self_update", label: "Update diri", hint: "Update DevControl selesai, gagal, atau terhenti." },
   { id: "confirm", label: "Konfirmasi menunggu", hint: "Ada pilihan yang perlu dijawab admin." },
   { id: "app404", label: "Aplikasi 404", hint: "Tautan aplikasi menampilkan 404 Vercel (diperiksa tiap 15 menit)." },
+  { id: "security", label: "Keamanan", hint: "Login gagal berulang dan temuan audit risiko tinggi (khusus owner/admin)." },
 ];
 
 export type PushSupport = "ok" | "unsupported" | "ios-install";

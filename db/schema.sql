@@ -344,3 +344,27 @@ CREATE TABLE IF NOT EXISTS auth_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Cookies signed out on the server (logout / step-up re-issue); rows expire
+-- with the cookie they revoke.
+CREATE TABLE IF NOT EXISTS revoked_sessions (
+  nonce TEXT PRIMARY KEY,
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_revoked_sessions_expires ON revoked_sessions (expires_at);
+
+-- Audit Aplikasi: one row per run (manual or scheduled), newest kept per app.
+CREATE TABLE IF NOT EXISTS app_audits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  app TEXT NOT NULL,
+  score INTEGER NOT NULL,
+  high INTEGER NOT NULL DEFAULT 0,
+  medium INTEGER NOT NULL DEFAULT 0,
+  low INTEGER NOT NULL DEFAULT 0,
+  report TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_audits_app_time ON app_audits (app, created_at DESC);

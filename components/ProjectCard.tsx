@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertCircle, Archive, ExternalLink, FileArchive, GitBranch, Github, History, ImageIcon, Loader2, Lock, MoreVertical, RefreshCw, RotateCcw, Star, Trash2, X } from "lucide-react";
+import Link from "next/link";
+import { AlertCircle, Archive, ExternalLink, FileArchive, GitBranch, Github, History, ImageIcon, Loader2, Lock, MoreVertical, RefreshCw, RotateCcw, ShieldCheck, Star, Trash2, X } from "lucide-react";
 import { useDeploymentOverlay } from "@/components/deployment/DeploymentOverlayProvider";
 import { UpdateHistoryDialog, ZipArchiveDialog } from "@/components/ProjectDialogs";
 import ProjectImagesDialog from "@/components/ProjectImagesDialog";
@@ -273,6 +274,8 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
               <div className="my-1 border-t border-base-border" />
               {admin && <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("zip"); }} className={`${MENU_ITEM} text-slate-200 hover:bg-base-800`}><FileArchive size={13} /> Arsip ZIP</button>}
               <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("history"); }} className={`${MENU_ITEM} text-slate-200 hover:bg-base-800`}><History size={13} /> Riwayat update</button>
+              {/* Audit uses the deployment record name, the key /api/app-audit knows. */}
+              {admin && serviceName && shownURL && <Link href={`/audit?app=${encodeURIComponent(serviceName)}`} role="menuitem" onClick={() => setActionsOpen(false)} className={`${MENU_ITEM} text-slate-200 hover:bg-base-800`}><ShieldCheck size={13} /> Audit aplikasi</Link>}
               {admin && repairBroken && <>
                 <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setRepairMode("repair"); setRepairDialog(true); }} className={`${MENU_ITEM} text-amber-300 hover:bg-amber-500/10`}><RotateCcw size={13} /> Perbaiki 404 Vercel</button>
                 <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setRepairMode("reimport"); setRepairDialog(true); }} className={`${MENU_ITEM} text-amber-300 hover:bg-amber-500/10`}><RotateCcw size={13} /> Impor ulang web Vercel</button>

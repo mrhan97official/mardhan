@@ -195,7 +195,7 @@ export default function AppsPromoSettings() {
       {promotion.data && (
         <button type="button" title="Lihat & unduh banner" aria-label="Lihat banner saat ini"
           onClick={() => setViewing({ src: imageURL, label: "Banner halaman Aplikasi (asli)", filename: "banner-aplikasi" })}
-          className="block w-full overflow-hidden rounded-xl border border-base-border bg-white transition hover:border-accent-blue focus-visible:border-accent-blue">
+          className="block w-full overflow-hidden rounded-xl border border-base-border bg-[#fff] transition hover:border-accent-blue focus-visible:border-accent-blue">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={imageURL} alt="Banner saat ini" className="aspect-[16/5] w-full object-cover" />
         </button>
@@ -226,7 +226,7 @@ export default function AppsPromoSettings() {
             onClick={() => setViewing({ src: prepared.preview, label: "Pratinjau banner (asli)", filename: "pratinjau-banner" })}
             className="block rounded-lg">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={prepared.preview} alt="Pratinjau gambar banner" className="aspect-[16/5] w-48 rounded-lg border border-base-border bg-white object-cover transition hover:border-accent-blue" />
+            <img src={prepared.preview} alt="Pratinjau gambar banner" className="aspect-[16/5] w-48 rounded-lg border border-base-border bg-[#fff] object-cover transition hover:border-accent-blue" />
           </button>
           <div className="text-xs text-slate-400">
             <p>{prepared.originalWidth} × {prepared.originalHeight} piksel · {formatSize(prepared.originalBytes)}</p>

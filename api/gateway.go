@@ -50,6 +50,7 @@ import (
 	"unicode/utf8"
 
 	"devcontrol/pkg/apimanagement"
+	"devcontrol/pkg/appaudit"
 	"devcontrol/pkg/autoconfig"
 	"devcontrol/pkg/archive"
 	"devcontrol/pkg/branding"
@@ -81,6 +82,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	// Fill in every setting derivable from the core variables before any
 	// handler (including the Cloudflare runner) reads os.Getenv.
 	autoconfig.Apply(r.Context())
+	auth.SecurityAlert = securityAlert
 	resource := r.URL.Query().Get("resource")
 	if resource == "deployment-runner" {
 		if r.Method != http.MethodPost || !deploymentrunner.Authorized(r.Header.Get("Authorization")) {
@@ -121,6 +123,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			util.Error(w, http.StatusUnauthorized, fmt.Errorf("login atau API key dengan hak baca diperlukan")); return
 		}
 	}
+	// Step-up: actions that expose secrets, replace code or remove access
+	// need the credential typed again within the last 15 minutes.
+	if needsFreshConfirm(resource, r) && !auth.RecentlyConfirmed(r) { auth.ReauthRequired(w); return }
 	// Record only traffic handled by this authenticated Go API. CDN pages,
 	// images and static files do not pass through this function.
 	meter := &trafficmetrics.CountingWriter{ResponseWriter: w}
@@ -179,6 +184,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	case "members":
 		if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 		auth.HandleMembers(w, r)
+	case "two-factor":
+		if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		auth.HandleTwoFactor(w, r)
+	case "app-audit":
+		if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		appaudit.Handle(w, r, selfAuditTarget(r))
 	case "databases":
 		handleDatabases(w, r)
 	case "api-management":
@@ -186,6 +197,40 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	default:
 		util.Error(w, http.StatusNotFound, fmt.Errorf("unknown or missing ?resource="))
 	}
+}
+
+// needsFreshConfirm lists the requests that require a recently typed
+// credential (see auth.RecentlyConfirmed). Update Diri checks it itself,
+// only when a new update starts.
+func needsFreshConfirm(resource string, r *http.Request) bool {
+	write := r.Method != http.MethodGet && r.Method != http.MethodHead
+	switch resource {
+	case "vercel-env":
+		return write || r.URL.Query().Get("reveal") != ""
+	case "members":
+		return write
+	case "project":
+		return r.Method == http.MethodDelete
+	case "zip-archives":
+		return true
+	}
+	return false
+}
+
+// securityAlert sends login-abuse and audit alerts to owner/admin devices.
+func securityAlert(key, title, body string) {
+	webpush.Notify(webpush.Message{Event: webpush.EventSecurity, Key: key, URL: "/audit", Tag: "security", Title: title, Body: body})
+}
+
+// selfAuditTarget describes DevControl itself for the app audit.
+func selfAuditTarget(r *http.Request) appaudit.Target {
+	host := strings.TrimSpace(os.Getenv("VERCEL_PROJECT_PRODUCTION_URL"))
+	if host == "" { host = r.Host }
+	repo := ""
+	if owner, slug := strings.TrimSpace(os.Getenv("VERCEL_GIT_REPO_OWNER")), strings.TrimSpace(os.Getenv("VERCEL_GIT_REPO_SLUG")); owner != "" && slug != "" {
+		repo = owner + "/" + slug
+	}
+	return appaudit.Target{Key: appaudit.SelfKey, Name: "DevControl", URL: "https://" + host, Repo: repo, Self: true}
 }
 
 // GET /api/overview -> top summary stat cards.
@@ -464,7 +509,10 @@ func handlePushWatch(w http.ResponseWriter, r *http.Request) {
 				Title: "🔔 Konfirmasi menunggu", Body: "Aktifkan metrik trafik Cloudflare untuk zona " + zoneName + "? Buka DevControl untuk menjawab."})
 		}
 	}
-	util.JSON(w, http.StatusOK, map[string]int{"checked_apps": checked})
+	// Audit Aplikasi: audit one app whose last audit is older than a day
+	// (round robin), within the time left in this run.
+	audited := appaudit.RunScheduled(r.Context(), selfAuditTarget(r))
+	util.JSON(w, http.StatusOK, map[string]int{"checked_apps": checked, "audited_apps": audited})
 }
 
 func enqueueDeployment(id, phase, ticket, branch, environment string) error {
@@ -2101,13 +2149,26 @@ func fetchGithubArchive(token, repo, branch string) ([]byte, error) {
 func handleZipArchives(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet { util.Error(w, http.StatusMethodNotAllowed, fmt.Errorf("use GET")); return }
+	// The owner/admin session and a recent confirmation always protect the
+	// archives. ZIP_ARCHIVE_ACCESS_TOKEN is an optional extra key; it may not
+	// be the admin password (that would reuse the password in a second place).
 	secret := os.Getenv("ZIP_ARCHIVE_ACCESS_TOKEN")
-	if len(secret) < 16 {
-		util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("isi ZIP_ARCHIVE_ACCESS_TOKEN (minimal 16 karakter) di Vercel untuk membuka arsip")); return
-	}
-	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if subtle.ConstantTimeCompare([]byte(provided), []byte(secret)) != 1 {
-		util.Error(w, http.StatusUnauthorized, fmt.Errorf("kunci arsip salah atau belum diisi")); return
+	if secret != "" {
+		if len(secret) < 16 || secret == os.Getenv("DEVCONTROL_ADMIN_PASSWORD") {
+			util.Error(w, http.StatusPreconditionFailed, fmt.Errorf("ZIP_ARCHIVE_ACCESS_TOKEN harus minimal 16 karakter dan berbeda dari kata sandi admin; ganti atau hapus variabel itu di Vercel")); return
+		}
+		lockKey := "zip:" + auth.ClientIP(r)
+		if minutes, err := auth.Throttled(lockKey); err != nil {
+			util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("status keamanan tidak dapat diperiksa; coba lagi")); return
+		} else if minutes > 0 {
+			util.Error(w, http.StatusTooManyRequests, fmt.Errorf("terlalu banyak kunci arsip salah; coba lagi dalam %d menit", minutes)); return
+		}
+		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(secret)) != 1 {
+			auth.RecordFailure(lockKey)
+			util.JSON(w, http.StatusUnauthorized, map[string]interface{}{"error": "kunci arsip salah atau belum diisi", "key_required": true}); return
+		}
+		auth.ClearFailures(lockKey)
 	}
 	store, err := archive.New()
 	if err != nil { util.Error(w, http.StatusPreconditionFailed, err); return }
@@ -2119,7 +2180,7 @@ func handleZipArchives(w http.ResponseWriter, r *http.Request) {
 		if err != nil { util.Error(w, http.StatusBadGateway, fmt.Errorf("gagal memeriksa ZIP tersimpan: %w", err)); return }
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, record.Filename))
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, safeDownloadName(record.Filename)))
 		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 		_, _ = w.Write(data)
 		return
@@ -2143,6 +2204,17 @@ func handleZipArchives(w http.ResponseWriter, r *http.Request) {
 	items, more, err := store.List(offset)
 	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	util.JSON(w, http.StatusOK, map[string]interface{}{"items": items, "has_more": more})
+}
+
+// safeDownloadName keeps an uploaded ZIP name safe inside a header value.
+func safeDownloadName(name string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '-' || r == '_' { return r }
+		return '_'
+	}, name)
+	if len(cleaned) > 120 { cleaned = cleaned[len(cleaned)-120:] }
+	if cleaned == "" || !strings.HasSuffix(strings.ToLower(cleaned), ".zip") { cleaned += ".zip" }
+	return cleaned
 }
 
 type githubUser struct {
@@ -2612,6 +2684,7 @@ func handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("tahap update tidak valid"))
 		return
 	}
+	if phase == "start" && !auth.RecentlyConfirmed(r) { auth.ReauthRequired(w); return }
 	if phase == "production-status" {
 		handleSelfUpdateProductionStatus(w, r, githubToken, vercelToken, owner, repoName, branch)
 		return

@@ -103,6 +103,9 @@ body:has(.app-shell) {
 /* No border lines on the top bar; a soft shadow appears only once the page
    content has been scrolled under it. */
 .app-header-scrolled {
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.07), 0 10px 24px -6px rgb(0 0 0 / 0.85);
+}
+html.light .app-header-scrolled {
   box-shadow: 0 1px 0 rgb(var(--base-border) / 0.35), 0 6px 16px -8px rgb(0 0 0 / 0.45);
 }
 
@@ -133,8 +136,13 @@ body:has(.app-shell) {
   @apply rounded-2xl border border-base-border bg-base-850 shadow-glow;
 }
 
-/* Solid primary actions and thumbnail captions keep white lettering in both palettes. */
-html.light :is(.bg-accent-blue, .bg-red-600).text-white,
+/* Solid-colour actions keep white lettering in both palettes. In light mode
+   the "white" token turns navy, so buttons with a solid fill are pinned to
+   real white here (their fill itself never changes with the theme). */
+html.light :is(.bg-accent-blue, .bg-accent-red, .bg-accent-green, .bg-accent-purple,
+  .bg-red-600, .bg-emerald-600, .bg-blue-600, [class~="bg-red-500/80"]).text-white {
+  color: #fff;
+}
 
 .logo-transparency-bg {
   background-color: #fff;

@@ -9,7 +9,7 @@
 //
 // Derived / discovered:
 //   DEVCONTROL_SESSION_SECRET  HMAC of the admin password and CF token
-//   ZIP_ARCHIVE_ACCESS_TOKEN   falls back to the admin password
+//   ZIP_ARCHIVE_ACCESS_TOKEN   optional extra key (never the admin password)
 //   CF_ACCOUNT_ID              the only account, or the one holding devcontrol-db
 //   CF_D1_DATABASE_ID          database "devcontrol-db", created when missing
 //   CF_R2_BUCKET               "devcontrol-<account prefix>", created by setup
@@ -128,9 +128,9 @@ func deriveLocked() {
 			_, _ = mac.Write([]byte("devcontrol/session/v1|" + env("CF_API_TOKEN")))
 			setAuto("DEVCONTROL_SESSION_SECRET", hex.EncodeToString(mac.Sum(nil)), "derived")
 		}
-		if len(os.Getenv("ZIP_ARCHIVE_ACCESS_TOKEN")) < 16 {
-			setAuto("ZIP_ARCHIVE_ACCESS_TOKEN", password, "derived")
-		}
+		// ZIP_ARCHIVE_ACCESS_TOKEN no longer falls back to the admin password:
+		// reusing it would put the owner password in a second place. Without
+		// it, ZIP archives are protected by the admin session + confirmation.
 	}
 	if env("CF_R2_BUCKET") == "" {
 		clean := strings.Map(func(r rune) rune {
@@ -541,6 +541,9 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !auth.IsAdmin(r) {
 		if r.Method != http.MethodGet { util.Error(w, http.StatusForbidden, fmt.Errorf("sesi admin diperlukan")); return }
+		// The sign-in screen only needs the list while the admin password is
+		// still missing; afterwards it would only map the setup for strangers.
+		if auth.Configured() { util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": false, "admin_configured": true}); return }
 		core := []map[string]interface{}{
 			{"key": "CF_API_TOKEN", "set": env("CF_API_TOKEN") != "", "required": true},
 			{"key": "DEVCONTROL_ADMIN_PASSWORD", "set": len(os.Getenv("DEVCONTROL_ADMIN_PASSWORD")) >= 16, "required": true},
@@ -569,6 +572,11 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		case "run":
 			notes = run(ctx)
 		case "choose":
+			// A choice changes which Cloudflare/Vercel resources DevControl
+			// uses: owner only, with a recently confirmed session. ("run" only
+			// fills values that can be derived safely and stays automatic.)
+			if !auth.IsOwner(r) { util.Error(w, http.StatusForbidden, fmt.Errorf("pilihan setup hanya dapat dijawab owner")); return }
+			if !auth.RecentlyConfirmed(r) { auth.ReauthRequired(w); return }
 			var err error
 			notes, err = choose(ctx, input.ID, input.Value)
 			if err != nil { util.Error(w, http.StatusBadRequest, err); return }

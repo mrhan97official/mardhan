@@ -51,6 +51,10 @@ var schemaStatements = []string{
   "CREATE TABLE IF NOT EXISTS members (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  role TEXT NOT NULL,\n  token_hash TEXT NOT NULL UNIQUE,\n  token_prefix TEXT NOT NULL DEFAULT '',\n  ip_allowlist TEXT NOT NULL DEFAULT '[]',\n  epoch INTEGER NOT NULL DEFAULT 0,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  last_login_at TEXT,\n  last_ip TEXT,\n  revoked_at TEXT\n)",
   "CREATE TABLE IF NOT EXISTS auth_attempts (\n  ip TEXT PRIMARY KEY,\n  failures INTEGER NOT NULL DEFAULT 0,\n  locked_until TEXT,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE TABLE IF NOT EXISTS auth_settings (\n  key TEXT PRIMARY KEY,\n  value TEXT NOT NULL\n)",
+  "CREATE TABLE IF NOT EXISTS revoked_sessions (\n  nonce TEXT PRIMARY KEY,\n  expires_at TEXT NOT NULL\n)",
+  "CREATE INDEX IF NOT EXISTS idx_revoked_sessions_expires ON revoked_sessions (expires_at)",
+  "CREATE TABLE IF NOT EXISTS app_audits (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  app TEXT NOT NULL,\n  score INTEGER NOT NULL,\n  high INTEGER NOT NULL DEFAULT 0,\n  medium INTEGER NOT NULL DEFAULT 0,\n  low INTEGER NOT NULL DEFAULT 0,\n  report TEXT NOT NULL,\n  source TEXT NOT NULL DEFAULT 'manual',\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+  "CREATE INDEX IF NOT EXISTS idx_app_audits_app_time ON app_audits (app, created_at DESC)",
 }
 
 var migrationStatements = []migrationStatement{
@@ -102,6 +106,8 @@ var expectedColumns = map[string][]string{
   "members": {"id", "name", "role", "token_hash", "token_prefix", "ip_allowlist", "epoch", "created_at", "last_login_at", "last_ip", "revoked_at"},
   "auth_attempts": {"ip", "failures", "locked_until", "updated_at"},
   "auth_settings": {"key", "value"},
+  "revoked_sessions": {"nonce", "expires_at"},
+  "app_audits": {"id", "app", "score", "high", "medium", "low", "report", "source", "created_at"},
 }
 
 var expectedTypes = map[string]map[string]string{
@@ -137,6 +143,8 @@ var expectedTypes = map[string]map[string]string{
   "members": {"id": "TEXT", "name": "TEXT", "role": "TEXT", "token_hash": "TEXT", "token_prefix": "TEXT", "ip_allowlist": "TEXT", "epoch": "INTEGER", "created_at": "TEXT", "last_login_at": "TEXT", "last_ip": "TEXT", "revoked_at": "TEXT"},
   "auth_attempts": {"ip": "TEXT", "failures": "INTEGER", "locked_until": "TEXT", "updated_at": "TEXT"},
   "auth_settings": {"key": "TEXT", "value": "TEXT"},
+  "revoked_sessions": {"nonce": "TEXT", "expires_at": "TEXT"},
+  "app_audits": {"id": "INTEGER", "app": "TEXT", "score": "INTEGER", "high": "INTEGER", "medium": "INTEGER", "low": "INTEGER", "report": "TEXT", "source": "TEXT", "created_at": "TEXT"},
 }
 
-var expectedIndexes = []string{"idx_deployment_jobs_running_target", "idx_deployment_jobs_updated", "idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_project_thumbnail_uploads_repo", "idx_project_thumbnail_uploads_time", "idx_project_thumbnail_objects_repo", "idx_push_subscriptions_subject", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time", "idx_deployment_history_repo"}
+var expectedIndexes = []string{"idx_deployment_jobs_running_target", "idx_deployment_jobs_updated", "idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_project_thumbnail_uploads_repo", "idx_project_thumbnail_uploads_time", "idx_project_thumbnail_objects_repo", "idx_push_subscriptions_subject", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time", "idx_deployment_history_repo", "idx_revoked_sessions_expires", "idx_app_audits_app_time"}

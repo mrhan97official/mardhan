@@ -48,6 +48,9 @@ type claims struct {
   Exp   int64  `json:"e"`
   Epoch int64  `json:"p"`
   Nonce string `json:"n"`
+  // Auth is when the credential (password/token, plus 2FA) was last typed.
+  // Dangerous actions require it to be recent (see RecentlyConfirmed).
+  Auth  int64  `json:"a,omitempty"`
 }
 
 type memberRow struct {
@@ -85,7 +88,9 @@ func Can(role, resource, method string) bool {
   case RoleOwner:
     return true
   case RoleAdmin:
-    return resource != "members"
+    // Owner-only: member management, 2FA, and Update Diri (it replaces
+    // DevControl's own code, so a leaked admin token must not reach it).
+    return resource != "members" && resource != "two-factor" && resource != "self-update"
   case RoleOperator:
     if read { return viewerRead[resource] }
     switch resource {
@@ -264,7 +269,7 @@ func readClaims(r *http.Request) (claims, bool) {
 func Current(r *http.Request) *Principal {
   if !Configured() { return nil }
   c, ok := readClaims(r)
-  if !ok { return nil }
+  if !ok || isRevoked(c.Nonce) { return nil }
   if c.Sub == RoleOwner {
     if epoch := ownerEpoch(); epoch < 0 || c.Epoch != epoch { return nil }
     return &Principal{Subject: RoleOwner, Role: RoleOwner, Name: "Owner"}
@@ -281,26 +286,72 @@ func audit(action, target string) {
   _, _ = d1.Query(`INSERT INTO admin_audit_log (action, target) VALUES (?, ?)`, action, target)
 }
 
-// lockedFor returns remaining lockout minutes for this IP (0 = free).
-func lockedFor(ip string) int64 {
+// lockedFor returns remaining lockout minutes for a key (an IP, or a
+// prefixed key such as "global:owner"); 0 = free. A database error is
+// returned so callers refuse the attempt instead of allowing unlimited tries.
+func lockedFor(key string) (int64, error) {
   rows, err := d1.Query(`SELECT CAST((julianday(locked_until) - julianday('now')) * 1440 AS INTEGER) + 1 AS minutes
-    FROM auth_attempts WHERE ip = ? AND locked_until > datetime('now') LIMIT 1`, ip)
-  if err != nil || len(rows) == 0 { return 0 }
-  return toInt(rows[0]["minutes"])
+    FROM auth_attempts WHERE ip = ? AND locked_until > datetime('now') LIMIT 1`, key)
+  if err != nil {
+    if missingTable(err) { return 0, nil }
+    return 0, err
+  }
+  if len(rows) == 0 { return 0, nil }
+  return toInt(rows[0]["minutes"]), nil
 }
 
-// recordFailure: after 5 failures the IP is locked 1, 2, 4 … up to 60 minutes.
-func recordFailure(ip string) {
+// failureCount adds one failure for key (reset after a quiet day).
+func failureCount(key string) int64 {
   rows, err := d1.Query(`INSERT INTO auth_attempts (ip, failures, updated_at) VALUES (?, 1, CURRENT_TIMESTAMP)
     ON CONFLICT(ip) DO UPDATE SET failures = CASE WHEN updated_at < datetime('now', '-1 day') THEN 1 ELSE failures + 1 END,
       updated_at = CURRENT_TIMESTAMP
-    RETURNING failures`, ip)
-  if err != nil || len(rows) == 0 { return }
-  failures := toInt(rows[0]["failures"])
+    RETURNING failures`, key)
+  if err != nil || len(rows) == 0 { return 0 }
+  return toInt(rows[0]["failures"])
+}
+
+func lockKey(key string, minutes int64) {
+  _, _ = d1.Query(`UPDATE auth_attempts SET locked_until = datetime('now', ?) WHERE ip = ?`, fmt.Sprintf("+%d minutes", minutes), key)
+}
+
+// recordFailure: after 5 failures the key is locked 1, 2, 4 … up to 60 minutes.
+func recordFailure(key string) {
+  failures := failureCount(key)
   if failures < 5 { return }
   minutes := int64(1) << uint(minInt(failures-5, 6))
   if minutes > 60 { minutes = 60 }
-  _, _ = d1.Query(`UPDATE auth_attempts SET locked_until = datetime('now', ?) WHERE ip = ?`, fmt.Sprintf("+%d minutes", minutes), ip)
+  lockKey(key, minutes)
+  if failures == 5 && !strings.Contains(key, ":") {
+    alert("login-lock:"+key+":"+time.Now().UTC().Format("2006-01-02T15"), "🛡️ Login gagal berulang",
+      "5 percobaan masuk gagal dari IP "+key+". IP itu dikunci sementara. Abaikan bila itu Anda sendiri.")
+  }
+}
+
+// globalOwnerKey counts wrong owner passwords from every IP together, so a
+// guess spread over many addresses is still slowed down.
+const globalOwnerKey = "global:owner"
+
+func recordGlobalOwnerFailure() {
+  failures := failureCount(globalOwnerKey)
+  if failures == 10 || failures == 20 {
+    alert("login-global:"+strconv.FormatInt(failures, 10)+":"+time.Now().UTC().Format("2006-01-02"), "🛡️ Banyak percobaan login owner",
+      strconv.FormatInt(failures, 10)+" kata sandi owner salah hari ini dari berbagai alamat. Pertimbangkan mengaktifkan 2FA dan mengganti kata sandi.")
+  }
+  if failures >= 20 { lockKey(globalOwnerKey, 15) }
+}
+
+// Throttled / RecordFailure let other endpoints with a secret (for example
+// the ZIP archive key) reuse the same lockout table under their own prefix.
+func Throttled(key string) (int64, error) { return lockedFor(key) }
+func RecordFailure(key string)            { recordFailure(key) }
+func ClearFailures(key string)            { _, _ = d1.Query(`DELETE FROM auth_attempts WHERE ip = ?`, key) }
+
+// SecurityAlert delivers a push notification to owner/admin devices. The API
+// entrypoint sets it (this package must not import webpush).
+var SecurityAlert func(key, title, body string)
+
+func alert(key, title, body string) {
+  if SecurityAlert != nil { SecurityAlert(key, title, body) }
 }
 
 func minInt(a, b int64) int64 { if a < b { return a }; return b }
@@ -310,50 +361,118 @@ func hashToken(token string) string {
   return hex.EncodeToString(digest[:])
 }
 
-func login(w http.ResponseWriter, r *http.Request) {
-  var body struct {
-    Credential string `json:"credential"`
-    Password   string `json:"password"`
+type loginBody struct {
+  Credential string `json:"credential"`
+  Password   string `json:"password"`
+  Code       string `json:"code"`
+  Action     string `json:"action"`
+}
+
+func loginFailed(w http.ResponseWriter, ip, target string) {
+  recordFailure(ip)
+  audit("login_failed", target+" @ "+ip)
+  time.Sleep(600 * time.Millisecond) // slows automated guessing
+  util.Error(w, http.StatusUnauthorized, fmt.Errorf("kata sandi, token akses, atau kode 2FA salah"))
+}
+
+func totpRequired(w http.ResponseWriter) {
+  util.JSON(w, http.StatusUnauthorized, map[string]interface{}{
+    "error": "Masukkan kode 6 digit dari aplikasi authenticator.", "totp_required": true})
+}
+
+// checkLockout answers 429/503 itself and returns false when the attempt
+// must not be evaluated.
+func checkLockout(w http.ResponseWriter, key, message string) bool {
+  minutes, err := lockedFor(key)
+  if err != nil {
+    util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("status keamanan login tidak dapat diperiksa; coba lagi sebentar"))
+    return false
   }
+  if minutes > 0 {
+    w.Header().Set("Retry-After", strconv.FormatInt(minutes*60, 10))
+    util.Error(w, http.StatusTooManyRequests, fmt.Errorf(message, minutes))
+    return false
+  }
+  return true
+}
+
+// ownerProof checks the owner password and, when enabled, the 2FA code.
+// It writes the failure response itself and returns false on any failure.
+func ownerProof(w http.ResponseWriter, ip, credential, code string) bool {
+  secret, err := ownerTOTPSecret()
+  if err != nil { util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("status 2FA tidak dapat diperiksa; coba lagi")); return false }
+  if secret == "" && !checkLockout(w, globalOwnerKey, "login owner dikunci sementara karena banyak percobaan gagal; coba lagi dalam %d menit") { return false }
+  got, want := sha256.Sum256([]byte(credential)), sha256.Sum256([]byte(os.Getenv("DEVCONTROL_ADMIN_PASSWORD")))
+  if subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
+    recordGlobalOwnerFailure()
+    loginFailed(w, ip, "owner")
+    return false
+  }
+  if secret != "" {
+    if strings.TrimSpace(code) == "" { totpRequired(w); return false }
+    ok, verifyErr := verifyTOTP(secret, code, true)
+    if verifyErr != nil { util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("kode 2FA tidak dapat diperiksa; coba lagi")); return false }
+    if !ok { loginFailed(w, ip, "owner-2fa"); return false }
+  }
+  return true
+}
+
+func login(w http.ResponseWriter, r *http.Request) {
+  var body loginBody
   if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
     util.Error(w, http.StatusBadRequest, fmt.Errorf("form login tidak valid")); return
   }
   credential := strings.TrimSpace(body.Credential)
   if credential == "" { credential = body.Password }
   ip := ClientIP(r)
-  if minutes := lockedFor(ip); minutes > 0 {
-    w.Header().Set("Retry-After", strconv.FormatInt(minutes*60, 10))
-    util.Error(w, http.StatusTooManyRequests, fmt.Errorf("terlalu banyak percobaan gagal; coba lagi dalam %d menit", minutes)); return
-  }
-  fail := func(target string) {
-    recordFailure(ip)
-    audit("login_failed", target+" @ "+ip)
-    time.Sleep(600 * time.Millisecond) // slows automated guessing
-    util.Error(w, http.StatusUnauthorized, fmt.Errorf("kata sandi atau token akses salah"))
-  }
+  if !checkLockout(w, ip, "terlalu banyak percobaan gagal; coba lagi dalam %d menit") { return }
+  if body.Action == "confirm" { confirmSession(w, r, ip, credential, body.Code); return }
+  now := time.Now().Unix()
 
   if strings.HasPrefix(credential, tokenPrefix) {
     rows, err := d1.Query(`SELECT id, name, role, epoch, ip_allowlist, COALESCE(revoked_at, '') AS revoked_at FROM members WHERE token_hash = ? LIMIT 1`, hashToken(credential))
-    if err != nil || len(rows) == 0 { fail("token"); return }
+    if err != nil || len(rows) == 0 { loginFailed(w, ip, "token"); return }
     found := rowToMember(rows[0])
-    if found.Revoked || !validRole(found.Role) { fail("member:" + found.Name + " (dicabut)"); return }
-    if !ipAllowed(found.IPs, ip) { fail("member:" + found.Name + " (IP tidak diizinkan)"); return }
-    if err := issue(w, r, claims{Sub: found.ID, Role: found.Role, Epoch: found.Epoch}); err != nil { util.Error(w, http.StatusInternalServerError, err); return }
+    if found.Revoked || !validRole(found.Role) { loginFailed(w, ip, "member:"+found.Name+" (dicabut)"); return }
+    if !ipAllowed(found.IPs, ip) { loginFailed(w, ip, "member:"+found.Name+" (IP tidak diizinkan)"); return }
+    if err := issue(w, r, claims{Sub: found.ID, Role: found.Role, Epoch: found.Epoch, Auth: now}); err != nil { util.Error(w, http.StatusInternalServerError, err); return }
     _, _ = d1.Query(`UPDATE members SET last_login_at = CURRENT_TIMESTAMP, last_ip = ? WHERE id = ?`, ip, found.ID)
-    _, _ = d1.Query(`DELETE FROM auth_attempts WHERE ip = ?`, ip)
+    ClearFailures(ip)
     audit("login_member", found.Name+" @ "+ip)
     util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": true, "role": found.Role, "name": found.Name})
     return
   }
 
-  got, want := sha256.Sum256([]byte(credential)), sha256.Sum256([]byte(os.Getenv("DEVCONTROL_ADMIN_PASSWORD")))
-  if subtle.ConstantTimeCompare(got[:], want[:]) != 1 { fail("owner"); return }
+  if !ownerProof(w, ip, credential, body.Code) { return }
   epoch := ownerEpoch()
   if epoch < 0 { util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("database sesi tidak dapat dihubungi; coba lagi")); return }
-  if err := issue(w, r, claims{Sub: RoleOwner, Role: RoleOwner, Epoch: epoch}); err != nil { util.Error(w, http.StatusInternalServerError, err); return }
-  _, _ = d1.Query(`DELETE FROM auth_attempts WHERE ip = ?`, ip)
+  if err := issue(w, r, claims{Sub: RoleOwner, Role: RoleOwner, Epoch: epoch, Auth: now}); err != nil { util.Error(w, http.StatusInternalServerError, err); return }
+  ClearFailures(ip)
+  ClearFailures(globalOwnerKey)
   audit("login_owner", ip)
   util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": true, "role": RoleOwner, "name": "Owner"})
+}
+
+// confirmSession re-checks the signed-in person's own credential (step-up)
+// and re-issues the cookie with a fresh Auth time. The old cookie is revoked.
+func confirmSession(w http.ResponseWriter, r *http.Request, ip, credential, code string) {
+  p := Current(r)
+  c, ok := readClaims(r)
+  if p == nil || !ok { util.Error(w, http.StatusUnauthorized, fmt.Errorf("sesi berakhir; silakan masuk lagi")); return }
+  if p.Role == RoleOwner {
+    if !ownerProof(w, ip, credential, code) { return }
+  } else {
+    if !strings.HasPrefix(credential, tokenPrefix) { loginFailed(w, ip, "confirm:"+p.Name); return }
+    rows, err := d1.Query(`SELECT id FROM members WHERE token_hash = ? LIMIT 1`, hashToken(credential))
+    if err != nil || len(rows) == 0 { loginFailed(w, ip, "confirm:"+p.Name); return }
+    if id, _ := rows[0]["id"].(string); id != p.Subject { loginFailed(w, ip, "confirm:"+p.Name); return }
+  }
+  now := time.Now().Unix()
+  revokeClaims(c)
+  if err := issue(w, r, claims{Sub: c.Sub, Role: c.Role, Epoch: c.Epoch, Auth: now}); err != nil { util.Error(w, http.StatusInternalServerError, err); return }
+  ClearFailures(ip)
+  audit("session_confirm", p.Name+" @ "+ip)
+  util.JSON(w, http.StatusOK, map[string]interface{}{"confirmed": true, "until": now + int64(confirmWindow.Seconds())})
 }
 
 // ---------- member management (owner only) ----------

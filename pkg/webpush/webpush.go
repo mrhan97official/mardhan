@@ -41,12 +41,13 @@ const (
 	EventSelfUpdate = "self_update" // Update Diri
 	EventConfirm    = "confirm"     // confirmations waiting for an admin
 	EventApp404     = "app404"      // an application link shows Vercel's 404
+	EventSecurity   = "security"    // login abuse and new high-risk audit findings
 )
 
-var Events = []string{EventDeploy, EventSelfUpdate, EventConfirm, EventApp404}
+var Events = []string{EventDeploy, EventSelfUpdate, EventConfirm, EventApp404, EventSecurity}
 
 // Confirmations can only be answered by owner/admin.
-var adminOnly = map[string]bool{EventConfirm: true}
+var adminOnly = map[string]bool{EventConfirm: true, EventSecurity: true}
 
 // Message is one notification. Key de-duplicates: a message whose key was
 // already sent is skipped, so retries never notify twice.

@@ -32,12 +32,13 @@ const NAV_ITEMS = [
   { label: "Containers", icon: Boxes, href: "/containers" },
   { label: "Logs", icon: ScrollText, href: "/logs" },
   { label: "Monitoring", icon: Gauge, href: "/monitoring" },
+  { label: "Audit Aplikasi", icon: ShieldCheck, href: "/audit" },
   { label: "Member & Akses", icon: UserCog, href: "/team" },
   { label: "Settings", icon: Settings, href: "/settings" },
 ];
 
 // Pages a role cannot use are hidden; the API enforces the same rules.
-const ADMIN_ONLY = new Set(["/api-management", "/databases", "/settings"]);
+const ADMIN_ONLY = new Set(["/api-management", "/databases", "/settings", "/audit"]);
 function visibleFor(role: Role, href: string): boolean {
   if (href === "/team") return role === "owner";
   if (ADMIN_ONLY.has(href)) return role === "owner" || role === "admin";

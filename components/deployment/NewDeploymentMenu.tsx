@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, FolderPlus, Plus, UploadCloud, type LucideIcon } from "lucide-react";
 import { useDeploymentOverlay, type ModalKey } from "./DeploymentOverlayProvider";
-import { canDeploy, isAdminRole, useSession } from "@/lib/session";
+import { canDeploy, useSession } from "@/lib/session";
 
 const MENU_ITEMS: { key: ModalKey; label: string; description: string; icon: LucideIcon }[] = [
   { key: "new_app", label: "Aplikasi Baru", description: "Uji build, simpan di GitHub, lalu online di Vercel", icon: FolderPlus },
@@ -22,8 +22,9 @@ export default function NewDeploymentMenu() {
   const openModal = useDeploymentOverlay();
   const containerRef = useRef<HTMLDivElement>(null);
   const { role } = useSession();
-  // Operators deploy apps; only owner/admin may run Update Diri.
-  const items = MENU_ITEMS.filter((item) => item.key !== "self_update" || isAdminRole(role));
+  // Operators and admins deploy apps; only the owner may run Update Diri
+  // (it replaces DevControl's own code).
+  const items = MENU_ITEMS.filter((item) => item.key !== "self_update" || role === "owner");
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {

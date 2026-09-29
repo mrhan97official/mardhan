@@ -105,7 +105,8 @@ func browse(w http.ResponseWriter, r *http.Request, table string) {
 	for _, row := range info {
 		name, _ := row["name"].(string)
 		kind, _ := row["type"].(string)
-		columns = append(columns, column{Name: name, Type: kind, PK: toInt(row["pk"]) > 0, Masked: sensitive(name)})
+		// auth_settings holds the owner 2FA secret in its generic "value" column.
+		columns = append(columns, column{Name: name, Type: kind, PK: toInt(row["pk"]) > 0, Masked: sensitive(name) || (table == "auth_settings" && name == "value")})
 	}
 	if len(columns) == 0 { util.Error(w, http.StatusBadGateway, fmt.Errorf("kolom tabel tidak terbaca")); return }
 

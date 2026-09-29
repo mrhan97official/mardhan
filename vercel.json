@@ -136,6 +136,14 @@
     {
       "source": "/api/push-watch",
       "destination": "/api/gateway?resource=push-watch"
+    },
+    {
+      "source": "/api/two-factor",
+      "destination": "/api/gateway?resource=two-factor"
+    },
+    {
+      "source": "/api/app-audit",
+      "destination": "/api/gateway?resource=app-audit"
     }
   ],
   "headers": [

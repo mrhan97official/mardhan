@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { CheckCircle2, AlertCircle, LockKeyhole, RefreshCw } from "lucide-react";
 import { cacheClear } from "@/lib/db";
 import { SessionContext, type Role, type Session } from "@/lib/session";
+import ReauthDialog from "@/components/ReauthDialog";
 
 type State = "checking" | "authenticated" | "login";
 type CoreVariable = { key: string; set: boolean; required: boolean };
@@ -26,6 +27,9 @@ async function clearPrivateCaches() {
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<State>("checking");
   const [password, setPassword] = useState("");
+  // Owner 2FA: the server asks for the 6-digit code after a correct password.
+  const [code, setCode] = useState("");
+  const [needsCode, setNeedsCode] = useState(false);
   const [session, setSession] = useState<Session>({ role: "viewer", name: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -55,7 +59,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void check();
     const interval = setInterval(() => { void check(); }, 5 * 60 * 1000);
-    const onLogout = () => { setState("login"); setPassword(""); void clearPrivateCaches(); };
+    const onLogout = () => { setState("login"); setPassword(""); setCode(""); setNeedsCode(false); void clearPrivateCaches(); };
     window.addEventListener("devcontrol:logout", onLogout);
     return () => { clearInterval(interval); window.removeEventListener("devcontrol:logout", onLogout); };
   }, []);
@@ -67,12 +71,15 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     try {
       const response = await fetch("/api/session", {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
-        body: JSON.stringify({ credential: password.trim() }), cache: "no-store",
+        body: JSON.stringify({ credential: password.trim(), code: code.trim() }), cache: "no-store",
       });
       const body = await response.json().catch(() => ({}));
+      if (body.totp_required) { setNeedsCode(true); throw new Error(body.error || "Masukkan kode 2FA."); }
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
       await clearPrivateCaches();
       setPassword("");
+      setCode("");
+      setNeedsCode(false);
       setSession({ role: (body.role as Role) || "viewer", name: body.name || "" });
       setState("authenticated");
     } catch (reason) {
@@ -80,7 +87,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     } finally { setBusy(false); }
   }
 
-  if (state === "authenticated") return <SessionContext.Provider value={session}>{children}</SessionContext.Provider>;
+  if (state === "authenticated") return <SessionContext.Provider value={session}>{children}<ReauthDialog /></SessionContext.Provider>;
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
       <div className="card w-full max-w-md space-y-5 p-6 sm:p-8">
@@ -93,9 +100,16 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           <form onSubmit={(event) => void login(event)} className="space-y-4">
             <label className="block text-sm text-slate-300">Kata sandi admin atau token akses
               <input type="password" autoComplete="current-password" required value={password} maxLength={512} spellCheck={false}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => { setPassword(event.target.value); if (needsCode) { setNeedsCode(false); setCode(""); } }}
                 className="mt-2 w-full rounded-xl border border-base-border bg-base-850 p-3 text-slate-100" />
             </label>
+            {needsCode && (
+              <label className="block text-sm text-slate-300">Kode 2FA dari aplikasi authenticator
+                <input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]*" maxLength={7} required autoFocus value={code}
+                  onChange={(event) => setCode(event.target.value)}
+                  className="mt-2 w-full rounded-xl border border-base-border bg-base-850 p-3 text-center font-mono text-xl tracking-[0.35em] text-slate-100" />
+              </label>
+            )}
             <button type="submit" disabled={busy} className="w-full rounded-xl bg-accent-blue px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">
               {busy ? "Memeriksa…" : "Masuk"}
             </button>

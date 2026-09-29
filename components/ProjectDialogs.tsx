@@ -65,17 +65,19 @@ export function ZipArchiveDialog({ repo, onClose }: { repo: string; onClose: () 
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [needsKey, setNeedsKey] = useState(false);
 
   const load = useCallback(async (secret: string) => {
-    if (!secret.trim()) { setError("Masukkan kunci arsip terlebih dahulu."); return; }
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/zip-archives?repo=${encodeURIComponent(repo)}`, { headers: { Authorization: `Bearer ${secret.trim()}` }, cache: "no-store" });
+      // The admin session (confirmed in the last 15 minutes) protects the
+      // archives; a key is only sent when ZIP_ARCHIVE_ACCESS_TOKEN is set.
+      const response = await fetch(`/api/zip-archives?repo=${encodeURIComponent(repo)}`, { headers: secret.trim() ? { Authorization: `Bearer ${secret.trim()}` } : {}, cache: "no-store" });
       const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+      if (!response.ok) { setNeedsKey(!!body?.key_required); throw new Error(body?.error || `HTTP ${response.status}`); }
       setItems(Array.isArray(body?.items) ? body.items : []);
-      try { sessionStorage.setItem(archiveKeyStorage, secret.trim()); } catch { /* storage disabled */ }
+      if (secret.trim()) { try { sessionStorage.setItem(archiveKeyStorage, secret.trim()); } catch { /* storage disabled */ } }
     } catch (reason) {
       setItems(null);
       setError(reason instanceof Error ? reason.message : "Arsip gagal dimuat.");
@@ -85,14 +87,15 @@ export function ZipArchiveDialog({ repo, onClose }: { repo: string; onClose: () 
   useEffect(() => {
     let saved = "";
     try { saved = sessionStorage.getItem(archiveKeyStorage) || ""; } catch { /* storage disabled */ }
-    if (saved) { setKey(saved); void load(saved); }
+    setKey(saved);
+    void load(saved);
   }, [load]);
 
   async function download(item: ZipRecord) {
     setDownloading(item.id);
     setError("");
     try {
-      const response = await fetch(`/api/zip-archives?id=${item.id}`, { headers: { Authorization: `Bearer ${key.trim()}` }, cache: "no-store" });
+      const response = await fetch(`/api/zip-archives?id=${item.id}`, { headers: key.trim() ? { Authorization: `Bearer ${key.trim()}` } : {}, cache: "no-store" });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
         throw new Error(body?.error || `HTTP ${response.status}`);
@@ -116,15 +119,20 @@ export function ZipArchiveDialog({ repo, onClose }: { repo: string; onClose: () 
   return (
     <DialogShell title="Arsip ZIP" icon={<FileArchive size={18} />} subtitle={repo} onClose={onClose}>
       <div className="space-y-2">
-        {items === null && (
+        {items === null && loading && <p role="status" className="text-xs text-slate-400">Membuka arsip…</p>}
+        {items === null && !loading && needsKey && (
           <form onSubmit={(event) => { event.preventDefault(); void load(key); }} className="space-y-2 rounded-xl border border-base-border bg-base-850 p-2">
             <label htmlFor="zip-key" className="flex items-center gap-1.5 text-xs font-medium text-slate-300"><KeyRound size={13} /> Kunci arsip</label>
             <input id="zip-key" type="password" autoComplete="current-password" value={key} onChange={(event) => setKey(event.target.value)}
-              placeholder="ZIP_ARCHIVE_ACCESS_TOKEN (bawaan: kata sandi admin)" className="w-full rounded-lg border border-base-border bg-base-900 px-3 py-2 text-sm" />
+              placeholder="ZIP_ARCHIVE_ACCESS_TOKEN" className="w-full rounded-lg border border-base-border bg-base-900 px-3 py-2 text-sm" />
             <button type="submit" disabled={loading} className="inline-flex items-center gap-1.5 rounded-lg bg-accent-blue px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
               {loading && <Loader2 size={13} className="animate-spin" />} Buka arsip
             </button>
           </form>
+        )}
+
+        {items === null && !loading && !needsKey && error && (
+          <button type="button" onClick={() => void load(key)} className="inline-flex items-center gap-1.5 rounded-lg border border-base-border px-3 py-2 text-xs font-medium text-slate-200 hover:bg-base-800">Coba lagi</button>
         )}
 
         {items !== null && current.length === 0 && pending.length === 0 && (

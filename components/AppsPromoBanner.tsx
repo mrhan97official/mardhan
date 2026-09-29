@@ -33,9 +33,9 @@ export default function AppsPromoBanner({ apps }: { apps: ProjectEntry[] }) {
 
   return (
     <div className="mx-auto w-full max-w-[1440px] space-y-2">
-      <section className="overflow-hidden rounded-2xl border border-base-border bg-white shadow-sm">
+      <section className="overflow-hidden rounded-2xl border border-base-border bg-[#fff] shadow-sm">
         {banner ? (
-          <div className="relative aspect-[16/5] w-full bg-white">
+          <div className="relative aspect-[16/5] w-full bg-[#fff]">
             {!imageFailed ? (
               // The saved image is 1440 × 450; no dark filter or overlay covers it.
               // eslint-disable-next-line @next/next/no-img-element

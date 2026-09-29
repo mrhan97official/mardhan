@@ -101,6 +101,9 @@ func HandleSession(w http.ResponseWriter, r *http.Request) {
   case http.MethodPost:
     login(w, r)
   case http.MethodDelete:
+    // Logging out also revokes this cookie on the server, so a copy taken
+    // earlier stops working immediately instead of at its 12-hour expiry.
+    if c, ok := readClaims(r); ok { revokeClaims(c) }
     clearSession(w, r)
     util.JSON(w, http.StatusOK, map[string]bool{"authenticated": false})
   default:

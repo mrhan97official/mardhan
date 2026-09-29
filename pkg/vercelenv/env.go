@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"devcontrol/pkg/auth"
 	"devcontrol/pkg/d1"
 	"devcontrol/pkg/util"
 )
@@ -202,6 +203,15 @@ func redeploy(w http.ResponseWriter, projectID string) {
 }
 
 // Handle serves /api/vercel-env.
+// ownProject is DevControl's own Vercel project: its variables hold the
+// GitHub/Vercel/Cloudflare tokens, so only the owner may read or change them.
+func ownProject(w http.ResponseWriter, r *http.Request, projectID string) bool {
+	self := strings.TrimSpace(os.Getenv("VERCEL_PROJECT_ID"))
+	if self == "" || projectID != self || auth.IsOwner(r) { return false }
+	util.Error(w, http.StatusForbidden, fmt.Errorf("variabel project DevControl sendiri hanya dapat dibuka atau diubah owner"))
+	return true
+}
+
 func Handle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	query := r.URL.Query()
@@ -210,12 +220,14 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		if query.Get("view") == "projects" { listProjects(w); return }
 		projectID := query.Get("project")
 		if !validProjectID(projectID) { util.Error(w, http.StatusBadRequest, fmt.Errorf("project tidak valid")); return }
+		if ownProject(w, r, projectID) { return }
 		if envID := query.Get("reveal"); envID != "" { reveal(w, projectID, envID); return }
 		listEnv(w, projectID)
 		return
 	case http.MethodDelete:
 		projectID, envID := query.Get("project"), query.Get("id")
 		if !validProjectID(projectID) || !validProjectID(envID) { util.Error(w, http.StatusBadRequest, fmt.Errorf("permintaan hapus tidak valid")); return }
+		if ownProject(w, r, projectID) { return }
 		if err := call(http.MethodDelete, endpoint("/v9/projects/"+url.PathEscape(projectID)+"/env/"+url.PathEscape(envID), nil), nil, nil); err != nil {
 			util.Error(w, http.StatusBadGateway, err); return
 		}
@@ -232,6 +244,7 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("data variabel tidak valid")); return
 	}
 	if !validProjectID(input.Project) { util.Error(w, http.StatusBadRequest, fmt.Errorf("project tidak valid")); return }
+	if ownProject(w, r, input.Project) { return }
 	if input.Action == "redeploy" { redeploy(w, input.Project); return }
 	if input.Value != nil && len(*input.Value) > 64<<10 { util.Error(w, http.StatusBadRequest, fmt.Errorf("nilai melebihi 64 KB")); return }
 	targets, err := cleanTargets(input.Target)

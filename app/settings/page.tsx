@@ -5,6 +5,8 @@ import { Cloud, ImagePlus, RotateCcw, Save, Settings } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import CloudflareZoneSettings from "@/components/CloudflareZoneSettings";
 import ImageLightbox from "@/components/ImageLightbox";
+import TwoFactorSettings from "@/components/TwoFactorSettings";
+import { useSession } from "@/lib/session";
 import AppsPromoSettings from "@/components/AppsPromoSettings";
 import PushNotificationSettings from "@/components/PushNotificationSettings";
 import { logoOriginalURL, useBranding } from "@/components/BrandingProvider";
@@ -89,6 +91,7 @@ async function prepareLogo(file: File, background: LogoBackground): Promise<Prep
 
 export default function SettingsPage() {
   const { version, original, reload } = useBranding();
+  const { role } = useSession();
   const [status, setStatus] = useState("");
   const picker = useRef<HTMLInputElement>(null);
   const selectedFile = useRef<File | null>(null);
@@ -248,6 +251,8 @@ export default function SettingsPage() {
         {viewing && <ImageLightbox src={viewing.src} label={viewing.label} filename={viewing.filename} onClose={() => setViewing(null)} />}
         <p className="text-xs text-slate-500">Ketuk gambar logo untuk melihatnya dalam ukuran penuh dan mengunduhnya. Untuk menghilangkan latar hitam pada logo lama, pilih lagi file PNG asli yang transparan sebelum menyimpan.</p>
       </section>
+
+      {role === "owner" && <TwoFactorSettings />}
 
       <PushNotificationSettings />
 
