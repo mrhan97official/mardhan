@@ -15,6 +15,10 @@ export type PushSupport = "ok" | "unsupported" | "ios-install";
 const eventsKey = "devcontrol-push-events";
 const syncedKey = "devcontrol-push-synced";
 
+// Guards the automatic permission prompt so it runs at most once per loaded
+// page (React effects can fire twice in development/StrictMode).
+let autoPrompted = false;
+
 function isIOS() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
@@ -45,8 +49,14 @@ function sameKey(buffer: ArrayBuffer | null | undefined, expected: Uint8Array) {
 }
 
 async function registration(): Promise<ServiceWorkerRegistration> {
+  // next-pwa registers /sw.js itself, but only after the window "load" event,
+  // which can be slower than this call on a first visit. Registering the same
+  // script here too is harmless (the browser reuses the existing
+  // registration) and lets the worker start activating right away instead of
+  // waiting on "load".
+  try { await navigator.serviceWorker.register("/sw.js", { scope: "/" }); } catch { /* next-pwa's own registration may already be in flight */ }
   const ready = navigator.serviceWorker.ready;
-  const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Service worker belum aktif. Muat ulang halaman lalu coba lagi.")), 10000));
+  const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Service worker belum aktif setelah 20 detik. Periksa koneksi, lalu muat ulang halaman dan coba lagi.")), 20000));
   return Promise.race([ready, timeout]);
 }
 
@@ -118,6 +128,24 @@ export async function sendTestPush() {
   const subscription = await currentSubscription();
   if (!subscription) throw new Error("Perangkat ini belum mengaktifkan notifikasi.");
   await api({ action: "test", endpoint: subscription.endpoint });
+}
+
+// Requests notification permission as soon as the app is opened, without
+// waiting for the person to open Settings. Only runs while permission is
+// still "default" (not yet answered), so it never re-prompts someone who
+// already allowed or blocked it, and never fights with the manual button.
+//
+// Safari (desktop and installed iOS/iPadOS) ignores a permission request
+// that is not triggered by a click, so on those browsers this silently does
+// nothing and the manual "Aktifkan notifikasi" button remains the way in.
+export async function autoPromptPush() {
+  if (typeof window === "undefined" || autoPrompted) return;
+  if (pushSupport() !== "ok" || typeof Notification === "undefined" || Notification.permission !== "default") return;
+  autoPrompted = true;
+  try {
+    const info = await pushInfo();
+    await enablePush(info.events);
+  } catch { /* dismissed, denied, or Safari's gesture requirement; the manual button still works */ }
 }
 
 // Once per session: re-register this device if the browser rotated its push

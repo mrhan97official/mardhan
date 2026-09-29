@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import SidebarLogo from "@/components/SidebarLogo";
 import { PushNotificationDialog } from "@/components/PushNotificationSettings";
-import { disablePush, syncPush } from "@/lib/push";
+import { autoPromptPush, disablePush, syncPush } from "@/lib/push";
 import { useTheme } from "@/components/ThemeProvider";
 import type { DeploymentJob } from "@/lib/types";
 import { ROLE_LABEL, isAdminRole, useSession } from "@/lib/session";
@@ -58,8 +58,10 @@ export default function Header({
   const [profileError, setProfileError] = useState("");
   const [pushOpen, setPushOpen] = useState(false);
 
-  // Keep this device's push subscription current (browsers may rotate it).
-  useEffect(() => { void syncPush(); }, []);
+  // Keep this device's push subscription current (browsers may rotate it),
+  // and ask for notification permission right away if it hasn't been
+  // answered yet, instead of waiting for the person to open Settings.
+  useEffect(() => { void syncPush(); void autoPromptPush(); }, []);
   const profileRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
 
