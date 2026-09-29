@@ -26,7 +26,10 @@ type Status struct {
   Migrations []string `json:"migrations"`
 }
 
-const appSchemaVersion = "app-1.0.66-orphan-test-projects"
+// Bump this marker whenever a checked-in migration changes the expected schema.
+// Existing installations may already have the previous marker, so reusing it
+// would skip migrations added later (notably 009's display_name columns).
+const appSchemaVersion = "app-1.0.71-display-names"
 
 // Prepare avoids replaying the full schema before every new deployment.
 // The Databases page always performs a fresh inspection and can repair drift.

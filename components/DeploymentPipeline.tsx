@@ -221,7 +221,7 @@ export default function DeploymentPipeline({
           <section key={job.id} className={`min-h-[clamp(136px,10rem,160px)] snap-start rounded-xl border bg-base-900 p-2 transition-shadow duration-700 ${freshId === job.id ? "border-purple-400/60 shadow-[0_0_0_3px_rgba(168,85,247,0.25)]" : "border-base-border"}`} aria-label={`${KIND_TEXT[job.kind]} ${job.target}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-slate-100">{KIND_TEXT[job.kind]} · <span className="break-all">{job.target}</span></p>
+                <p className="text-sm font-semibold text-slate-100">{KIND_TEXT[job.kind]} · <span className="break-all">{job.display_name || job.target}</span></p>
                 <p className="mt-1 text-[11px] text-slate-500"><Clock3 size={11} className="mr-1 inline" />{job.created_at} UTC</p>
               </div>
               <span className={`rounded-full border px-2 py-1 text-xs font-medium ${job.status === "Running" ? "border-purple-400/40 text-purple-400" : job.status === "Success" ? "border-emerald-400/40 text-emerald-400" : job.status === "Failed" ? "border-red-400/40 text-red-400" : "border-amber-400/40 text-amber-400"}`}>
@@ -229,6 +229,9 @@ export default function DeploymentPipeline({
               </span>
             </div>
             {job.message && <p className={`mt-2 text-xs ${job.status === "Failed" ? "text-red-400" : job.status === "Interrupted" ? "text-amber-400" : "text-slate-400"}`}>{job.message}</p>}
+            {job.status === "Success" && job.app_url && (
+              <a href={job.app_url} target="_blank" rel="noopener noreferrer" className="mt-1 block break-all text-xs font-medium text-accent-blue hover:underline">Buka aplikasi: {job.app_url}</a>
+            )}
             <JobStages stages={job.stages} job={job} now={now} />
             {(job.status === "Failed" || job.status === "Interrupted") && (
               <div className="mt-2 space-y-2">
