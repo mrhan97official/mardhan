@@ -289,6 +289,14 @@ Notifikasi deploy dan update diri dikirim langsung dari backend saat pipeline se
 
 Nama project uji ini juga sempat selalu tertulis `-selfupdate-test-`, meski untuk "Aplikasi Baru"/"Update Aplikasi" biasa, bukan cuma Update Diri; sejak v1.0.66 jadi `-test-` yang netral.
 
+### Aplikasi Baru yang gagal tidak meninggalkan sisa (v1.0.70)
+
+Aplikasi Baru membuat repo GitHub dan project Vercel aslinya di tahap **Dorong ke GitHub**, sebelum build production di tahap **Onlinekan di Vercel** terbukti berhasil. Sebelumnya, bila tahap terakhir itu gagal, repo dan project Vercel yang sudah dibuat dibiarkan, sehingga di Vercel muncul project gagal yang tidak pernah tercatat di DevControl.
+
+Sejak v1.0.70, bila Aplikasi Baru gagal sebelum pernah online, DevControl menghapus **hanya yang dibuat oleh proses itu sendiri**: project Vercel-nya lalu repo GitHub-nya. Repo atau project yang sudah ada sebelum proses dimulai (misalnya hasil import manual di Vercel, atau repo dengan nama sama) tidak pernah disentuh, dan tidak ada yang dihapus setelah aplikasi tersimpan sebagai online. Update Aplikasi tidak pernah menghapus apa pun. Bila log build production belum terbaca, penghapusan project Vercel ditunda 30 menit agar log masih bisa dibaca ulang. Bila GITHUB_TOKEN tidak punya izin hapus repo (Administration: write), repo dibiarkan dan pesan pipeline menyebutkannya; hapus lewat Projects → menu kartu → Hapus aplikasi. Pesan pipeline selalu merinci apa yang dibersihkan.
+
+Sisa dari percobaan sebelum v1.0.70 tidak ikut dibersihkan otomatis; hapus lewat Projects → Hapus aplikasi, atau langsung di Vercel/GitHub.
+
 ### Deployment Protection pada project uji (v1.0.68)
 
 Setelah build uji READY, DevControl membuka halaman utama project uji untuk memastikan aplikasi benar-benar tersaji. Banyak team Vercel menerapkan Deployment Protection (Vercel Authentication) ke semua project baru, sehingga pemeriksaan itu dialihkan ke login Vercel (HTTP 302/401/403) walaupun kode aplikasinya benar. Sejak v1.0.68 DevControl melepas proteksi project uji-nya sendiri, membuat kunci **Protection Bypass for Automation** untuk project uji itu dan mengirimnya sebagai header `x-vercel-protection-bypass` saat memeriksa, serta menunggu hingga ±10 detik agar perubahan proteksi sampai ke edge Vercel. Proteksi project production aplikasi tidak diubah. Bila tetap gagal, pesan menyebutkan alasannya (misalnya VERCEL_TOKEN tidak punya akses ke team), diagnosis menandainya sebagai **DevControl sendiri**, dan project uji dibersihkan otomatis setelah 30 menit.

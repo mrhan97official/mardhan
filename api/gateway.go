@@ -1614,6 +1614,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 				// its alias after this flow says Success.
 				_ = store.Fail(archiveID)
 				msg := "[Onlinekan di Vercel] Deployment commit GitHub tidak dapat dimulai: " + gitErr.Error() + ". Periksa deployment otomatis untuk commit " + phaseTicket.CommitSHA + " di project " + project + "."
+				if !isUpdate { msg += rollbackFailedNewApp(name, owner, repoName, phaseTicket.CreatedRepo, phaseTicket.CreatedProject, project, false) }
 				updateDeploymentStage(archiveID, 4, "Failed")
 				logLiveLog("ERROR", label+": "+msg)
 				util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg, Repo: repoFullName})
@@ -1627,6 +1628,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		if deployErr != nil {
 			_ = store.Fail(archiveID)
 			msg := "[Onlinekan di Vercel] " + deployErr.Error()
+			if !isUpdate { msg += rollbackFailedNewApp(name, owner, repoName, phaseTicket.CreatedRepo, phaseTicket.CreatedProject, project, false) }
 			updateDeploymentStage(archiveID, 4, "Failed")
 			logLiveLog("ERROR", label+": "+msg)
 			util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg, Repo: repoFullName})
@@ -1637,6 +1639,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 			URL: deploymentURL, Repo: repoFullName, Branch: branch, Environment: environment,
 			ArchiveID: archiveID, ZipSHA: zipDigest(zipBytes),
 			Framework: phaseTicket.Framework, RootDirectory: phaseTicket.RootDirectory, Probe: phaseTicket.Probe, Linked: phaseTicket.Linked,
+			CreatedRepo: phaseTicket.CreatedRepo, CreatedProject: phaseTicket.CreatedProject, Project: project,
 		})
 		if ticketErr != nil {
 			util.Error(w, http.StatusInternalServerError, ticketErr)
@@ -1647,8 +1650,10 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updateDeploymentStage(archiveID, 3, "Running")
+	createdRepo := false
 	if !isUpdate {
-		if err := ensureGithubRepo(githubToken, repoName); err != nil {
+		var err error
+		if createdRepo, err = ensureGithubRepo(githubToken, repoName); err != nil {
 			_ = store.Fail(archiveID)
 			msg := "[GitHub] Gagal membuat repo: " + err.Error()
 			logLiveLog("ERROR", label+": "+msg)
@@ -1671,6 +1676,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	if envErr != nil {
 		_ = store.Fail(archiveID)
 		msg := "[GitHub] Pengaturan project Vercel belum siap, jadi tidak ada yang didorong ke GitHub: " + envErr.Error()
+		if !isUpdate { msg += rollbackFailedNewApp(name, owner, repoName, createdRepo, false, "", false) }
 		logLiveLog("ERROR", label+": "+msg)
 		updateDeploymentStage(archiveID, 3, "Failed")
 		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg, Repo: repoFullName})
@@ -1685,11 +1691,16 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		_ = store.Fail(archiveID)
 		msg := "[GitHub] Gagal mendorong file: " + err.Error()
+		if !isUpdate { msg += rollbackFailedNewApp(name, owner, repoName, createdRepo, false, "", false) }
 		logLiveLog("ERROR", label+": "+msg)
 		updateDeploymentStage(archiveID, 3, "Failed")
 		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg, Repo: repoFullName})
 		return
 	}
+	// No project existed before this push, so on a first deployment the
+	// project that ends up under this name is created by this run (here, or
+	// by the ZIP deployment in the next stage when creation fails here).
+	createdProject := !isUpdate && !gitState.Found
 	if !gitState.Found {
 		// First deployment: create the project connected to the repo that
 		// now has its first commit (like "Import Git Repository").
@@ -1708,6 +1719,7 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		Repo: repoFullName, Branch: branch, ArchiveID: archiveID, CommitSHA: commitSHA,
 		Project: gitState.Name, ProjectID: gitState.ID,
 		Framework: phaseTicket.Framework, RootDirectory: phaseTicket.RootDirectory, Probe: phaseTicket.Probe, Linked: gitState.Linked,
+		CreatedRepo: createdRepo, CreatedProject: createdProject,
 	})
 	if ticketErr != nil {
 		util.Error(w, http.StatusInternalServerError, ticketErr)
@@ -1889,6 +1901,10 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 				msg += ". Log belum dapat dibaca (" + logErr.Error() + "); project uji " + ticket.Project + " tetap ada sementara di Vercel untuk diperiksa, lalu dibersihkan otomatis."
 				recordOrphanTestProject(ticket.Project)
 			}
+		} else if mode == "new_app" {
+			if logErr != nil { msg += ". Log belum dapat dibaca (" + logErr.Error() + ")." }
+			repoOwner, repoName, _ := splitRepo(ticket.Repo)
+			msg += rollbackFailedNewApp(name, repoOwner, repoName, ticket.CreatedRepo, ticket.CreatedProject, ticket.Project, logErr != nil)
 		}
 		updateDeploymentStage(ticket.ArchiveID, position, "Failed")
 		logLiveLog("ERROR", msg)
@@ -1983,7 +1999,13 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		// Never record Success or replace the saved link on an unverified site.
 		_ = store.Fail(ticket.ArchiveID)
 		msg := "[Onlinekan di Vercel] Build READY, tetapi tautan aplikasi gagal dibuka: " + strings.Join(pageFailures, "; ") +
-			". Periksa Output/Runtime Logs, framework, Root Directory, Output Directory, dan Deployment Protection di Vercel. Tautan lama tetap disimpan; jika versi lama tertimpa, pulihkan lewat Vercel → Deployments → Promote."
+			". Periksa Output/Runtime Logs, framework, Root Directory, Output Directory, dan Deployment Protection di Vercel."
+		if mode == "new_app" {
+			repoOwner, repoName, _ := splitRepo(ticket.Repo)
+			msg += rollbackFailedNewApp(name, repoOwner, repoName, ticket.CreatedRepo, ticket.CreatedProject, ticket.Project, false)
+		} else {
+			msg += " Tautan lama tetap disimpan; jika versi lama tertimpa, pulihkan lewat Vercel → Deployments → Promote."
+		}
 		updateDeploymentStage(ticket.ArchiveID, 4, "Failed")
 		logLiveLog("ERROR", msg)
 		util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: msg, Repo: ticket.Repo, AppURL: ticket.URL})
@@ -2188,7 +2210,10 @@ type createRepoResponse struct {
 // failed "Aplikasi Baru" submission, or deploying a second app with a name
 // that collides, should never hard-fail here) — pushFilesToGitHub right
 // after this will replace the selected branch with the uploaded package.
-func ensureGithubRepo(token, repoName string) error {
+// ensureGithubRepo creates the private repo, or accepts one that already
+// exists. created is true only when this call made it, so a failed first
+// deployment removes only what it created itself.
+func ensureGithubRepo(token, repoName string) (created bool, err error) {
 	payload := map[string]interface{}{
 		"name":      repoName,
 		"private":   true,
@@ -2196,11 +2221,11 @@ func ensureGithubRepo(token, repoName string) error {
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return false, err
 	}
 	req, err := http.NewRequest(http.MethodPost, "https://api.github.com/user/repos", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -2209,22 +2234,22 @@ func ensureGithubRepo(token, repoName string) error {
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusCreated {
-		return nil
+		return true, nil
 	}
 	var out createRepoResponse
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	if resp.StatusCode == http.StatusUnprocessableEntity && strings.Contains(strings.ToLower(out.Message), "already exists") {
-		return nil
+		return false, nil
 	}
 	if out.Message != "" {
-		return fmt.Errorf("%s", out.Message)
+		return false, fmt.Errorf("%s", out.Message)
 	}
-	return fmt.Errorf("HTTP %d dari GitHub saat membuat repo", resp.StatusCode)
+	return false, fmt.Errorf("HTTP %d dari GitHub saat membuat repo", resp.StatusCode)
 }
 
 func orDefault(v, def string) string {
@@ -3261,6 +3286,41 @@ func recordOrphanTestProject(project string) {
 	_, _ = d1.Query(`INSERT OR IGNORE INTO vercel_orphan_projects (project) VALUES (?)`, project)
 }
 
+// rollbackFailedNewApp removes what a failed "Aplikasi Baru" run created
+// itself — its Vercel project and its GitHub repo — so a first deployment
+// that never went online leaves nothing behind in Vercel or GitHub. A repo
+// or project that existed before the run (for example a manual Vercel
+// import) is never touched, and nothing is removed once the app is saved as
+// online. keepProjectForLog delays the project removal by 30 minutes when
+// its build log could not be read yet, so the log can still be recovered.
+// Returns a sentence for the pipeline message ("" when nothing was created).
+func rollbackFailedNewApp(name, owner, repoName string, createdRepo, createdProject bool, project string, keepProjectForLog bool) string {
+	if !createdRepo && !(createdProject && project != "") { return "" }
+	if rows, err := d1.Query(`SELECT 1 AS found FROM services WHERE name = ? LIMIT 1`, name); err != nil || len(rows) > 0 { return "" }
+	notes := []string{}
+	if createdProject && project != "" {
+		if keepProjectForLog {
+			recordOrphanTestProject(project)
+			notes = append(notes, "project Vercel "+project+" dihapus otomatis 30 menit lagi (log build masih dibaca ulang)")
+		} else if err := deleteVercelProject(os.Getenv("VERCEL_TOKEN"), project); err != nil {
+			recordOrphanTestProject(project)
+			notes = append(notes, "project Vercel "+project+" belum dapat dihapus ("+err.Error()+"), dicoba lagi otomatis")
+		} else {
+			notes = append(notes, "project Vercel "+project+" dihapus")
+		}
+	}
+	if createdRepo && owner != "" && repoName != "" {
+		if err := projectdelete.DeleteGithubRepo(os.Getenv("GITHUB_TOKEN"), owner, repoName); err != nil {
+			notes = append(notes, "repo GitHub "+owner+"/"+repoName+" belum dapat dihapus ("+err.Error()+"); hapus lewat Projects → menu kartu → Hapus aplikasi")
+		} else {
+			notes = append(notes, "repo GitHub "+owner+"/"+repoName+" dihapus")
+		}
+	}
+	if len(notes) == 0 { return "" }
+	logLiveLog("INFO", "Aplikasi baru "+name+" gagal sebelum online; dibersihkan: "+strings.Join(notes, "; "))
+	return " Aplikasi baru ini belum pernah online, jadi yang dibuat oleh proses ini dibersihkan: " + strings.Join(notes, "; ") + ". Perbaiki penyebabnya lalu jalankan Aplikasi Baru lagi dengan nama yang sama."
+}
+
 // sweepOrphanTestProjects deletes recorded test projects older than the grace
 // window. Called from the same once-a-minute Cloudflare runner as other
 // periodic cleanup, so orphans left by an unreadable build log never
@@ -3308,6 +3368,10 @@ type buildTicket struct {
 	Repo string `json:"repo,omitempty"`
 	Branch string `json:"branch,omitempty"`
 	CommitSHA string `json:"commit_sha,omitempty"`
+	// Set on a first deployment ("Aplikasi Baru") for what this run created
+	// itself; if the app never goes online, exactly these are removed again.
+	CreatedRepo bool `json:"created_repo,omitempty"`
+	CreatedProject bool `json:"created_project,omitempty"`
 	ZipSHA string `json:"zip_sha,omitempty"`
 	ArchiveID string `json:"archive_id,omitempty"`
 	DeploymentID string `json:"deployment_id,omitempty"`
@@ -3836,7 +3900,10 @@ func rereadBuildLog(id string, row map[string]interface{}) (diagnose.Diagnosis, 
 	if cut := strings.Index(message, ". Log belum dapat dibaca"); cut > 0 { message = message[:cut] }
 	message += ": " + vercelFailureSummary(buildLog)
 	fresh := recordDiagnosis(id, rowText(row, "kind"), rowText(row, "target"), position, message, buildLog)
-	if ticket.Project != "" && strings.Contains(ticket.Project, "-test-") {
+	// Only a test-build ticket names a throwaway test project. A production
+	// ticket names the app's real project, which must never be removed here
+	// (a real app may itself be called e.g. "my-test-app").
+	if ticket.Project != "" && (ticket.Stage == "app-test" || ticket.Stage == "self-test") {
 		cleanupTestProject(token, ticket.Project)
 		_, _ = d1.Query(`DELETE FROM vercel_orphan_projects WHERE project = ?`, ticket.Project)
 	}

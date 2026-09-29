@@ -166,6 +166,13 @@ func deleteGithub(token, owner, repo string) error {
     return nil
 }
 
+// DeleteGithubRepo removes a repository. Used to roll back a first
+// deployment that created the repo itself and never went online.
+func DeleteGithubRepo(token, owner, repo string) error {
+    if token == "" || !validPart(owner) || !validPart(repo) { return fmt.Errorf("nama repo atau GITHUB_TOKEN tidak valid") }
+    return deleteGithub(token, owner, repo)
+}
+
 // Handle requires a real admin session and an exact typed repository name.
 // Services remain in D1 until the end, so partial provider failures can be retried.
 func Handle(w http.ResponseWriter, r *http.Request, stableProjectName func(string, string) string) {

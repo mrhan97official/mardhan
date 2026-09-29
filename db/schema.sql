@@ -240,9 +240,10 @@ CREATE TABLE IF NOT EXISTS push_log (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Throwaway Vercel test projects (owner/repo-test-<nanotime>) whose build
--- log could not be read before the normal cleanup ran. Kept a while so the
--- admin can still open them in Vercel, then removed automatically.
+-- Vercel projects waiting for delayed removal: throwaway test projects
+-- (<repo>-test-<nanotime>) and, since v1.0.70, the project of a failed
+-- "Aplikasi Baru" that never went online, when its build log could not be
+-- read yet or its first delete attempt failed. Removed after 30 minutes.
 CREATE TABLE IF NOT EXISTS vercel_orphan_projects (
   project TEXT PRIMARY KEY,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
