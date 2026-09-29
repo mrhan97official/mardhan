@@ -92,6 +92,7 @@ export default function Sidebar({
               expanded={open || expanded}
               onClick={open ? onClose : onToggle}
               label={open ? "Tutup menu" : expanded ? "Ciutkan sidebar" : "Tampilkan sidebar"}
+              tooltip={expanded ? "bottom" : "right"}
             />
             <div className={`leading-tight ${expanded ? "md:block" : "md:hidden"}`}>
               <p className="text-[13px] font-semibold tracking-wide text-slate-400">DEV</p>

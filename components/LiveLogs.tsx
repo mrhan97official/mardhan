@@ -30,7 +30,8 @@ function matches(filter: Filter, level: LiveLog["level"]) {
 // beside it) and scrolls its log list inside, instead of setting the height.
 export default function LiveLogs({ logs, fill = false }: { logs: LiveLog[]; fill?: boolean }) {
   const [filter, setFilter] = useState<Filter>("All");
-  const visible = logs.filter((l) => matches(filter, l.level));
+  // Newest first, so the latest events are visible without scrolling.
+  const visible = logs.filter((l) => matches(filter, l.level)).sort((a, b) => Number(b.id) - Number(a.id));
 
   return (
     <div className={`card flex min-w-0 flex-col p-2 ${fill ? "md:absolute md:inset-0" : ""}`}>

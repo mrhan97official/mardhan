@@ -22,6 +22,8 @@ export default function AppShell({
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  // The page scrolls inside <main>; the header shows a soft shadow only then.
+  const [scrolled, setScrolled] = useState(false);
   const pathname = usePathname() ?? "/";
   const { role } = useSession();
   // Opening an admin-only page by URL shows a clear notice instead of empty
@@ -43,9 +45,10 @@ export default function AppShell({
           isOffline={isOffline}
           title={title}
           subtitle={subtitle}
+          scrolled={scrolled}
         />
 
-        <main className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
+        <main onScroll={(event) => { const next = event.currentTarget.scrollTop > 4; if (next !== scrolled) setScrolled(next); }} className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
           {restricted ? (
             <section className="card flex items-start gap-2 p-2 text-sm text-slate-300">
               <ShieldAlert size={18} className="mt-0.5 shrink-0 text-amber-300" />

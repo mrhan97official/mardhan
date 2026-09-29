@@ -16,7 +16,6 @@ import {
   Clock3,
   LogOut,
   Moon,
-  Search,
   Settings,
   Sun,
   X,
@@ -40,11 +39,14 @@ export default function Header({
   isOffline,
   title = "Overview",
   subtitle = "Infrastructure & deployment workspace",
+  scrolled = false,
 }: {
   onMenuClick: () => void;
   isOffline: boolean;
   title?: string;
   subtitle?: string;
+  /** The page content below is scrolled; shows a soft shadow instead of a border. */
+  scrolled?: boolean;
 }) {
   const session = useSession();
   const roleLabel = ROLE_LABEL[session.role] ?? "Member";
@@ -136,8 +138,8 @@ export default function Header({
   }
 
   return (
-    <header className="app-header relative z-30 shrink-0 bg-base-950/85 backdrop-blur">
-      <div className="border-y border-base-border px-2 py-3">
+    <header className={`app-header relative z-30 shrink-0 bg-base-950/85 backdrop-blur transition-shadow duration-200 ${scrolled ? "app-header-scrolled" : ""}`}>
+      <div className="px-2 py-3">
         <div className="flex items-center gap-3">
         <div className="md:hidden">
           <SidebarLogo expanded={false} onClick={onMenuClick} label="Buka menu" />
@@ -149,18 +151,6 @@ export default function Header({
         </div>
 
         <div className="ml-auto flex flex-1 items-center justify-end gap-2 sm:gap-3">
-          <div className="relative hidden w-full max-w-xs md:block md:min-w-0 md:max-w-[9rem] lg:max-w-[12rem] xl:max-w-xs">
-            <Search
-              size={16}
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
-            />
-            <input
-              type="text"
-              placeholder="Cari proyek, layanan, atau log..."
-              className="w-full rounded-xl border border-base-border bg-base-850 py-2 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-500 focus:border-accent-blue/60"
-            />
-          </div>
-
           <div ref={notificationRef} className="relative" onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget)) setNotificationsOpen(false);
           }}>
