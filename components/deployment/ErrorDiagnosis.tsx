@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, ChevronDown, Copy, FileCode2, Loader2, RotateCcw, Stethoscope } from "lucide-react";
+import { Check, ChevronDown, Copy, FileCode2, Loader2, RotateCcw, Settings, Stethoscope, Wrench } from "lucide-react";
 import type { Diagnosis } from "@/lib/types";
 
 async function copyText(text: string): Promise<boolean> {
@@ -27,6 +27,45 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
+// One clear answer to "apakah ini dari DevControl atau dari ZIP saya?",
+// shown before anything else in the diagnosis. Wording adapts to whether
+// this run was deploying the person's own app or updating DevControl itself.
+function sourceBanner(source: Diagnosis["source"] | undefined, kind?: string) {
+  const selfUpdate = kind === "self_update";
+  switch (source) {
+    case "code":
+      return {
+        Icon: FileCode2,
+        tone: "border-amber-400/30 bg-amber-500/[0.06] text-amber-200",
+        title: selfUpdate ? "Sumber: kode DevControl (patch yang baru diterapkan)" : "Sumber: kode di ZIP yang Anda unggah",
+        detail: selfUpdate
+          ? "Bukan masalah token, izin, atau koneksi — kode DevControl sendiri yang perlu diperbaiki sebelum di-deploy ulang."
+          : "Bukan masalah DevControl — perbaiki di project aplikasi ini (kode atau package.json/go.mod), lalu unggah ulang ZIP-nya.",
+      };
+    case "config":
+      return {
+        Icon: Settings,
+        tone: "border-sky-400/30 bg-sky-500/[0.06] text-sky-200",
+        title: "Sumber: pengaturan project Vercel aplikasi ini",
+        detail: "Bukan token atau kredensial DevControl — periksa Framework/Root Directory/Output Directory atau Environment Variables project ini di dashboard Vercel, bukan kode di ZIP.",
+      };
+    case "platform":
+      return {
+        Icon: Wrench,
+        tone: "border-violet-400/30 bg-violet-500/[0.06] text-violet-200",
+        title: "Sumber: DevControl sendiri (token, izin, atau koneksi layanan)",
+        detail: "Bukan dari kode di ZIP — periksa GITHUB_TOKEN/VERCEL_TOKEN/CF_API_TOKEN di Environment Variables Vercel milik DevControl, atau ini gangguan sementara di GitHub/Vercel/Cloudflare.",
+      };
+    default:
+      return {
+        Icon: Stethoscope,
+        tone: "border-slate-500/30 bg-slate-500/[0.06] text-slate-300",
+        title: "Sumber belum bisa dipastikan otomatis",
+        detail: "Pola error ini belum dikenali DevControl. Lihat log dan potongan kode di bawah, atau salin prompt untuk AI.",
+      };
+  }
+}
+
 export default function ErrorDiagnosis({
   jobId,
   diagnosis: provided,
@@ -36,6 +75,8 @@ export default function ErrorDiagnosis({
   stage,
 }: {
   jobId?: string;
+  /** "self_update" changes what a "code" source means below: DevControl's
+   * own source, not a deployed application's. */
   diagnosis?: Diagnosis | null;
   message?: string;
   kind?: string;
@@ -83,6 +124,7 @@ export default function ErrorDiagnosis({
     return failed ? <p className="text-xs text-slate-500">Diagnosis otomatis belum tersedia: {failed}</p> : null;
   }
 
+  const banner = sourceBanner(diagnosis.source, kind);
   const where = diagnosis.location
     ? `${diagnosis.location.file}${diagnosis.location.line ? ` baris ${diagnosis.location.line}` : ""}${diagnosis.location.column ? `, kolom ${diagnosis.location.column}` : ""}`
     : "";
@@ -99,6 +141,14 @@ export default function ErrorDiagnosis({
         <Stethoscope size={16} className="text-red-300" />
         <h3 className="text-sm font-bold text-white">Diagnosis error</h3>
         <span className="rounded-full border border-red-400/40 px-2 py-0.5 text-[11px] font-medium text-red-300">{diagnosis.category}</span>
+      </div>
+
+      <div className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 ${banner.tone}`}>
+        <banner.Icon size={16} className="mt-0.5 shrink-0" />
+        <div className="text-xs">
+          <p className="font-semibold">{banner.title}</p>
+          <p className="mt-0.5 opacity-90">{banner.detail}</p>
+        </div>
       </div>
 
       <dl className="space-y-1.5 text-xs">

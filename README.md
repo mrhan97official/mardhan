@@ -146,6 +146,7 @@ Setiap kegagalan Aplikasi Baru, Update Aplikasi, dan Update Diri dianalisis otom
 
 - **Letak error**: tahap pipeline, file, baris, dan kolom. Diambil dari log build Vercel (Go, TypeScript, ESLint, webpack/Next.js, npm), lalu dicocokkan dengan isi ZIP.
 - **Potongan kode** di sekitar baris error, dibaca dari ZIP yang diunggah sebelum ZIP itu dibuang.
+- **Sumber masalah**, ditampilkan sebagai badge paling atas sebelum detail lain: **kode di ZIP** (perbaiki di project aplikasi ini), **pengaturan project Vercel aplikasi ini** (Framework/Root Directory/Output Directory/Environment Variables — bukan kredensial DevControl), atau **DevControl sendiri** (token GITHUB_TOKEN/VERCEL_TOKEN/CF_API_TOKEN di Vercel milik DevControl, atau gangguan sementara GitHub/Vercel/Cloudflare). Untuk Update Diri, "kode" berarti kode DevControl sendiri, bukan aplikasi lain.
 - **Kategori, penyebab, dan saran perbaikan** konkret.
 - **Tombol "Salin prompt untuk AI"**: berisi error, lokasi, potongan kode, log, dan instruksi perbaikan patch-only. Tinggal ditempel ke AI.
 

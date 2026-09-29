@@ -21,8 +21,23 @@ type Location struct {
 	Column int    `json:"column,omitempty"`
 }
 
+// Source tells the person where to act: "code" is their ZIP/source code,
+// "config" is that app's own Vercel project settings (framework, root
+// directory, env vars) — not DevControl's own credentials — and "platform"
+// is DevControl's own token/permission/connectivity to GitHub, Vercel, or
+// Cloudflare. "unknown" is an error pattern Source can't yet classify.
+type Source string
+
+const (
+	SourceCode     Source = "code"
+	SourceConfig   Source = "config"
+	SourcePlatform Source = "platform"
+	SourceUnknown  Source = "unknown"
+)
+
 type Diagnosis struct {
 	Stage      string    `json:"stage"`
+	Source     Source    `json:"source"`
 	Category   string    `json:"category"`
 	Summary    string    `json:"summary"`
 	Location   *Location `json:"location,omitempty"`
@@ -56,6 +71,7 @@ var (
 type rule struct {
 	keys     []string
 	all      bool // every key must be present instead of any
+	source   Source
 	category string
 	cause    string
 	fixes    []string
@@ -63,90 +79,90 @@ type rule struct {
 }
 
 var rules = []rule{
-	{keys: []string{"halaman utama menampilkan 404", "http 404", "404 not_found"}, category: "Hasil build tidak disajikan (404 NOT_FOUND)",
+	{keys: []string{"halaman utama menampilkan 404", "http 404", "404 not_found"}, source: SourceConfig, category: "Hasil build tidak disajikan (404 NOT_FOUND)",
 		cause: "Build selesai, tetapi Vercel tidak menemukan halaman pada URL deployment. Penyebabnya bisa framework/Root Directory/Output Directory yang tidak sesuai, project Git berbeda dari project import manual, atau alias mengarah ke deployment lama.",
 		fixes: []string{"Pastikan package.json berada di akar ZIP dan mencantumkan framework-nya (vite, react-scripts, next, dll.) di dependencies/devDependencies.",
 			"Pastikan package.json punya script \"build\" yang menghasilkan folder output (mis. vite build → dist/).",
 			"Periksa nama project, koneksi GitHub dan VERCEL_TEAM_ID; di Vercel → Settings → Build and Deployment, samakan Framework, Root Directory dan Output Directory dengan project yang berhasil di-import manual.",
 			"Untuk build khusus, tambahkan vercel.json di akar ZIP: { \"outputDirectory\": \"dist\" } (sesuaikan nama foldernya)."}},
-	{keys: []string{"could not find an exported function"}, category: "Struktur fungsi Go di Vercel",
+	{keys: []string{"could not find an exported function"}, source: SourceCode, category: "Struktur fungsi Go di Vercel",
 		cause: "Vercel menganggap setiap file .go langsung di folder /api sebagai fungsi terpisah, dan salah satunya tidak mengekspor handler.",
 		fixes: []string{"Pastikan hanya ada satu file .go di /api yang berisi func Handler(w http.ResponseWriter, r *http.Request).",
 			"Pindahkan fungsi pembantu ke folder pkg/<nama>/ lalu impor dari handler."}},
-	{keys: []string{"missing go.sum entry", "no required module provides package", "go.mod file not found"}, category: "Dependensi Go",
+	{keys: []string{"missing go.sum entry", "no required module provides package", "go.mod file not found"}, source: SourceCode, category: "Dependensi Go",
 		cause: "Paket Go yang diimpor tidak tercatat di go.mod/go.sum, atau path modul tidak cocok dengan nama module di go.mod.",
 		fixes: []string{"Jalankan go mod tidy di akar proyek, lalu sertakan go.mod dan go.sum di ZIP.",
 			"Pastikan path impor diawali nama module yang tertulis di baris pertama go.mod."}},
-	{keys: []string{"redeclared"}, category: "Error kompilasi Go — nama ganda",
+	{keys: []string{"redeclared"}, source: SourceCode, category: "Error kompilasi Go — nama ganda",
 		cause: "Fungsi, tipe, atau variabel dengan nama yang sama dideklarasikan dua kali dalam satu package (sering di dua file berbeda).",
 		fixes: []string{"Cari nama yang sama di semua file dalam package tersebut, lalu hapus atau ganti nama salah satunya."}},
-	{keys: []string{"undefined:"}, category: "Error kompilasi Go — nama tidak dikenal",
+	{keys: []string{"undefined:"}, source: SourceCode, category: "Error kompilasi Go — nama tidak dikenal",
 		cause: "Kode memakai fungsi/variabel/tipe yang tidak ada: belum dibuat, salah ketik, package belum diimpor, atau namanya berhuruf kecil sehingga tidak diekspor dari package lain.",
 		fixes: []string{"Periksa ejaan nama pada baris error.", "Jika berasal dari package lain, impor package itu dan pastikan namanya diawali huruf kapital.",
 			"Jika fungsi belum ada, buat fungsinya atau kembalikan file yang terhapus."}},
-	{keys: []string{"declared and not used", "declared but not used"}, category: "Error kompilasi Go — variabel tidak dipakai",
+	{keys: []string{"declared and not used", "declared but not used"}, source: SourceCode, category: "Error kompilasi Go — variabel tidak dipakai",
 		cause: "Go menolak variabel lokal yang dideklarasikan tetapi tidak digunakan.",
 		fixes: []string{"Hapus variabel tersebut, atau ganti namanya dengan _ bila nilainya memang diabaikan."}},
-	{keys: []string{"imported and not used"}, category: "Error kompilasi Go — import tidak dipakai",
+	{keys: []string{"imported and not used"}, source: SourceCode, category: "Error kompilasi Go — import tidak dipakai",
 		cause: "Ada package yang diimpor tetapi tidak digunakan di file itu.",
 		fixes: []string{"Hapus baris import yang disebut pada pesan error."}},
-	{keys: []string{"cannot use", "mismatched types", "too many arguments", "not enough arguments", "missing return", "assignment mismatch"}, category: "Error kompilasi Go — tipe/argumen",
+	{keys: []string{"cannot use", "mismatched types", "too many arguments", "not enough arguments", "missing return", "assignment mismatch"}, source: SourceCode, category: "Error kompilasi Go — tipe/argumen",
 		cause: "Tipe data, jumlah argumen, atau nilai kembalian tidak sesuai dengan definisi fungsi.",
 		fixes: []string{"Cocokkan pemanggilan fungsi dengan signature-nya (jumlah dan tipe parameter/return).", "Konversi tipe secara eksplisit bila perlu."}},
-	{keys: []string{"syntax error"}, category: "Error sintaks",
+	{keys: []string{"syntax error"}, source: SourceCode, category: "Error sintaks",
 		cause: "Ada kurung, kurawal, koma, atau kata kunci yang hilang/berlebih sehingga kode tidak bisa di-parse.",
 		fixes: []string{"Periksa baris error dan satu-dua baris sebelumnya: biasanya kurung/kurawal belum ditutup atau koma hilang."}},
-	{keys: []string{"type error:"}, category: "Error tipe TypeScript",
+	{keys: []string{"type error:"}, source: SourceCode, category: "Error tipe TypeScript",
 		cause: "TypeScript menemukan tipe yang tidak cocok, properti yang tidak ada, atau nilai yang mungkin undefined/null.",
 		fixes: []string{"Buka file dan baris yang ditunjuk, sesuaikan tipe atau tambahkan pengecekan null/undefined.",
 			"Jika properti belum ada di interface/type, tambahkan ke definisinya."}},
-	{keys: []string{"eresolve", "could not resolve dependency", "conflicting peer dependency"}, category: "Konflik versi dependensi npm",
+	{keys: []string{"eresolve", "could not resolve dependency", "conflicting peer dependency"}, source: SourceCode, category: "Konflik versi dependensi npm",
 		cause: "Versi paket di package.json saling bertentangan (peer dependency).",
 		fixes: []string{"Samakan versi paket yang disebut di log (mis. versi react dan paket yang memerlukannya).",
 			"Alternatif cepat: tambahkan file .npmrc berisi legacy-peer-deps=true di akar proyek."}},
-	{keys: []string{"npm err! 404", "etarget", "no matching version found", "is not in this registry"}, category: "Paket npm tidak ditemukan",
+	{keys: []string{"npm err! 404", "etarget", "no matching version found", "is not in this registry"}, source: SourceCode, category: "Paket npm tidak ditemukan",
 		cause: "Nama paket salah ketik atau versi yang diminta tidak ada di registry npm.",
 		fixes: []string{"Periksa nama dan versi paket di package.json.", "Ganti ke versi yang tersedia (lihat npm view <paket> versions)."}},
-	{keys: []string{"eslint", "react-hooks/", "no-unused-vars", "no-explicit-any"}, category: "Build dihentikan oleh ESLint",
+	{keys: []string{"eslint", "react-hooks/", "no-unused-vars", "no-explicit-any"}, source: SourceCode, category: "Build dihentikan oleh ESLint",
 		cause: "next build menjalankan ESLint dan menganggap pelanggaran aturan sebagai error.",
 		fixes: []string{"Perbaiki baris yang disebut ESLint.", "Atau, sementara: tambahkan eslint: { ignoreDuringBuilds: true } di next.config.js."}},
-	{keys: []string{"error occurred prerendering", "should be wrapped in a suspense boundary", "window is not defined", "document is not defined", "localstorage is not defined", "self is not defined", "navigator is not defined"}, category: "Kode browser berjalan di server (SSR/prerender)",
+	{keys: []string{"error occurred prerendering", "should be wrapped in a suspense boundary", "window is not defined", "document is not defined", "localstorage is not defined", "self is not defined", "navigator is not defined"}, source: SourceCode, category: "Kode browser berjalan di server (SSR/prerender)",
 		cause: "Kode yang memakai window/document/localStorage dijalankan saat build di server, atau hook seperti useSearchParams tidak dibungkus Suspense.",
 		fixes: []string{"Tambahkan \"use client\" di awal komponen dan pindahkan akses window/localStorage ke dalam useEffect.",
 			"Bungkus komponen yang memakai useSearchParams dengan <Suspense>.", "Atau pakai dynamic(() => import(...), { ssr: false }) untuk komponen tersebut."}},
-	{keys: []string{"heap out of memory", "sigkill", "exited with 137"}, category: "Kehabisan memori saat build",
+	{keys: []string{"heap out of memory", "sigkill", "exited with 137"}, source: SourceCode, category: "Kehabisan memori saat build",
 		cause: "Proses build memakai memori melebihi batas mesin build Vercel.",
 		fixes: []string{"Hapus dependensi besar yang tidak dipakai dan file besar (gambar/video) dari ZIP.", "Tambahkan environment NODE_OPTIONS=--max-old-space-size=4096 di project Vercel."}},
-	{keys: []string{"no output directory", "could not find a production build", "couldn't find any `pages` or `app` directory", "missing script: \"build\"", "no package.json", "enoent: no such file or directory, open", "package.json"}, all: false, category: "Struktur ZIP / proyek",
+	{keys: []string{"no output directory", "could not find a production build", "couldn't find any `pages` or `app` directory", "missing script: \"build\"", "no package.json", "enoent: no such file or directory, open", "package.json"}, all: false, source: SourceCode, category: "Struktur ZIP / proyek",
 		cause: "Vercel tidak menemukan proyek di akar ZIP (misalnya bersarang dua folder), package.json tidak ada, atau script build tidak didefinisikan.",
 		fixes: []string{"Pastikan package.json (atau go.mod) berada di akar ZIP atau di satu folder teratas saja.",
 			"Pastikan package.json punya \"build\": \"next build\" (atau perintah build yang sesuai).", "Jangan sertakan node_modules, .next, atau .git di ZIP."}},
-	{keys: []string{"syntaxerror", "unexpected token", "unterminated", "expression expected", "expected \";\"", "expected '}'", "expected \"}\""}, category: "Error sintaks JavaScript/TypeScript",
+	{keys: []string{"syntaxerror", "unexpected token", "unterminated", "expression expected", "expected \";\"", "expected '}'", "expected \"}\""}, source: SourceCode, category: "Error sintaks JavaScript/TypeScript",
 		cause: "Ada tanda baca yang hilang/berlebih atau JSX yang tidak tertutup.",
 		fixes: []string{"Periksa baris error dan beberapa baris di atasnya: tag JSX, kurung, kurawal, atau tanda kutip yang belum ditutup."}},
-	{keys: []string{"environment variable", "missing env", "is not set", "process.env"}, category: "Environment variable kosong",
+	{keys: []string{"environment variable", "missing env", "is not set", "process.env"}, source: SourceConfig, category: "Environment variable kosong",
 		cause: "Aplikasi membutuhkan environment variable yang belum diisi di Vercel.",
 		fixes: []string{"Isi variabel yang disebut di Vercel → Settings → Environment Variables, lalu jalankan ulang deployment.",
 			"Untuk nilai yang dibaca browser, namanya harus diawali NEXT_PUBLIC_."}},
-	{keys: []string{"bad credentials", "resource not accessible", "requires authentication"}, category: "Izin GITHUB_TOKEN",
+	{keys: []string{"bad credentials", "resource not accessible", "requires authentication"}, source: SourcePlatform, category: "Izin GITHUB_TOKEN",
 		cause: "Token GitHub salah, kedaluwarsa, atau tidak punya izin menulis ke repo.",
 		fixes: []string{"Buat ulang GITHUB_TOKEN dengan izin Contents: Read & Write (dan Administration untuk membuat/menghapus repo).", "Perbarui nilainya di Vercel lalu redeploy DevControl."}},
-	{keys: []string{"invalid token", "not authorized", "forbidden", "missing scope"}, category: "Izin token (Vercel/Cloudflare)",
+	{keys: []string{"invalid token", "not authorized", "forbidden", "missing scope"}, source: SourcePlatform, category: "Izin token (Vercel/Cloudflare)",
 		cause: "Token tidak valid atau tidak memiliki izin untuk aksi ini.",
 		fixes: []string{"Periksa VERCEL_TOKEN / CF_API_TOKEN beserta scope team-nya, buat ulang bila perlu, lalu redeploy DevControl."}},
-	{keys: []string{"rate limit", "http 429", "timeout", "deadline exceeded", "connection reset", "http 502", "http 503", "unexpected eof", "tls handshake"}, category: "Gangguan sementara layanan",
+	{keys: []string{"rate limit", "http 429", "timeout", "deadline exceeded", "connection reset", "http 502", "http 503", "unexpected eof", "tls handshake"}, source: SourcePlatform, category: "Gangguan sementara layanan",
 		cause: "GitHub, Vercel, atau Cloudflare sedang membatasi/lambat merespons. Kode Anda kemungkinan tidak bermasalah.",
 		fixes: []string{"Tunggu 1–5 menit, lalu jalankan ulang deployment dengan ZIP yang sama."}, retry: true},
-	{keys: []string{"respons tahap sebelumnya tidak diketahui", "tidak aktif atau sudah kedaluwarsa", "status vercel gagal diperiksa berulang"}, category: "Proses terputus",
+	{keys: []string{"respons tahap sebelumnya tidak diketahui", "tidak aktif atau sudah kedaluwarsa", "status vercel gagal diperiksa berulang"}, source: SourcePlatform, category: "Proses terputus",
 		cause: "Runner kehilangan jejak tahap terakhir (fungsi berhenti di tengah aksi). Kode belum tentu salah.",
 		fixes: []string{"Buka GitHub dan Vercel untuk memastikan kondisi terakhir repo/deployment.", "Jalankan ulang deployment dengan ZIP yang sama."}, retry: true},
-	{keys: []string{"check vercel tidak muncul", "integrasi github"}, category: "Integrasi GitHub–Vercel",
+	{keys: []string{"check vercel tidak muncul", "integrasi github"}, source: SourceConfig, category: "Integrasi GitHub–Vercel",
 		cause: "Commit sudah masuk GitHub, tetapi Vercel tidak memulai deployment production untuk repo/branch ini.",
 		fixes: []string{"Pastikan project Vercel terhubung ke repo dan branch yang sama (Settings → Git).", "Pastikan branch tersebut adalah Production Branch di Vercel."}},
-	{keys: []string{"4 mib", "4 mb", "melampaui batas"}, category: "Ukuran ZIP",
+	{keys: []string{"4 mib", "4 mb", "melampaui batas"}, source: SourceCode, category: "Ukuran ZIP",
 		cause: "ZIP melebihi batas 4 MiB.",
 		fixes: []string{"Keluarkan node_modules, .next, .git, build output, dan media besar dari ZIP.", "Simpan gambar besar di penyimpanan terpisah (R2/CDN)."}},
-	{keys: []string{"bukan zip", "zip tidak valid", "zip rusak", "not a valid zip"}, category: "File ZIP tidak valid",
+	{keys: []string{"bukan zip", "zip tidak valid", "zip rusak", "not a valid zip"}, source: SourceCode, category: "File ZIP tidak valid",
 		cause: "File yang diunggah rusak atau bukan arsip ZIP standar.",
 		fixes: []string{"Kompres ulang folder proyek sebagai .zip biasa (bukan .rar/.7z), lalu unggah lagi."}},
 }
@@ -336,6 +352,7 @@ func Analyze(in Input) Diagnosis {
 	if module := quotedModule.FindStringSubmatch(text); module != nil && (strings.Contains(lower, "module not found") || strings.Contains(lower, "can't resolve") || strings.Contains(lower, "cannot find module") || strings.Contains(lower, "cannot find package")) {
 		name := module[1]
 		matched = true
+		d.Source = SourceCode
 		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "@/") || strings.HasPrefix(name, "~/") {
 			d.Category = "File impor tidak ditemukan"
 			d.Cause = fmt.Sprintf("Impor %q menunjuk ke file yang tidak ada di ZIP, salah path, atau beda huruf besar/kecil (server build Linux membedakan huruf besar/kecil).", name)
@@ -365,12 +382,13 @@ func Analyze(in Input) Diagnosis {
 				!strings.Contains(lower, "no output directory") && !strings.Contains(lower, "production build") &&
 				!strings.Contains(lower, "`pages` or `app`") && !strings.Contains(lower, "missing script") &&
 				!(strings.Contains(lower, "enoent") && strings.Contains(lower, "package.json")) { continue }
-			d.Category, d.Cause, d.Fixes, d.Retryable = candidate.category, candidate.cause, append([]string{}, candidate.fixes...), candidate.retry
+			d.Source, d.Category, d.Cause, d.Fixes, d.Retryable = candidate.source, candidate.category, candidate.cause, append([]string{}, candidate.fixes...), candidate.retry
 			matched = true
 			break
 		}
 	}
 	if !matched {
+		d.Source = SourceUnknown
 		d.Category = "Error belum dikenali otomatis"
 		d.Cause = "Pola error ini belum ada di daftar DevControl. Log dan potongan kode di bawah biasanya cukup bagi AI untuk menemukan penyebabnya."
 		d.Fixes = []string{"Salin prompt di bawah ke AI, lalu terapkan perbaikannya ke ZIP dan unggah ulang."}

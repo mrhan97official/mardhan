@@ -44,6 +44,11 @@ export interface DeploymentJob {
 
 export interface Diagnosis {
   stage: string;
+  // "code": masalah di ZIP/kode yang diunggah. "config": pengaturan project
+  // Vercel aplikasi itu sendiri (framework, root directory, env var) — bukan
+  // kredensial DevControl. "platform": token/izin/koneksi DevControl sendiri
+  // ke GitHub, Vercel, atau Cloudflare. "unknown": pola error belum dikenali.
+  source: "code" | "config" | "platform" | "unknown";
   category: string;
   summary: string;
   location?: { file: string; line?: number; column?: number };
