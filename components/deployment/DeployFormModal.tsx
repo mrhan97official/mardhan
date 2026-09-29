@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, UploadCloud } from "lucide-react";
+import { Loader2, Lock, UploadCloud } from "lucide-react";
 import Modal from "./Modal";
+import type { DeployPreset } from "./DeploymentOverlayProvider";
 import ErrorDiagnosis from "./ErrorDiagnosis";
 import { useOfflineData } from "@/lib/useOfflineData";
 import { fallbackServices } from "@/lib/fallbackData";
@@ -35,6 +36,7 @@ const STEPS: { key: StepKey; label: string }[] = [
 
 export default function DeployFormModal({
   mode,
+  preset,
   hidden,
   onHide,
   onClose,
@@ -44,6 +46,8 @@ export default function DeployFormModal({
   onFinished,
 }: {
   mode: Mode;
+  /** Opened from an app's card: the app to update is fixed and cannot be changed here. */
+  preset?: DeployPreset;
   hidden: boolean;
   onHide: () => void;
   onClose: () => void;
@@ -56,8 +60,9 @@ export default function DeployFormModal({
 }) {
   const services = useOfflineData<Service[]>("services", "/api/services", fallbackServices, 10000);
   const isUpdate = mode === "update_app";
+  const locked = isUpdate && !!preset?.app;
 
-  const [name, setName] = useState("");
+  const [name, setName] = useState(locked ? preset!.app : "");
   const [displayName, setDisplayName] = useState("");
   const [repoEdited, setRepoEdited] = useState(false);
   const [branch, setBranch] = useState("");
@@ -175,7 +180,7 @@ export default function DeployFormModal({
   const finished = result?.step === "done" && result.ok;
 
   return (
-    <Modal title={isUpdate ? "Update Aplikasi" : "Aplikasi Baru"} hidden={hidden} onHide={submitting ? onHide : undefined} onClose={submitting ? onHide : onClose}>
+    <Modal title={isUpdate ? (locked ? `Update: ${preset?.label || preset?.app}` : "Update Aplikasi") : "Aplikasi Baru"} hidden={hidden} onHide={submitting ? onHide : undefined} onClose={submitting ? onHide : onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <p className="text-xs text-slate-500">
           {isUpdate
@@ -183,7 +188,24 @@ export default function DeployFormModal({
             : "Setelah ZIP tersimpan, server otomatis menguji build, membuat repo GitHub, lalu menayangkan aplikasi di Vercel."}
         </p>
 
-        {isUpdate ? (
+        {locked ? (
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-slate-400">Aplikasi yang diperbarui</p>
+            {(() => {
+              const app = services.data.find((service) => service.name === name);
+              return (
+                <div className="flex items-start gap-2 rounded-xl border border-base-border bg-base-850 px-3 py-2.5">
+                  <Lock size={14} className="mt-0.5 shrink-0 text-slate-500" aria-hidden="true" />
+                  <div className="min-w-0 text-sm">
+                    <p className="truncate font-semibold text-slate-100">{app?.display_name || preset?.label || name}</p>
+                    <p className="truncate text-xs text-slate-500">{app?.repo ?? name}{app?.version ? ` · v${app.version}` : ""}</p>
+                  </div>
+                </div>
+              );
+            })()}
+            <p className="mt-1 text-xs text-slate-500">Dibuka dari kartu aplikasi, jadi aplikasinya tidak bisa diganti di sini. Untuk aplikasi lain, pakai tombol Update di kartunya.</p>
+          </div>
+        ) : isUpdate ? (
           <div>
             <label className="mb-1.5 block text-xs font-medium text-slate-400">Aplikasi yang diperbarui</label>
             <select

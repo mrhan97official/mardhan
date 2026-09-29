@@ -13,7 +13,7 @@ import { mergeProjects } from "@/lib/projectRepos";
 import { cacheSet } from "@/lib/db";
 import { notifyDataChanged } from "@/lib/liveUpdates";
 import { groupProjectImages, imageContentType, slotRepo, type ImageSlot } from "@/lib/projectImages";
-import type { GithubRepo, Service } from "@/lib/types";
+import type { DeploymentJob, GithubRepo, Service } from "@/lib/types";
 
 interface Thumbnail { repo: string; version: string }
 
@@ -39,6 +39,11 @@ function uploadOriginal(file: File, url: string, contentType: string, progress: 
 export default function ProjectsPage() {
   const repos = useOfflineData<GithubRepo[]>("github-repos-v16", "/api/github-repos", fallbackGithubRepos, 15000);
   const services = useOfflineData<Service[]>("services-v16", "/api/services", fallbackServices, 10000);
+  // Shared with the Pipeline pages (same key), used to show "Sedang di-update…".
+  const pipeline = useOfflineData<DeploymentJob[]>("deployment-jobs-v16", "/api/deployments", [], 5000);
+  const updatingApps = new Set(pipeline.data
+    .filter((job) => job.status === "Running" && (job.kind === "update_app" || job.kind === "new_app"))
+    .map((job) => job.target.toLowerCase()));
   const thumbnails = useOfflineData<Thumbnail[]>("project-thumbnails-v17", "/api/project-thumbnails", [], 10000);
   const [target, setTarget] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState("");
@@ -213,6 +218,7 @@ export default function ProjectsPage() {
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
           {apps.map(({ service, repo, source }) => (
             <ProjectCard key={repo.full_name.toLowerCase()} repo={repo} displayName={service?.display_name} appUrl={service?.app_url} linked={!!service} source={source}
+              serviceName={service?.repo ? service.name : undefined} updating={!!service && updatingApps.has(service.name.toLowerCase())}
               images={imagesByRepo.get(repo.full_name.toLowerCase())} uploading={uploading === repo.full_name}
               uploadingSlot={uploading === repo.full_name ? uploadingSlot : null}
               uploadProgress={uploading === repo.full_name ? uploadProgress : null}

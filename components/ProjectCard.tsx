@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertCircle, Archive, ExternalLink, FileArchive, GitBranch, History, ImageIcon, Lock, MoreVertical, RotateCcw, Star, Trash2, X } from "lucide-react";
+import { AlertCircle, Archive, ExternalLink, FileArchive, GitBranch, History, ImageIcon, Loader2, Lock, MoreVertical, RefreshCw, RotateCcw, Star, Trash2, X } from "lucide-react";
+import { useDeploymentOverlay } from "@/components/deployment/DeploymentOverlayProvider";
 import { UpdateHistoryDialog, ZipArchiveDialog } from "@/components/ProjectDialogs";
 import ProjectImagesDialog from "@/components/ProjectImagesDialog";
 import { useTheme } from "@/components/ThemeProvider";
 import { cardThumbnail, imageURL, type ImageSlot, type ProjectImages } from "@/lib/projectImages";
 import { notifyDataChanged } from "@/lib/liveUpdates";
-import { isAdminRole, useSession } from "@/lib/session";
+import { canDeploy, isAdminRole, useSession } from "@/lib/session";
 import type { GithubRepo } from "@/lib/types";
 
 const LANGUAGE_COLORS: Record<string, string> = {
@@ -50,12 +51,16 @@ function timeAgo(iso?: string): string | null {
   return `${value} ${label} lalu`;
 }
 
-export default function ProjectCard({ repo, displayName, appUrl, linked = false, source = "github", images = {}, uploading = false, uploadingSlot = null, uploadProgress = null, imageError, onUploadImage, onRemoveImage, onDelete }: {
+export default function ProjectCard({ repo, displayName, appUrl, linked = false, source = "github", serviceName, updating = false, images = {}, uploading = false, uploadingSlot = null, uploadProgress = null, imageError, onUploadImage, onRemoveImage, onDelete }: {
   repo: GithubRepo;
   displayName?: string;
   appUrl?: string | null;
   linked?: boolean;
   source?: "github" | "stored";
+  /** Name of the app's deployment record; set only when it can be updated from here. */
+  serviceName?: string;
+  /** An "Aplikasi Baru"/"Update Aplikasi" run for this app is in progress. */
+  updating?: boolean;
   images?: ProjectImages;
   uploading?: boolean;
   uploadingSlot?: ImageSlot | null;
@@ -84,6 +89,10 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
   const [repairedURL, setRepairedURL] = useState<string | null>(null);
   const { role } = useSession();
   const admin = isAdminRole(role);
+  const openDeploy = useDeploymentOverlay();
+  // Owner, admin and operator deploy apps; only apps already deployed by
+  // DevControl (with a saved deployment record) can be updated.
+  const canUpdate = canDeploy(role) && linked && !!serviceName;
   const [failedVersion, setFailedVersion] = useState<string | null>(null);
   const name = repo.full_name.split("/")[1] ?? repo.full_name;
   const languageDot = repo.language ? LANGUAGE_COLORS[repo.language] ?? "bg-slate-400" : null;
@@ -361,6 +370,19 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
           </a>
         ) : <span className="text-xs text-slate-500">{linked ? "URL aplikasi belum tersimpan" : "Belum terhubung ke deployment"}</span>}
       </div>
+      {canUpdate && (
+        // The app to change is the card being looked at, so the form opens
+        // with this app fixed. One run per app at a time.
+        <button
+          type="button"
+          disabled={updating}
+          onClick={() => openDeploy("update_app", { app: serviceName!, label: displayName || repo.name })}
+          aria-label={updating ? `${displayName || repo.name} sedang di-update` : `Update ${displayName || repo.name}`}
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-accent-blue/40 bg-accent-blue/10 px-3 py-2 text-sm font-semibold text-accent-blue hover:bg-accent-blue/20 disabled:cursor-not-allowed disabled:border-base-border disabled:bg-base-800/60 disabled:text-slate-400"
+        >
+          {updating ? <><Loader2 size={15} className="animate-spin" /> Sedang di-update…</> : <><RefreshCw size={15} /> Update</>}
+        </button>
+      )}
     </div>
   );
 }

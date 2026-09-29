@@ -1,18 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, FolderPlus, Plus, RefreshCw, UploadCloud, type LucideIcon } from "lucide-react";
+import { ChevronDown, FolderPlus, Plus, UploadCloud, type LucideIcon } from "lucide-react";
 import { useDeploymentOverlay, type ModalKey } from "./DeploymentOverlayProvider";
 import { canDeploy, isAdminRole, useSession } from "@/lib/session";
 
 const MENU_ITEMS: { key: ModalKey; label: string; description: string; icon: LucideIcon }[] = [
   { key: "new_app", label: "Aplikasi Baru", description: "Uji build, simpan di GitHub, lalu online di Vercel", icon: FolderPlus },
-  {
-    key: "update_app",
-    label: "Update Aplikasi",
-    description: "Unggah zip untuk memperbarui aplikasi yang ada",
-    icon: RefreshCw,
-  },
+  // "Update Aplikasi" lives on each app's card (Projects), so the app being
+  // changed is always the one the person is looking at.
   {
     key: "self_update",
     label: "Update Diri",

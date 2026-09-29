@@ -34,8 +34,6 @@ export interface DeploymentJob {
   id: string;
   kind: "new_app" | "update_app" | "self_update";
   target: string;
-  display_name?: string;
-  app_url?: string;
   status: "Running" | "Success" | "Failed" | "Interrupted";
   stages: PipelineStage[];
   created_at: string;

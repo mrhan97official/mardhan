@@ -7,6 +7,9 @@ import SelfUpdateModal from "./SelfUpdateModal";
 
 export type ModalKey = "new_app" | "update_app" | "self_update";
 
+/** Opens "Update Aplikasi" for one app (from its card): the app is fixed. */
+export type DeployPreset = { app: string; label?: string };
+
 interface Progress {
   running: boolean;
   failed: boolean;
@@ -17,13 +20,14 @@ interface Progress {
 interface Task {
   id: string;
   mode: ModalKey;
+  preset?: DeployPreset;
   progress: Progress;
 }
 
 // Pages that already show the Deployment Pipeline card.
 const PIPELINE_PAGES = ["/", "/deployments"];
 
-const DeploymentOverlayContext = createContext<(mode: ModalKey) => void>(() => {});
+const DeploymentOverlayContext = createContext<(mode: ModalKey, preset?: DeployPreset) => void>(() => {});
 
 export function useDeploymentOverlay() {
   return useContext(DeploymentOverlayContext);
@@ -49,7 +53,7 @@ function DeploymentTask({
     <SelfUpdateModal hidden={hidden} onHide={onHide} onClose={onClose} onSuccess={onSuccess} onProgress={report}
       onStarted={started} onFinished={finished} />
   ) : (
-    <DeployFormModal mode={task.mode} hidden={hidden} onHide={onHide} onClose={onClose} onSuccess={onSuccess} onProgress={report}
+    <DeployFormModal mode={task.mode} preset={task.preset} hidden={hidden} onHide={onHide} onClose={onClose} onSuccess={onSuccess} onProgress={report}
       onStarted={started} onFinished={finished} />
   );
 }
@@ -63,11 +67,11 @@ export default function DeploymentOverlayProvider({ children }: { children: Reac
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
-  const openModal = useCallback((mode: ModalKey) => {
+  const openModal = useCallback((mode: ModalKey, preset?: DeployPreset) => {
     const id = crypto.randomUUID();
     // Idle forms that were never started have no way back once hidden; drop them.
     setTasks((current) => [...current.filter((task) => task.progress.running), {
-      id, mode, progress: { running: false, failed: false, message: "Menunggu proses." },
+      id, mode, preset, progress: { running: false, failed: false, message: "Menunggu proses." },
     }]);
     setActiveId(id);
   }, []);
