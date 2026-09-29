@@ -421,11 +421,14 @@ func notifyJobResult(id string) {
 	webpush.Notify(message)
 }
 
-// handlePushWatch checks application links for Vercel's 404 and a waiting
-// Cloudflare zone confirmation, then notifies subscribed devices once.
+// handlePushWatch is the once-per-15-minutes periodic upkeep: it checks
+// application links for Vercel's 404 and a waiting Cloudflare zone
+// confirmation (notifying subscribed devices), and sweeps leftover Vercel
+// test projects — all independent of whether push notifications are set up.
 func handlePushWatch(w http.ResponseWriter, r *http.Request) {
 	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	webpush.Prune()
+	sweepOrphanTestProjects()
 	checked := 0
 	if webpush.Wants(webpush.EventApp404) {
 		rows, err := d1.Query(`SELECT repo, name, display_name, app_url FROM services WHERE app_url != '' ORDER BY id LIMIT 40`)
@@ -1883,7 +1886,8 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 		if detail != "" { msg += ": " + detail } else if buildLog != "" { msg += ": " + vercelFailureSummary(buildLog) }
 		if step == "vercel-test" {
 			if logErr == nil { cleanupTestProject(token, ticket.Project) } else {
-				msg += ". Log belum dapat dibaca (" + logErr.Error() + "); periksa project uji " + ticket.Project + " di Vercel."
+				msg += ". Log belum dapat dibaca (" + logErr.Error() + "); project uji " + ticket.Project + " tetap ada sementara di Vercel untuk diperiksa, lalu dibersihkan otomatis."
+				recordOrphanTestProject(ticket.Project)
 			}
 		}
 		updateDeploymentStage(ticket.ArchiveID, position, "Failed")
@@ -2777,7 +2781,8 @@ func handleSelfUpdateStatus(w http.ResponseWriter, r *http.Request, token, repo,
 		if logErr != nil {
 			// Keep the failed test available in Vercel when its logs could not be
 			// read. Deleting it here would permanently hide the build error.
-			msg += ". Log belum dapat dibaca (" + logErr.Error() + "); periksa project uji " + ticket.Project + " di Vercel."
+			msg += ". Log belum dapat dibaca (" + logErr.Error() + "); project uji " + ticket.Project + " tetap ada sementara di Vercel untuk diperiksa, lalu dibersihkan otomatis."
+			recordOrphanTestProject(ticket.Project)
 		} else {
 			cleanupTestProject(token, ticket.Project)
 		}
@@ -3091,15 +3096,15 @@ func vercelAppProjectName(owner, repo string) string {
 	return strings.Trim(name[:70], "-") + fmt.Sprintf("-%x", digest[:4])
 }
 
-// temporaryVercelProjectName builds a name that's unique per self-update run
+// temporaryVercelProjectName builds a name that's unique per test build
 // (repo name + a nanosecond-based suffix) so the test deployment always
 // lands in its own disposable project instead of an existing/real one, no
-// matter how many self-updates run back to back. Vercel project names are
-// capped at 100 chars and limited to lowercase alphanumerics + hyphens;
-// this stays comfortably under that.
+// matter how many "Aplikasi Baru"/"Update Aplikasi"/"Update Diri" runs go
+// back to back. Vercel project names are capped at 100 chars and limited to
+// lowercase alphanumerics + hyphens; this stays comfortably under that.
 func temporaryVercelProjectName(repoName string) string {
 	base := sanitizeVercelName(repoName)
-	suffix := fmt.Sprintf("selfupdate-test-%d", time.Now().UnixNano())
+	suffix := fmt.Sprintf("test-%d", time.Now().UnixNano())
 	const maxLen = 80
 	if room := maxLen - len(suffix) - 1; len(base) > room {
 		if room < 1 {
@@ -3173,7 +3178,7 @@ func getVercelBuildStatus(token, id string) (state string, urls []string, detail
 // Vercel's deployment status often contains only ERROR with no error.message.
 // Read the finished build's events before deleting the temporary project so
 // the admin can see the compiler or dependency error that actually occurred.
-func getVercelBuildLog(token, id string) (string, error) {
+func getVercelBuildLogOnce(token, id string) (string, error) {
 	query := url.Values{"direction": {"backward"}, "follow": {"0"}, "limit": {"100"}}
 	if team := os.Getenv("VERCEL_TEAM_ID"); team != "" { query.Set("teamId", team) }
 	endpoint := "https://api.vercel.com/v3/deployments/" + url.PathEscape(id) + "/events?" + query.Encode()
@@ -3206,6 +3211,50 @@ func getVercelBuildLog(token, id string) (string, error) {
 	log := strings.Join(lines, "\n")
 	if len(log) > 4000 { log = log[len(log)-4000:] }
 	return log, nil
+}
+
+// getVercelBuildLog retries getVercelBuildLogOnce: Vercel's events endpoint
+// can briefly lag behind a deployment's readyState flipping to ERROR/CANCELED,
+// which otherwise showed up as a false "log build kosong" right as the build
+// actually finished. Total worst case ~7s, well inside the request's budget.
+func getVercelBuildLog(token, id string) (string, error) {
+	var log string
+	var err error
+	for attempt, delay := range []time.Duration{0, 1500 * time.Millisecond, 3 * time.Second} {
+		if attempt > 0 { time.Sleep(delay) }
+		if log, err = getVercelBuildLogOnce(token, id); err == nil { return log, nil }
+	}
+	return "", err
+}
+
+// recordOrphanTestProject remembers a throwaway test project whose build log
+// still could not be read after retries, so sweepOrphanTestProjects can
+// clean it up later instead of it sitting in Vercel forever. Cleanup is
+// deliberately not immediate: the admin can still open the project in Vercel
+// for a while first (see getVercelBuildLog's comment on why it was kept).
+func recordOrphanTestProject(project string) {
+	if project == "" { return }
+	_, _ = d1.Query(`INSERT OR IGNORE INTO vercel_orphan_projects (project) VALUES (?)`, project)
+}
+
+// sweepOrphanTestProjects deletes recorded test projects older than the grace
+// window. Called from the same once-a-minute Cloudflare runner as other
+// periodic cleanup, so orphans left by an unreadable build log never
+// accumulate even if nobody opens DevControl again.
+func sweepOrphanTestProjects() {
+	token := os.Getenv("VERCEL_TOKEN")
+	if token == "" { return }
+	rows, err := d1.Query(`SELECT project FROM vercel_orphan_projects WHERE created_at <= datetime('now', '-30 minutes') LIMIT 20`)
+	if err != nil { return }
+	for _, row := range rows {
+		project := rowText(row, "project")
+		if project == "" { continue }
+		if err := deleteVercelProject(token, project); err != nil && !strings.Contains(strings.ToLower(err.Error()), "not found") {
+			logLiveLog("WARN", "Gagal membersihkan project uji Vercel "+project+": "+err.Error())
+			continue
+		}
+		_, _ = d1.Query(`DELETE FROM vercel_orphan_projects WHERE project = ?`, project)
+	}
 }
 
 func vercelFailureSummary(log string) string {

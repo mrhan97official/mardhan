@@ -19,18 +19,18 @@ import (
 	"time"
 )
 
-// Every 15 minutes the Worker also asks DevControl to check for events that
-// have no request of their own (application 404, waiting confirmations) and
-// to send Web Push notifications. It only calls when a device subscribed.
+// Every 15 minutes the Worker also asks DevControl to run its periodic
+// upkeep: checking events that have no request of their own (application
+// 404, waiting confirmations) and sending Web Push notifications when a
+// device subscribed, and sweeping leftover Vercel test projects whose build
+// log could not be read right after a failed deploy. This runs regardless of
+// whether push is set up, so the sweep never depends on it.
 const source = `export default {
   async scheduled(event, env) {
     if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 0) {
-      const subscribed = await env.DB.prepare("SELECT 1 AS found FROM push_subscriptions LIMIT 1").first().catch(() => null);
-      if (subscribed) {
-        await fetch(env.TARGET_URL + "/api/push-watch", {
-          method: "POST", headers: { Authorization: "Bearer " + env.RUNNER_SECRET },
-        }).catch(() => {});
-      }
+      await fetch(env.TARGET_URL + "/api/push-watch", {
+        method: "POST", headers: { Authorization: "Bearer " + env.RUNNER_SECRET },
+      }).catch(() => {});
     }
     const job = await env.DB.prepare("SELECT j.id FROM deployment_jobs j JOIN deployment_runner r ON r.id = j.id WHERE j.status = 'Running' AND r.phase NOT IN ('done', 'error') AND r.claim_until <= CURRENT_TIMESTAMP LIMIT 1").first();
     if (!job) return;

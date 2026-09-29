@@ -240,6 +240,14 @@ CREATE TABLE IF NOT EXISTS push_log (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Throwaway Vercel test projects (owner/repo-test-<nanotime>) whose build
+-- log could not be read before the normal cleanup ran. Kept a while so the
+-- admin can still open them in Vercel, then removed automatically.
+CREATE TABLE IF NOT EXISTS vercel_orphan_projects (
+  project TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Management metadata. Existing application tables and ZIP archives are never reset.
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version TEXT PRIMARY KEY,
