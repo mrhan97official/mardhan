@@ -499,10 +499,33 @@ func Analyze(in Input) Diagnosis {
 	return d
 }
 
+// FixDirectiveMarker starts every AI prompt, so the answer is aimed at the
+// right place: the ZIP, the app's Vercel settings, or DevControl itself.
+// The UI adds the same line to prompts stored before it existed.
+const FixDirectiveMarker = "PENTING — YANG HARUS DIPERBAIKI:"
+
+// fixDirective is the one clear instruction for where to act.
+func fixDirective(source Source, kind string, logMissing bool) string {
+	switch {
+	case logMissing:
+		return "BELUM PASTI. Log build belum terbaca, jadi belum diketahui apakah ZIP atau DevControl yang harus diperbaiki; jangan mengubah apa pun sebelum log tersedia."
+	case source == SourceCode && kind == "self_update":
+		return "KODE DEVCONTROL di ZIP Update Diri ini. Perbaiki ZIP Update Diri tersebut, lalu jalankan Update Diri lagi."
+	case source == SourceCode:
+		return "ZIP APLIKASI. Kesalahan ada di kode/berkas proyek di dalam ZIP; DevControl tidak perlu diubah. Perbaiki ZIP-nya, lalu deploy ulang."
+	case source == SourceConfig:
+		return "PENGATURAN APLIKASI, bukan DevControl. Perbaiki lewat berkas konfigurasi di ZIP (mis. vercel.json, package.json, next.config) atau pengaturan project Vercel aplikasi ini (Framework, Root/Output Directory, Environment Variables)."
+	case source == SourcePlatform:
+		return "DEVCONTROL, BUKAN ZIP. Kode di ZIP aplikasi tidak salah dan tidak perlu diubah. Yang harus diperbaiki adalah DevControl: token/izin (GITHUB_TOKEN, VERCEL_TOKEN, CF_API_TOKEN, VERCEL_TEAM_ID), gangguan layanan, atau kode DevControl sendiri."
+	}
+	return "BELUM PASTI. Tentukan dulu dari log apakah yang harus diperbaiki kode di ZIP, pengaturan Vercel aplikasi, atau DevControl."
+}
+
 func buildPrompt(in Input, d Diagnosis) string {
 	var b strings.Builder
 	target := in.Target
 	if target == "" { target = "(tanpa nama)" }
+	fmt.Fprintf(&b, "%s %s\n\n", FixDirectiveMarker, fixDirective(d.Source, in.Kind, d.LogMissing))
 	fmt.Fprintf(&b, "Saya menjalankan %s untuk \"%s\" (di-deploy ke Vercel lewat GitHub) dan gagal pada tahap: %s.\n", kindLabel(in.Kind), target, d.Stage)
 	if d.Stack != "" { fmt.Fprintf(&b, "Stack proyek: %s.\n", d.Stack) }
 	fmt.Fprintf(&b, "\nError utama:\n%s\n", d.Summary)
@@ -518,8 +541,24 @@ func buildPrompt(in Input, d Diagnosis) string {
 	if d.LogExcerpt != "" { fmt.Fprintf(&b, "\nLog build (bagian akhir):\n```\n%s\n```\n", d.LogExcerpt) }
 	fmt.Fprintf(&b, "\nDugaan awal (%s): %s\n", d.Category, d.Cause)
 	b.WriteString("\nTolong:\n1. Jelaskan penyebab pastinya secara singkat.\n")
-	b.WriteString("2. Beri perbaikan minimal (patch-only): ubah hanya file yang berhubungan dengan error ini, jangan menyentuh file lain.\n")
-	b.WriteString("3. Tulis isi lengkap setiap file yang diubah beserta path-nya, supaya bisa langsung saya ganti.\n")
-	b.WriteString("4. Pastikan hasilnya lolos build di Vercel (next build / go build) dan sebutkan jika ada environment variable atau dependensi yang perlu ditambahkan.\n")
+	switch {
+	case d.Source == SourcePlatform && !d.LogMissing:
+		// The ZIP is fine: asking for a ZIP patch would change code that is not broken.
+		b.WriteString("2. Jangan mengubah file apa pun di ZIP aplikasi; masalahnya ada di DevControl.\n")
+		b.WriteString("3. Tentukan apakah cukup memperbaiki token/izin/pengaturan DevControl (sebutkan langkahnya), atau perlu patch kode DevControl. Jika perlu patch, buat perbaikan minimal (patch-only) dan tulis isi lengkap setiap file DevControl yang diubah beserta path-nya.\n")
+		b.WriteString("4. Jelaskan kapan deployment dengan ZIP yang sama boleh diulang.\n")
+	case d.Source == SourceConfig && !d.LogMissing:
+		b.WriteString("2. Beri perbaikan minimal pada pengaturan aplikasi: berkas konfigurasi di ZIP (vercel.json, package.json, next.config, dll.) atau langkah di pengaturan project Vercel aplikasi ini. Jangan mengubah kode lain.\n")
+		b.WriteString("3. Tulis isi lengkap setiap file yang diubah beserta path-nya, atau langkah pengaturan Vercel yang persis.\n")
+		b.WriteString("4. Pastikan hasilnya lolos build di Vercel dan sebutkan environment variable yang perlu ditambahkan.\n")
+	case d.Source == SourceCode && !d.LogMissing:
+		b.WriteString("2. Beri perbaikan minimal (patch-only) pada kode di ZIP: ubah hanya file yang berhubungan dengan error ini, jangan menyentuh file lain.\n")
+		b.WriteString("3. Tulis isi lengkap setiap file yang diubah beserta path-nya, supaya bisa langsung saya ganti.\n")
+		b.WriteString("4. Pastikan hasilnya lolos build di Vercel (next build / go build) dan sebutkan jika ada environment variable atau dependensi yang perlu ditambahkan.\n")
+	default:
+		b.WriteString("2. Tentukan dulu tempat perbaikannya: kode di ZIP, pengaturan Vercel aplikasi, atau DevControl, dan sebutkan alasannya dari log.\n")
+		b.WriteString("3. Beri perbaikan minimal (patch-only) hanya di tempat itu dan tulis isi lengkap setiap file yang diubah beserta path-nya.\n")
+		b.WriteString("4. Bila log belum cukup, sebutkan informasi apa yang perlu saya ambil dari Vercel.\n")
+	}
 	return b.String()
 }

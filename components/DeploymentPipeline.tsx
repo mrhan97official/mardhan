@@ -5,7 +5,7 @@ import { Check, Loader2, X, Clock3, Stethoscope, XCircle } from "lucide-react";
 import type { DeploymentJob, PipelineStage } from "@/lib/types";
 import { fallbackPipeline } from "@/lib/fallbackData";
 import NewDeploymentMenu from "@/components/deployment/NewDeploymentMenu";
-import ErrorDiagnosis from "@/components/deployment/ErrorDiagnosis";
+import ErrorDiagnosis, { fixDirective } from "@/components/deployment/ErrorDiagnosis";
 
 type StageStatus = PipelineStage["status"] | "Interrupted";
 
@@ -237,6 +237,11 @@ export default function DeploymentPipeline({
                     className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/40 px-2.5 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/10">
                     <Stethoscope size={13} /> {openDiagnosis === job.id ? "Tutup diagnosis" : "Lihat letak error & saran perbaikan"}
                   </button>
+                  {job.diagnosis && (() => {
+                    // Where to act, visible before the diagnosis is opened.
+                    const directive = fixDirective(job.diagnosis.source, job.kind, job.diagnosis.log_missing);
+                    return <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${directive.chipTone}`}>{directive.chip}</span>;
+                  })()}
                   {confirmClose === job.id ? (
                     <span className="inline-flex flex-wrap items-center gap-1.5 text-xs text-slate-300">
                       Hapus dari pipeline?

@@ -27,49 +27,88 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-// One clear answer to "apakah ini dari DevControl atau dari ZIP saya?",
-// shown before anything else in the diagnosis. Wording adapts to whether
-// this run was deploying the person's own app or updating DevControl itself.
-function sourceBanner(source: Diagnosis["source"] | undefined, kind?: string, logMissing?: boolean) {
-  const selfUpdate = kind === "self_update";
+// One clear command, shown first: fix the ZIP, fix the app's settings, or
+// fix DevControl. The same sentence opens the AI prompt, so a copied prompt
+// never asks for a ZIP patch when DevControl is at fault.
+export const FIX_DIRECTIVE_MARKER = "PENTING — YANG HARUS DIPERBAIKI:";
+
+type Directive = {
+  Icon: typeof FileCode2;
+  tone: string;
+  chipTone: string;
+  headline: string;
+  detail: string;
+  chip: string;
+  afterCopy: string;
+  promptLine: string;
+};
+
+export function fixDirective(source: Diagnosis["source"] | undefined, kind?: string, logMissing?: boolean): Directive {
   if (logMissing) {
     return {
       Icon: Loader2,
-      tone: "border-slate-500/30 bg-slate-500/[0.06] text-slate-300",
-      title: "Sumber sedang dipastikan: log build dibaca ulang dari Vercel",
-      detail: "Build berhenti dengan ERROR, tetapi Vercel belum menyimpan log-nya saat itu. DevControl membacanya ulang otomatis; sumber dan letak error tampil di sini begitu log tersedia.",
+      tone: "border-slate-500/40 bg-slate-500/[0.08] text-slate-200",
+      chipTone: "border-slate-500/40 text-slate-300",
+      headline: "Belum pasti — tunggu log build",
+      detail: "Build berhenti dengan ERROR, tetapi Vercel belum menyimpan log-nya. DevControl membacanya ulang otomatis; perintah perbaikan muncul di sini begitu log tersedia. Jangan mengubah ZIP atau DevControl dulu.",
+      chip: "Menunggu log",
+      afterCopy: "Tunggu log terbaca dulu sebelum mengubah apa pun.",
+      promptLine: "BELUM PASTI. Log build belum terbaca, jadi belum diketahui apakah ZIP atau DevControl yang harus diperbaiki; jangan mengubah apa pun sebelum log tersedia.",
     };
   }
   switch (source) {
     case "code":
-      return {
+      return kind === "self_update" ? {
         Icon: FileCode2,
-        tone: "border-amber-400/30 bg-amber-500/[0.06] text-amber-200",
-        title: selfUpdate ? "Sumber: kode DevControl (patch yang baru diterapkan)" : "Sumber: kode di ZIP yang Anda unggah",
-        detail: selfUpdate
-          ? "Bukan masalah token, izin, atau koneksi — kode DevControl sendiri yang perlu diperbaiki sebelum di-deploy ulang."
-          : "Bukan masalah DevControl — perbaiki di project aplikasi ini (kode atau package.json/go.mod), lalu unggah ulang ZIP-nya.",
+        tone: "border-amber-400/50 bg-amber-500/[0.1] text-amber-100",
+        chipTone: "border-amber-400/50 text-amber-200",
+        headline: "Perbaiki: ZIP Update Diri (kode DevControl)",
+        detail: "Kode DevControl di ZIP Update Diri ini yang salah. Perbaiki ZIP-nya, lalu jalankan Update Diri lagi. DevControl yang sedang berjalan tidak berubah.",
+        chip: "Perbaiki ZIP Update Diri",
+        afterCopy: "Tempel ke AI, perbaiki ZIP Update Diri, lalu jalankan Update Diri lagi.",
+        promptLine: "KODE DEVCONTROL di ZIP Update Diri ini. Perbaiki ZIP Update Diri tersebut, lalu jalankan Update Diri lagi.",
+      } : {
+        Icon: FileCode2,
+        tone: "border-amber-400/50 bg-amber-500/[0.1] text-amber-100",
+        chipTone: "border-amber-400/50 text-amber-200",
+        headline: "Perbaiki: ZIP aplikasi",
+        detail: "Kesalahan ada di kode/berkas proyek di dalam ZIP. DevControl tidak perlu diubah — perbaiki ZIP-nya, lalu deploy ulang.",
+        chip: "Perbaiki ZIP",
+        afterCopy: "Tempel ke AI, perbaiki ZIP, lalu deploy lagi.",
+        promptLine: "ZIP APLIKASI. Kesalahan ada di kode/berkas proyek di dalam ZIP; DevControl tidak perlu diubah. Perbaiki ZIP-nya, lalu deploy ulang.",
       };
     case "config":
       return {
         Icon: Settings,
-        tone: "border-sky-400/30 bg-sky-500/[0.06] text-sky-200",
-        title: "Sumber: pengaturan project Vercel aplikasi ini",
-        detail: "Bukan token atau kredensial DevControl — periksa Framework/Root Directory/Output Directory atau Environment Variables project ini di dashboard Vercel, bukan kode di ZIP.",
+        tone: "border-sky-400/50 bg-sky-500/[0.1] text-sky-100",
+        chipTone: "border-sky-400/50 text-sky-200",
+        headline: "Perbaiki: pengaturan aplikasi (bukan DevControl)",
+        detail: "Perbaiki lewat berkas konfigurasi di ZIP (vercel.json, package.json, next.config) atau pengaturan project Vercel aplikasi ini: Framework, Root/Output Directory, Environment Variables. DevControl tidak perlu diubah.",
+        chip: "Perbaiki pengaturan aplikasi",
+        afterCopy: "Tempel ke AI, terapkan perbaikan pengaturannya, lalu deploy lagi.",
+        promptLine: "PENGATURAN APLIKASI, bukan DevControl. Perbaiki lewat berkas konfigurasi di ZIP (mis. vercel.json, package.json, next.config) atau pengaturan project Vercel aplikasi ini (Framework, Root/Output Directory, Environment Variables).",
       };
     case "platform":
       return {
         Icon: Wrench,
-        tone: "border-violet-400/30 bg-violet-500/[0.06] text-violet-200",
-        title: "Sumber: DevControl sendiri (token, izin, atau koneksi layanan)",
-        detail: "Bukan dari kode di ZIP — periksa GITHUB_TOKEN/VERCEL_TOKEN/CF_API_TOKEN di Environment Variables Vercel milik DevControl, atau ini gangguan sementara di GitHub/Vercel/Cloudflare.",
+        tone: "border-violet-400/50 bg-violet-500/[0.1] text-violet-100",
+        chipTone: "border-violet-400/50 text-violet-200",
+        headline: "Perbaiki: DevControl — ZIP tidak perlu diubah",
+        detail: "Kode di ZIP tidak salah. Periksa GITHUB_TOKEN, VERCEL_TOKEN, CF_API_TOKEN, dan VERCEL_TEAM_ID di Environment Variables Vercel milik DevControl, tunggu bila GitHub/Vercel/Cloudflare sedang gangguan, atau perbarui DevControl lewat Update Diri. Setelah beres, deploy ulang dengan ZIP yang sama.",
+        chip: "Perbaiki DevControl",
+        afterCopy: "Tempel ke AI untuk memperbaiki DevControl; deploy ulang dengan ZIP yang sama setelah beres.",
+        promptLine: "DEVCONTROL, BUKAN ZIP. Kode di ZIP aplikasi tidak salah dan tidak perlu diubah. Yang harus diperbaiki adalah DevControl: token/izin (GITHUB_TOKEN, VERCEL_TOKEN, CF_API_TOKEN, VERCEL_TEAM_ID), gangguan layanan, atau kode DevControl sendiri.",
       };
     default:
       return {
         Icon: Stethoscope,
-        tone: "border-slate-500/30 bg-slate-500/[0.06] text-slate-300",
-        title: "Sumber belum bisa dipastikan otomatis",
-        detail: "Pola error ini belum dikenali DevControl. Lihat log dan potongan kode di bawah, atau salin prompt untuk AI.",
+        tone: "border-slate-500/40 bg-slate-500/[0.08] text-slate-200",
+        chipTone: "border-slate-500/40 text-slate-300",
+        headline: "Belum pasti: ZIP atau DevControl",
+        detail: "Tidak ada bukti yang cukup untuk memastikan tempat perbaikannya. Lihat log dan potongan kode di bawah, atau salin prompt untuk AI agar ditentukan dari log.",
+        chip: "Sumber belum pasti",
+        afterCopy: "Tempel ke AI untuk menentukan apakah ZIP atau DevControl yang diperbaiki.",
+        promptLine: "BELUM PASTI. Tentukan dulu dari log apakah yang harus diperbaiki kode di ZIP, pengaturan Vercel aplikasi, atau DevControl.",
       };
   }
 }
@@ -156,13 +195,17 @@ export default function ErrorDiagnosis({
     return failed ? <p className="text-xs text-slate-500">Diagnosis otomatis belum tersedia: {failed}</p> : null;
   }
 
-  const banner = sourceBanner(diagnosis.source, kind, diagnosis.log_missing);
+  const directive = fixDirective(diagnosis.source, kind, diagnosis.log_missing);
+  // Prompts stored before the directive existed get the same first line.
+  const prompt = diagnosis.prompt.startsWith(FIX_DIRECTIVE_MARKER)
+    ? diagnosis.prompt
+    : `${FIX_DIRECTIVE_MARKER} ${directive.promptLine}\n\n${diagnosis.prompt}`;
   const where = diagnosis.location
     ? `${diagnosis.location.file}${diagnosis.location.line ? ` baris ${diagnosis.location.line}` : ""}${diagnosis.location.column ? `, kolom ${diagnosis.location.column}` : ""}`
     : "";
 
   async function copyPrompt() {
-    const ok = await copyText(diagnosis?.prompt ?? "");
+    const ok = await copyText(prompt);
     setCopied(ok ? "ok" : "fail");
     setTimeout(() => setCopied(""), 2500);
   }
@@ -175,11 +218,12 @@ export default function ErrorDiagnosis({
         <span className="rounded-full border border-red-400/40 px-2 py-0.5 text-[11px] font-medium text-red-300">{diagnosis.category}</span>
       </div>
 
-      <div className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 ${banner.tone}`}>
-        <banner.Icon size={16} className={`mt-0.5 shrink-0 ${diagnosis.log_missing ? "animate-spin" : ""}`} />
-        <div className="text-xs">
-          <p className="font-semibold">{banner.title}</p>
-          <p className="mt-0.5 opacity-90">{banner.detail}</p>
+      <div role="note" aria-label="Yang harus diperbaiki" className={`flex items-start gap-2.5 rounded-lg border-2 px-3 py-2.5 ${directive.tone}`}>
+        <directive.Icon size={20} className={`mt-0.5 shrink-0 ${diagnosis.log_missing ? "animate-spin" : ""}`} />
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-wider opacity-80">Yang harus diperbaiki</p>
+          <p className="text-sm font-bold">{directive.headline}</p>
+          <p className="mt-1 text-xs opacity-90">{directive.detail}</p>
         </div>
       </div>
 
@@ -223,11 +267,11 @@ export default function ErrorDiagnosis({
           {copied === "ok" ? "Prompt tersalin" : "Salin prompt untuk AI"}
         </button>
         <span className="text-[11px] text-slate-500">
-          {copied === "fail" ? "Gagal menyalin otomatis; blok teks prompt di bawah lalu salin manual." : "Tempel ke AI, terapkan perbaikannya, ZIP ulang, lalu deploy lagi."}
+          {copied === "fail" ? "Gagal menyalin otomatis; blok teks prompt di bawah lalu salin manual." : directive.afterCopy}
         </span>
       </div>
       {copied === "fail" && (
-        <textarea readOnly value={diagnosis.prompt} className="h-40 w-full rounded-lg border border-base-border bg-base-950 p-2 font-mono text-[11px] text-slate-300" />
+        <textarea readOnly value={prompt} className="h-40 w-full rounded-lg border border-base-border bg-base-950 p-2 font-mono text-[11px] text-slate-300" />
       )}
       <p className="text-[11px] text-slate-500">ZIP yang gagal tidak disimpan. ZIP terakhir yang berhasil (jika ada) tetap aktif.</p>
     </section>

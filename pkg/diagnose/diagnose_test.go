@@ -107,8 +107,36 @@ func TestAnalyzeSource(t *testing.T) {
 			if got.LogMissing != tc.logMissing { t.Errorf("log_missing = %v, want %v", got.LogMissing, tc.logMissing) }
 			if got.Retryable != tc.retryable { t.Errorf("retryable = %v, want %v", got.Retryable, tc.retryable) }
 			if len(got.Fixes) == 0 { t.Error("no fixes suggested") }
-			if got.Prompt == "" { t.Error("empty AI prompt") }
+			if !strings.HasPrefix(got.Prompt, FixDirectiveMarker) { t.Errorf("prompt does not start with the fix directive:\n%s", got.Prompt) }
 		})
+	}
+}
+
+// The AI prompt must send the fix to the right place: never ask for a ZIP
+// patch when DevControl is at fault, and never blame DevControl for a code
+// error in the ZIP.
+func TestPromptTellsWhereToFix(t *testing.T) {
+	platform := Analyze(Input{Kind: "new_app", Target: "gjctyyfxdt", Stage: "Uji build Vercel",
+		Message: "[Uji Build Vercel] Build Vercel READY, tetapi halaman utama https://x.vercel.app gagal dibuka: HTTP 302: akses deployment dibatasi; periksa Deployment Protection."})
+	for _, want := range []string{"DEVCONTROL, BUKAN ZIP", "Jangan mengubah file apa pun di ZIP"} {
+		if !strings.Contains(platform.Prompt, want) { t.Errorf("platform prompt misses %q:\n%s", want, platform.Prompt) }
+	}
+	if strings.Contains(platform.Prompt, "patch-only) pada kode di ZIP") { t.Error("platform prompt still asks to patch the ZIP") }
+
+	code := Analyze(Input{Kind: "new_app", Target: "kasir", Stage: "Uji build Vercel", Message: "[Uji Build Vercel] Build Vercel ERROR",
+		BuildLog: "api/index.go:3:2: undefined: tidakAda"})
+	for _, want := range []string{"ZIP APLIKASI", "DevControl tidak perlu diubah", "patch-only) pada kode di ZIP"} {
+		if !strings.Contains(code.Prompt, want) { t.Errorf("code prompt misses %q:\n%s", want, code.Prompt) }
+	}
+
+	self := Analyze(Input{Kind: "self_update", Target: "owner/devcontrol", Stage: "Uji build Vercel", Message: "[Uji Build Vercel] Build Vercel ERROR",
+		BuildLog: "api/gateway.go:10:2: undefined: rollback"})
+	if !strings.Contains(self.Prompt, "KODE DEVCONTROL di ZIP Update Diri") { t.Errorf("self-update prompt should point at DevControl's own ZIP:\n%s", self.Prompt) }
+
+	missing := Analyze(Input{Kind: "new_app", Stage: "Uji build Vercel",
+		Message: "[Uji Build Vercel] Build Vercel ERROR. Log belum dapat dibaca (log build kosong); periksa project uji x di Vercel."})
+	if !strings.Contains(missing.Prompt, "BELUM PASTI") || strings.Contains(missing.Prompt, "patch-only) pada kode di ZIP") {
+		t.Errorf("missing-log prompt must not claim a place to fix:\n%s", missing.Prompt)
 	}
 }
 
