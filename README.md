@@ -140,6 +140,15 @@ Alurnya setelah login admin (paket `pkg/autoconfig`, endpoint `/api/auto-setup`,
 
 Instalasi lama yang semua variabelnya sudah terisi tidak berubah perilakunya.
 
+## Tes otomatis
+
+CI GitHub Actions (`.github/workflows/ci.yml`) menjalankan `go test ./...`, `go vet ./...`, `go build ./...`, dan `npm run build` pada setiap push ke `main`, termasuk hasil Update Diri; hasilnya ada di tab **Actions** repo GitHub. Selain itu, setiap Update Diri mengompilasi kode Go di tahap **Uji Build Vercel** sebelum apa pun didorong ke GitHub, jadi kesalahan kompilasi menghentikan update tanpa mengubah production.
+
+Sejak v1.0.69 ada tes untuk:
+
+- `pkg/webpush`: enkripsi notifikasi diuji dengan data uji resmi RFC 8291 (pesan terenkripsi harus bisa dibuka seperti oleh browser), tanda tangan VAPID ES256 diverifikasi, pasangan kunci yang tidak cocok ditolak, hanya alamat push resmi (Google, Mozilla, Apple, Microsoft) yang diterima, dan jenis notifikasi khusus admin tidak bisa dipilih member.
+- `pkg/diagnose`: contoh error nyata (Deployment Protection, log build kosong, 404 Vercel, error kompilasi Go, paket npm hilang, token GitHub, gangguan layanan, environment variable kosong, dan error yang polanya belum dikenal) harus masuk ke sumber yang benar; letak error dan potongan kode dari ZIP diuji; diagnosis lama harus diklasifikasi ulang; dan setiap aturan wajib punya sumber serta saran perbaikan.
+
 ## Diagnosis error & retensi ZIP
 
 Setiap kegagalan Aplikasi Baru, Update Aplikasi, dan Update Diri dianalisis otomatis (`pkg/diagnose`, tanpa layanan luar):
