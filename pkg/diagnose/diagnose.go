@@ -82,6 +82,11 @@ type rule struct {
 }
 
 var rules = []rule{
+	{keys: []string{"akses deployment dibatasi", "vercel.com/sso"}, source: SourcePlatform, category: "Deployment Protection Vercel",
+		cause: "Build aplikasi berhasil (READY). Yang gagal adalah pemeriksaan halaman oleh DevControl: project uji di Vercel dilindungi Deployment Protection (Vercel Authentication, sering diterapkan otomatis ke semua project baru di sebuah team), sehingga halaman dialihkan ke login Vercel. Kode di ZIP tidak bermasalah.",
+		fixes: []string{"Jalankan ulang dengan ZIP yang sama: DevControl kini melepas proteksi project uji dan membukanya dengan kunci Protection Bypass for Automation secara otomatis.",
+			"Bila tetap terjadi, pastikan VERCEL_TOKEN dibuat untuk team tempat project dibuat (scope team, bukan hanya akun pribadi) agar DevControl boleh mengubah proteksi project uji.",
+			"Alternatif: di Vercel → Team Settings → Deployment Protection, jangan wajibkan proteksi untuk semua project baru."}, retry: true},
 	{keys: []string{"log belum dapat dibaca", "log build kosong"}, source: SourceUnknown, category: "Log build Vercel belum tersedia",
 		cause: "Build di Vercel berhenti dengan ERROR, tetapi Vercel belum menyimpan log-nya saat DevControl membacanya. Tanpa log, sumbernya belum bisa dipastikan; DevControl membaca ulang log ini secara otomatis.",
 		fixes: []string{"Tunggu sebentar: diagnosis ini diperbarui otomatis begitu log terbaca, lengkap dengan sumber dan letak errornya.",

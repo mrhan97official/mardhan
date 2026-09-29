@@ -13,7 +13,9 @@ package vercelapp
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -865,6 +867,26 @@ func (c *Client) DisableProtection(projectID string) error {
 		map[string]interface{}{"ssoProtection": nil}, nil)
 }
 
+// ProtectionBypass creates a "Protection Bypass for Automation" secret for a
+// project. Sent as the x-vercel-protection-bypass header, it lets
+// DevControl's own page check open a deployment whatever Deployment
+// Protection is active (Vercel Authentication, a team default that new
+// projects inherit, or a setting that has not reached the edge yet).
+func (c *Client) ProtectionBypass(projectID string) (string, error) {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil { return "", err }
+	secret := hex.EncodeToString(raw) // 32 characters, as Vercel requires
+	err := c.Do(http.MethodPatch, "/v1/projects/"+url.PathEscape(projectID)+"/protection-bypass", nil,
+		map[string]interface{}{"generate": map[string]string{"secret": secret}}, nil)
+	if err != nil { return "", err }
+	return secret, nil
+}
+
+// IsProtectionError reports a page check stopped by Deployment Protection.
+func IsProtectionError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "akses deployment dibatasi")
+}
+
 func parseTargets(raw json.RawMessage) []string {
 	var list []string
 	if json.Unmarshal(raw, &list) == nil {
@@ -968,7 +990,11 @@ func (c *Client) AddMissingEnv(projectID string, vars []EnvVar) ([]string, []str
 // CheckHomePage verifies the actual URL visitors will open. READY is only a
 // build state; a platform 404, app 5xx, protection page or failed request
 // must never be silently interpreted as a working website.
-func CheckHomePage(rawURL string) error {
+func CheckHomePage(rawURL string) error { return CheckHomePageWith(rawURL, "") }
+
+// CheckHomePageWith is CheckHomePage with an optional protection-bypass
+// secret (see ProtectionBypass); the header is kept on same-host redirects.
+func CheckHomePageWith(rawURL, bypass string) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
 		return fmt.Errorf("URL deployment tidak valid")
@@ -991,7 +1017,13 @@ func CheckHomePage(rawURL string) error {
 		if attempt > 0 {
 			time.Sleep(time.Second)
 		}
-		resp, err := client.Get(target)
+		req, reqErr := http.NewRequest(http.MethodGet, target, nil)
+		if reqErr != nil { return fmt.Errorf("URL deployment tidak valid") }
+		if bypass != "" {
+			req.Header.Set("x-vercel-protection-bypass", bypass)
+			req.Header.Set("x-vercel-set-bypass-cookie", "true")
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			last = fmt.Errorf("halaman tidak dapat dihubungi: %w", err)
 			continue

@@ -280,6 +280,10 @@ Notifikasi deploy dan update diri dikirim langsung dari backend saat pipeline se
 
 Nama project uji ini juga sempat selalu tertulis `-selfupdate-test-`, meski untuk "Aplikasi Baru"/"Update Aplikasi" biasa, bukan cuma Update Diri; sejak v1.0.66 jadi `-test-` yang netral.
 
+### Deployment Protection pada project uji (v1.0.68)
+
+Setelah build uji READY, DevControl membuka halaman utama project uji untuk memastikan aplikasi benar-benar tersaji. Banyak team Vercel menerapkan Deployment Protection (Vercel Authentication) ke semua project baru, sehingga pemeriksaan itu dialihkan ke login Vercel (HTTP 302/401/403) walaupun kode aplikasinya benar. Sejak v1.0.68 DevControl melepas proteksi project uji-nya sendiri, membuat kunci **Protection Bypass for Automation** untuk project uji itu dan mengirimnya sebagai header `x-vercel-protection-bypass` saat memeriksa, serta menunggu hingga ±10 detik agar perubahan proteksi sampai ke edge Vercel. Proteksi project production aplikasi tidak diubah. Bila tetap gagal, pesan menyebutkan alasannya (misalnya VERCEL_TOKEN tidak punya akses ke team), diagnosis menandainya sebagai **DevControl sendiri**, dan project uji dibersihkan otomatis setelah 30 menit.
+
 ### Uji Build Vercel gagal terbaca & project uji tersisa (v1.0.66)
 
 Saat build uji Vercel gagal, DevControl membaca log build itu sebelum menghapus project uji sementara (`<nama>-selfupdate-test-<waktu>`), supaya diagnosis dan potongan errornya tetap ada. Sesekali endpoint log Vercel belum sempat menyimpan hasilnya tepat saat status berubah jadi ERROR, sehingga muncul pesan "Log belum dapat dibaca (log build kosong)" padahal buildnya betulan gagal — dan karena project uji sengaja tidak dihapus ketika lognya gagal dibaca (supaya tidak menghilangkan buktinya), project itu tertinggal di Vercel.

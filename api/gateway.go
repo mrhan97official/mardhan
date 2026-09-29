@@ -1898,13 +1898,37 @@ func handleDeployStatus(w http.ResponseWriter, r *http.Request, token, mode, nam
 	if step == "vercel-test" && ticket.Probe {
 		// READY only means the build finished. Open the test page itself:
 		// Vercel's own 404 there means the app would be unreachable online.
-		if protectErr := vercelapp.New(token).DisableProtection(ticket.Project); protectErr != nil {
-			logLiveLog("WARN", "Proteksi project uji tidak dapat dilepas; pemeriksaan halaman dapat gagal: "+protectErr.Error())
+		// The test project is DevControl's own throwaway project. Teams often
+		// apply Deployment Protection to every new project, which answers the
+		// check with a redirect to Vercel's login. Lift it and, independently,
+		// open the page with a protection-bypass secret for automation.
+		vercelClient := vercelapp.New(token)
+		protectErr := vercelClient.DisableProtection(ticket.Project)
+		if protectErr != nil {
+			logLiveLog("WARN", "Proteksi project uji tidak dapat dilepas: "+protectErr.Error())
 		}
-		if pageErr := vercelapp.CheckHomePage(ticket.URL); pageErr != nil {
+		bypass, bypassErr := vercelClient.ProtectionBypass(ticket.Project)
+		if bypassErr != nil {
+			logLiveLog("WARN", "Kunci bypass proteksi project uji tidak dapat dibuat: "+bypassErr.Error())
+		}
+		pageErr := vercelapp.CheckHomePageWith(ticket.URL, bypass)
+		// Protection changes take a few seconds to reach Vercel's edge.
+		for wait := 0; vercelapp.IsProtectionError(pageErr) && wait < 5; wait++ {
+			time.Sleep(2 * time.Second)
+			pageErr = vercelapp.CheckHomePageWith(ticket.URL, bypass)
+		}
+		if pageErr != nil {
 			_ = store.Fail(ticket.ArchiveID)
-			msg := unavailableHomePageMessage("Uji Build Vercel", ticket.URL, pageErr) +
-				" Tidak ada yang didorong ke GitHub dan production tidak berubah. Project uji " + ticket.Project + " tetap tersedia untuk memeriksa Output Vercel."
+			msg := unavailableHomePageMessage("Uji Build Vercel", ticket.URL, pageErr)
+			if vercelapp.IsProtectionError(pageErr) {
+				reasons := []string{}
+				if protectErr != nil { reasons = append(reasons, "proteksi tidak dapat dilepas: "+protectErr.Error()) }
+				if bypassErr != nil { reasons = append(reasons, "kunci bypass gagal dibuat: "+bypassErr.Error()) }
+				if len(reasons) == 0 { reasons = append(reasons, "proteksi tetap aktif meski sudah dilepas dan kunci bypass dipakai") }
+				msg += " Build aplikasi berhasil; yang gagal adalah pemeriksaan DevControl karena project uji dilindungi Deployment Protection (" + strings.Join(reasons, "; ") + ")."
+			}
+			msg += " Tidak ada yang didorong ke GitHub dan production tidak berubah. Project uji " + ticket.Project + " tetap ada sementara di Vercel untuk diperiksa, lalu dibersihkan otomatis."
+			recordOrphanTestProject(ticket.Project)
 			updateDeploymentStage(ticket.ArchiveID, 2, "Failed")
 			logLiveLog("ERROR", msg)
 			util.JSON(w, http.StatusOK, deployResult{Step: step, OK: false, Message: msg})
