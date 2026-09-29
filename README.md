@@ -275,6 +275,8 @@ Sejak v1.0.63, DevControl meminta izin notifikasi secara otomatis begitu dibuka,
 
 Notifikasi deploy dan update diri dikirim langsung dari backend saat pipeline selesai, gagal, atau kedaluwarsa (satu kali per kejadian). Pemeriksaan 404 aplikasi dan konfirmasi zona Cloudflare dijalankan tiap 15 menit oleh Worker Cloudflare terjadwal yang sama dengan runner deployment; Worker versi baru dipasang otomatis ketika perangkat pertama mengaktifkan notifikasi atau saat deployment berikutnya.
 
+Sejak v1.0.64 notifikasi memakai service worker tersendiri, `public/push-sw.js` (scope `/push/`), terpisah dari service worker PWA `/sw.js` yang dibuat `next-pwa`. Keduanya tidak saling bergantung: masalah pada salah satunya tidak memblokir yang lain, dan push tidak lagi bergantung pada proses build `next-pwa`.
+
 Batasan platform: Android (Chrome/Edge/Firefox) tetap menerima walau browser ditutup; iPhone/iPad memerlukan iOS/iPadOS 16.4+ dan DevControl dipasang ke Layar Utama lewat Safari lalu diaktifkan dari ikon tersebut; di laptop/PC browser harus tetap berjalan di latar belakang (tab boleh ditutup).
 
 ### Logo aplikasi di Pengaturan

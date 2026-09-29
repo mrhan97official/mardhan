@@ -48,16 +48,44 @@ function sameKey(buffer: ArrayBuffer | null | undefined, expected: Uint8Array) {
   return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
 }
 
+const PUSH_WORKER = "/push-sw.js";
+const PUSH_SCOPE = "/push/";
+let updateChecked = false;
+
+function errorText(cause: unknown) {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+// The push worker is our own small file with its own scope, independent of
+// the next-pwa service worker. We register it directly and wait for exactly
+// this registration, so a slow or broken PWA worker can never block push.
 async function registration(): Promise<ServiceWorkerRegistration> {
-  // next-pwa registers /sw.js itself, but only after the window "load" event,
-  // which can be slower than this call on a first visit. Registering the same
-  // script here too is harmless (the browser reuses the existing
-  // registration) and lets the worker start activating right away instead of
-  // waiting on "load".
-  try { await navigator.serviceWorker.register("/sw.js", { scope: "/" }); } catch { /* next-pwa's own registration may already be in flight */ }
-  const ready = navigator.serviceWorker.ready;
-  const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Service worker belum aktif setelah 20 detik. Periksa koneksi, lalu muat ulang halaman dan coba lagi.")), 20000));
-  return Promise.race([ready, timeout]);
+  let reg = await navigator.serviceWorker.getRegistration(PUSH_SCOPE);
+  // getRegistration returns the closest matching scope, which may be the PWA
+  // worker at "/"; only a registration scoped to /push/ is ours.
+  if (!reg || !new URL(reg.scope).pathname.startsWith(PUSH_SCOPE)) {
+    try {
+      reg = await navigator.serviceWorker.register(PUSH_WORKER, { scope: PUSH_SCOPE, updateViaCache: "none" });
+    } catch (cause) {
+      throw new Error(`Service worker notifikasi gagal dipasang: ${errorText(cause)}`);
+    }
+  } else if (!updateChecked) {
+    updateChecked = true;
+    void reg.update().catch(() => undefined);
+  }
+  if (reg.active) return reg;
+  const worker = reg.installing ?? reg.waiting;
+  if (!worker) throw new Error("Service worker notifikasi belum terpasang. Muat ulang halaman lalu coba lagi.");
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Service worker notifikasi belum aktif (status: ${worker.state}). Muat ulang halaman lalu coba lagi.`)), 20000);
+    const check = () => {
+      if (worker.state === "activated") { clearTimeout(timer); resolve(); }
+      if (worker.state === "redundant") { clearTimeout(timer); reject(new Error("Service worker notifikasi gagal dipasang oleh browser. Muat ulang halaman lalu coba lagi.")); }
+    };
+    worker.addEventListener("statechange", check);
+    check();
+  });
+  return reg;
 }
 
 async function api<T>(body: unknown, method = "POST"): Promise<T> {
@@ -71,8 +99,19 @@ async function api<T>(body: unknown, method = "POST"): Promise<T> {
   return data as T;
 }
 
+let cachedInfo: { public_key: string; events: PushEvent[] } | null = null;
+
 export async function pushInfo() {
-  return api<{ public_key: string; events: PushEvent[] }>(undefined, "GET");
+  cachedInfo = await api<{ public_key: string; events: PushEvent[] }>(undefined, "GET");
+  return cachedInfo;
+}
+
+// Prepares everything a subscription needs before the person taps, so the
+// tap only asks permission and subscribes. Safari requires the permission
+// prompt to follow the tap closely; slow network work beforehand breaks it.
+export async function warmPush() {
+  if (pushSupport() !== "ok") return;
+  await Promise.all([cachedInfo ? Promise.resolve(cachedInfo) : pushInfo(), registration()]);
 }
 
 export async function currentSubscription() {
@@ -95,7 +134,7 @@ export async function enablePush(events: PushEvent[]) {
 }
 
 async function subscribeWithPermission(events: PushEvent[]) {
-  const info = await pushInfo();
+  const info = cachedInfo ?? await pushInfo();
   const applicationServerKey = keyBytes(info.public_key);
   const reg = await registration();
   let subscription = await reg.pushManager.getSubscription();

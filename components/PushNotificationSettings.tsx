@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { BellOff, BellRing, Send, X } from "lucide-react";
 import {
-  PUSH_EVENTS, disablePush, enablePush, pushInfo, pushStatus, pushSupport, sendTestPush,
+  PUSH_EVENTS, disablePush, enablePush, pushInfo, pushStatus, pushSupport, sendTestPush, warmPush,
   type PushEvent, type PushSupport,
 } from "@/lib/push";
 
@@ -26,13 +26,28 @@ export default function PushNotificationSettings({ compact = false }: { compact?
     setSupport(mode);
     if (mode !== "ok") return;
     setPermission(Notification.permission);
+    // The event list comes from the server only; it must never wait on the
+    // service worker, otherwise a worker problem hides every choice and
+    // disables the button.
+    let info: Awaited<ReturnType<typeof pushInfo>>;
     try {
-      const [info, status] = await Promise.all([pushInfo(), pushStatus()]);
+      info = await pushInfo();
       setAvailable(info.events);
+      setEvents(info.events);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Daftar notifikasi belum dapat dibaca.");
+      return;
+    }
+    try {
+      const status = await pushStatus();
       setSubscribed(status.subscribed);
-      setEvents(status.subscribed && "events" in status && status.events ? status.events : info.events);
+      if (status.subscribed && "events" in status && status.events) setEvents(status.events);
       setLastError(("last_error" in status && status.last_error) || "");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Status notifikasi belum dapat dibaca."); }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Status perangkat belum dapat dibaca.");
+    }
+    // Get the worker and key ready now, so the tap goes straight to the prompt.
+    void warmPush().catch(() => undefined);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -100,7 +115,7 @@ export default function PushNotificationSettings({ compact = false }: { compact?
               <button type="button" disabled={busy} onClick={() => void test()} className="inline-flex items-center gap-2 rounded-xl bg-accent-blue px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"><Send size={15} /> Kirim notifikasi uji</button>
               <button type="button" disabled={busy} onClick={() => void disable()} className="inline-flex items-center gap-2 rounded-xl border border-base-border px-4 py-2.5 text-sm text-slate-300 hover:bg-base-800 disabled:opacity-50"><BellOff size={15} /> Matikan di perangkat ini</button>
             </> : (
-              <button type="button" disabled={busy || permission === "denied" || events.length === 0} onClick={() => void enable()} className="inline-flex items-center gap-2 rounded-xl bg-accent-blue px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"><BellRing size={15} /> {busy ? "Mengaktifkan…" : "Aktifkan notifikasi"}</button>
+              <button type="button" disabled={busy || permission === "denied" || available.length === 0} onClick={() => void enable()} className="inline-flex items-center gap-2 rounded-xl bg-accent-blue px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"><BellRing size={15} /> {busy ? "Mengaktifkan…" : "Aktifkan notifikasi"}</button>
             )}
           </div>
           <p className="text-xs text-slate-500">{subscribed ? "Status: aktif di perangkat ini." : "Status: belum aktif di perangkat ini."} Di laptop/PC, browser perlu tetap berjalan di latar belakang; tab DevControl boleh ditutup.</p>

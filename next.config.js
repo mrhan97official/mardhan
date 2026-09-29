@@ -3,8 +3,6 @@ const withPWA = require("next-pwa")({
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === "development",
-  // worker/index.js adds the Web Push handlers to the generated service worker.
-  customWorkerDir: "worker",
   runtimeCaching: [
     {
       urlPattern: /\/api\/branding\/icon(?:\?|$)/,
