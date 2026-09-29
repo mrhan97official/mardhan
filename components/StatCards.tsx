@@ -82,12 +82,14 @@ export default function StatCards({ stats }: { stats: OverviewStats }) {
               <p className="mt-0.5 block whitespace-nowrap text-2xl font-bold leading-none tabular-nums text-white md:text-[22px] xl:text-[28px]">{c.value}</p>
             </div>
           </div>
-          <div className="mt-2 flex min-w-0 items-center gap-1.5 md:mt-2">
-            <div className="flex min-w-0 flex-1 items-center gap-1">
+          {/* The text sets the width; the chart fills whatever is left (and
+              wraps under the text only when there is no room beside it). */}
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 md:mt-2">
+            <div className="flex shrink-0 items-center gap-1">
               <ChangeTag value={c.change} invert={c.invert} />
-              <span className="min-w-0 truncate text-[11px] text-slate-500 md:text-[10px] xl:text-xs">{c.sub}</span>
+              <span className="whitespace-nowrap text-[11px] text-slate-500 md:text-[10px] xl:text-xs">{c.sub}</span>
             </div>
-            <div className="h-7 w-16 shrink-0 sm:w-20 md:w-7 lg:w-12 xl:w-20">
+            <div className="h-7 min-w-[3rem] flex-1 basis-12">
               <Sparkline values={c.spark} color={c.color} height={28} width={140} />
             </div>
           </div>

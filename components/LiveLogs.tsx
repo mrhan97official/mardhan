@@ -26,12 +26,14 @@ function matches(filter: Filter, level: LiveLog["level"]) {
   return level === "ERROR";
 }
 
-export default function LiveLogs({ logs }: { logs: LiveLog[] }) {
+// fill: on md+ the card takes the height of its grid row (set by the panels
+// beside it) and scrolls its log list inside, instead of setting the height.
+export default function LiveLogs({ logs, fill = false }: { logs: LiveLog[]; fill?: boolean }) {
   const [filter, setFilter] = useState<Filter>("All");
   const visible = logs.filter((l) => matches(filter, l.level));
 
   return (
-    <div className="card flex min-w-0 flex-col p-2">
+    <div className={`card flex min-w-0 flex-col p-2 ${fill ? "md:absolute md:inset-0" : ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-bold text-white sm:text-lg">Live Logs</h2>
         <button className="rounded-lg border border-base-border bg-base-850 p-1.5 text-slate-400 hover:text-slate-200">
@@ -58,7 +60,7 @@ export default function LiveLogs({ logs }: { logs: LiveLog[] }) {
         </button>
       </div>
 
-      <div className="scroll-x mt-2 max-h-64 flex-1 overflow-y-auto rounded-xl bg-base-950/60 p-2 font-mono text-xs leading-relaxed">
+      <div className={`scroll-x mt-2 max-h-64 flex-1 overflow-y-auto rounded-xl ${fill ? "md:max-h-none md:min-h-0" : ""} bg-base-950/60 p-2 font-mono text-xs leading-relaxed`}>
         {visible.length === 0 && (
           <p className="text-slate-600">Tidak ada log untuk filter ini.</p>
         )}

@@ -60,8 +60,9 @@ export default function OverviewPage() {
       <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
         <ServicesTable services={services.data} />
         <RecentActivity items={activity.data} />
-        <div className="min-w-0">
-          <LiveLogs logs={logs.data} />
+        {/* Row height comes from Services and Recent Activity; Live Logs fills it. */}
+        <div className="relative min-w-0 md:min-h-[14rem]">
+          <LiveLogs logs={logs.data} fill />
         </div>
       </div>
     </AppShell>

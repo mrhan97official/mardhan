@@ -321,7 +321,6 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
       <div className="flex flex-wrap items-start justify-between gap-1">
         <div className="min-w-0 max-w-full">
           <h3 className="truncate text-xs font-bold text-white sm:text-sm" title={displayName || name}>{displayName || name}</h3>
-          {displayName && displayName !== name && <p className="truncate text-[11px] text-slate-500" title={repo.full_name}>Repo: {repo.full_name}</p>}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1">
           {source === "stored" && (
