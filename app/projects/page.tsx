@@ -6,7 +6,6 @@ import AppShell from "@/components/AppShell";
 import ComingSoon from "@/components/ComingSoon";
 import ProjectCard from "@/components/ProjectCard";
 import AppsPromoBanner from "@/components/AppsPromoBanner";
-import VercelAppsPanel from "@/components/VercelAppsPanel";
 import { useOfflineData } from "@/lib/useOfflineData";
 import { fallbackGithubRepos, fallbackServices } from "@/lib/fallbackData";
 import { mergeProjects } from "@/lib/projectRepos";
@@ -161,12 +160,10 @@ export default function ProjectsPage() {
   return (
     <AppShell
       title="Projects"
-      subtitle="Aplikasi online di Vercel dan repository GitHub sumbernya"
+      subtitle="Aplikasi yang dikelola DevControl dan repository GitHub sumbernya"
       isOffline={repos.isOffline || services.isOffline}
     >
       <AppsPromoBanner apps={apps} />
-
-      <VercelAppsPanel />
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-400">
