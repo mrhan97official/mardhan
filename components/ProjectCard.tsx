@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertCircle, Archive, ExternalLink, FileArchive, GitBranch, History, ImageIcon, Loader2, Lock, MoreVertical, RefreshCw, RotateCcw, Star, Trash2, X } from "lucide-react";
+import { AlertCircle, Archive, ExternalLink, FileArchive, GitBranch, Github, History, ImageIcon, Loader2, Lock, MoreVertical, RefreshCw, RotateCcw, Star, Trash2, X } from "lucide-react";
 import { useDeploymentOverlay } from "@/components/deployment/DeploymentOverlayProvider";
 import { UpdateHistoryDialog, ZipArchiveDialog } from "@/components/ProjectDialogs";
 import ProjectImagesDialog from "@/components/ProjectImagesDialog";
@@ -23,6 +23,9 @@ const LANGUAGE_COLORS: Record<string, string> = {
   CSS: "bg-purple-400",
   Shell: "bg-slate-400",
 };
+
+// Compact dropdown row; the menu is narrow so long labels may wrap.
+const MENU_ITEM = "flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs leading-tight";
 
 function timeAgo(iso?: string): string | null {
   if (!iso) return null;
@@ -248,21 +251,35 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
             <MoreVertical size={15} />
           </button>
           {actionsOpen && (
-            <div role="menu" aria-label={`Aksi proyek ${repo.full_name}`} className="absolute right-0 top-full z-30 mt-2 w-52 rounded-xl border border-base-border bg-base-900 p-1.5 text-sm shadow-2xl">
-              <span aria-hidden="true" className="pointer-events-none absolute -top-[5px] right-2.5 h-2.5 w-2.5 rotate-45 border-l border-t border-base-border bg-base-900" />
-              <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("images"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800">
-                <ImageIcon size={14} /> Gambar aplikasi
+            <div role="menu" aria-label={`Aksi proyek ${repo.full_name}`} className="absolute right-0 top-full z-30 mt-2 w-44 rounded-xl border border-base-border bg-base-900 p-1 text-xs shadow-2xl">
+              <span aria-hidden="true" className="pointer-events-none absolute -top-[5px] right-2 h-2.5 w-2.5 rotate-45 border-l border-t border-base-border bg-base-900" />
+              {/* Open, GitHub and Update live here (moved from the card body) to keep the card compact. */}
+              {shownURL && <a href={shownURL} target="_blank" rel="noopener noreferrer" role="menuitem" onClick={() => setActionsOpen(false)} className={`${MENU_ITEM} font-medium text-accent-blue hover:bg-accent-blue/10`}><ExternalLink size={13} /> Buka aplikasi</a>}
+              {repo.html_url && <a href={repo.html_url} target="_blank" rel="noopener noreferrer" role="menuitem" onClick={() => setActionsOpen(false)} className={`${MENU_ITEM} text-slate-200 hover:bg-base-800`}><Github size={13} /> GitHub</a>}
+              {canUpdate && (
+                // The app to change is the card being looked at, so the form opens
+                // with this app fixed. One run per app at a time.
+                <button type="button" role="menuitem" disabled={updating}
+                  onClick={() => { setActionsOpen(false); openDeploy("update_app", { app: serviceName!, label: displayName || repo.name }); }}
+                  aria-label={updating ? `${displayName || repo.name} sedang di-update` : `Update ${displayName || repo.name}`}
+                  className={`${MENU_ITEM} text-slate-200 hover:bg-base-800 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-transparent`}>
+                  {updating ? <><Loader2 size={13} className="animate-spin" /> Sedang di-update…</> : <><RefreshCw size={13} /> Update</>}
+                </button>
+              )}
+              {(shownURL || repo.html_url || canUpdate) && <div className="my-1 border-t border-base-border" />}
+              <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("images"); }} className={`${MENU_ITEM} text-slate-200 hover:bg-base-800`}>
+                <ImageIcon size={13} /> Gambar aplikasi
               </button>
               <div className="my-1 border-t border-base-border" />
-              {admin && <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("zip"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><FileArchive size={14} /> Arsip ZIP</button>}
-              <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("history"); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-base-800"><History size={14} /> Riwayat update</button>
+              {admin && <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("zip"); }} className={`${MENU_ITEM} text-slate-200 hover:bg-base-800`}><FileArchive size={13} /> Arsip ZIP</button>}
+              <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setDialog("history"); }} className={`${MENU_ITEM} text-slate-200 hover:bg-base-800`}><History size={13} /> Riwayat update</button>
               {admin && repairBroken && <>
-                <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setRepairMode("repair"); setRepairDialog(true); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-amber-300 hover:bg-amber-500/10"><RotateCcw size={14} /> Perbaiki 404 Vercel</button>
-                <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setRepairMode("reimport"); setRepairDialog(true); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-amber-300 hover:bg-amber-500/10"><RotateCcw size={14} /> Impor ulang web Vercel</button>
+                <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setRepairMode("repair"); setRepairDialog(true); }} className={`${MENU_ITEM} text-amber-300 hover:bg-amber-500/10`}><RotateCcw size={13} /> Perbaiki 404 Vercel</button>
+                <button type="button" role="menuitem" onClick={() => { setActionsOpen(false); setRepairMode("reimport"); setRepairDialog(true); }} className={`${MENU_ITEM} text-amber-300 hover:bg-amber-500/10`}><RotateCcw size={13} /> Impor ulang web Vercel</button>
               </>}
               {admin && <>
               <div className="my-1 border-t border-base-border" />
-              <button type="button" role="menuitem" disabled={uploading} onClick={() => { setActionsOpen(false); onDelete(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-red-400 hover:bg-red-500/10 disabled:opacity-50"><Trash2 size={14} /> Hapus aplikasi</button>
+              <button type="button" role="menuitem" disabled={uploading} onClick={() => { setActionsOpen(false); onDelete(); }} className={`${MENU_ITEM} text-red-400 hover:bg-red-500/10 disabled:opacity-50`}><Trash2 size={13} /> Hapus aplikasi</button>
               </>}
             </div>
           )}
@@ -354,35 +371,10 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
 
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-base-border/70 pt-1.5">
         <span className="text-[10px] text-slate-500">{pushed ? `Diperbarui ${pushed}` : linked ? "Tercatat di deployment" : "Repo GitHub"}</span>
-        {repo.html_url && (
-          <a href={repo.html_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[11px] text-slate-300 hover:underline">
-            GitHub <ExternalLink size={11} />
-          </a>
-        )}
-        {shownURL ? (
-          <a
-            href={shownURL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 text-[11px] font-medium text-accent-blue hover:underline"
-          >
-            Buka aplikasi <ExternalLink size={11} />
-          </a>
-        ) : <span className="text-[11px] text-slate-500">{linked ? "URL aplikasi belum tersimpan" : "Belum terhubung ke deployment"}</span>}
+        {updating
+          ? <span role="status" className="flex items-center gap-1 text-[10px] font-medium text-purple-400"><Loader2 size={10} className="animate-spin" /> Sedang di-update…</span>
+          : !shownURL && <span className="text-[10px] text-slate-500">{linked ? "URL aplikasi belum tersimpan" : "Belum terhubung ke deployment"}</span>}
       </div>
-      {canUpdate && (
-        // The app to change is the card being looked at, so the form opens
-        // with this app fixed. One run per app at a time.
-        <button
-          type="button"
-          disabled={updating}
-          onClick={() => openDeploy("update_app", { app: serviceName!, label: displayName || repo.name })}
-          aria-label={updating ? `${displayName || repo.name} sedang di-update` : `Update ${displayName || repo.name}`}
-          className="mt-0.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent-blue/40 bg-accent-blue/10 px-2 py-1.5 text-xs font-semibold text-accent-blue hover:bg-accent-blue/20 disabled:cursor-not-allowed disabled:border-base-border disabled:bg-base-800/60 disabled:text-slate-400"
-        >
-          {updating ? <><Loader2 size={13} className="animate-spin" /> Sedang di-update…</> : <><RefreshCw size={13} /> Update</>}
-        </button>
-      )}
     </div>
   );
 }
