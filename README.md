@@ -277,6 +277,16 @@ Setiap kartu memiliki area gambar 4:3 dengan ilustrasi bawaan. Menu tiga titik d
 
 **Navbar bersih, Live Logs terbaru di atas, tooltip logo (v1.0.78).** Navbar atas tidak lagi memakai garis atas/bawah; bayangan tipis baru muncul setelah isi halaman digulir (lebih dari 4 px) dan hilang lagi saat kembali ke atas. Kotak pencarian di navbar dihapus dari semua halaman karena tidak pernah terhubung ke fungsi pencarian. **Live Logs** (Overview dan halaman Logs) kini menampilkan log terbaru di paling atas; filter tetap sama dan backend tidak berubah. Tooltip logo sidebar tidak lagi memakai tooltip bawaan browser, melainkan tooltip yang sama dengan ikon menu: di kanan logo saat sidebar diciutkan, di bawah logo saat sidebar dilebarkan agar tidak menutupi tulisan DEV CONTROL. Logo di header ponsel tetap tanpa tooltip.
 
+### Operator per aplikasi, tanda tangan member, CSP nonce (v1.0.81)
+
+**Operator per aplikasi.** Di Member & Akses, setiap operator punya pilihan *Aplikasi*: "semua" (seperti sebelumnya) atau daftar aplikasi tertentu. Operator yang dibatasi hanya melihat tombol Update pada aplikasi terpilih, tidak bisa membuat Aplikasi Baru, dan server menolak deploy ke aplikasi lain.
+
+**Tanda tangan baris member.** Setiap baris member (role, token, IP allowlist, cakupan aplikasi, status cabut, masa berlaku) ditandatangani HMAC dengan `DEVCONTROL_SESSION_SECRET`. Baris lama ditandatangani otomatis sekali saat pertama dibaca. Member yang ditulis atau diubah langsung di database (misalnya dengan token Cloudflare) ditolak saat login dan memunculkan peringatan Darurat. Setelah Anda mengganti `DEVCONTROL_SESSION_SECRET`, buka Member & Akses lalu tekan **Tandatangani ulang semua** (dengan konfirmasi ulang); sampai itu dilakukan, login member ditolak.
+
+**Masa berlaku token terlihat.** Daftar member menampilkan "berlaku s.d.", "kedaluwarsa", atau "tanpa masa berlaku" (token lama; tekan Ganti token untuk memberi masa berlaku 90 hari).
+
+**CSP berbasis nonce.** `middleware.ts` membuat nonce baru untuk setiap halaman dan mengirim CSP `script-src 'nonce-…' 'strict-dynamic'`; script tema di `app/layout.tsx` ikut membawa nonce, dan halaman kini dirender per permintaan. CSP dasar di `vercel.json` tetap dikirim untuk API dan halaman offline; browser menerapkan keduanya, sehingga script inline yang disisipkan penyerang diblokir. Audit Aplikasi kini menilai semua header CSP sekaligus. Bila ada halaman yang rusak karena CSP ini, isi `DEVCONTROL_CSP_NONCE=0` di Vercel lalu redeploy untuk mematikannya sementara.
+
 ### Pusat Keamanan & temuan audit ke-2 (v1.0.80)
 
 **Celah penimpaan repo ditutup.** *Aplikasi Baru* tidak lagi mendorong kode ke repo GitHub yang sudah ada dan berisi kode (repo lain di akun, aplikasi lain, atau DevControl sendiri); nama yang sudah ada hanya diterima bila repo itu masih kosong. Repo DevControl sendiri ditolak untuk Aplikasi Baru maupun Update. Percobaan yang dihentikan memunculkan peringatan Siaga.
@@ -296,7 +306,7 @@ Setiap kartu memiliki area gambar 4:3 dengan ilustrasi bawaan. Menu tiga titik d
 
 **Audit Aplikasi lebih rinci.** Tambahan pemeriksaan: Cross-Origin-Opener-Policy, source map JavaScript yang terbuka, `.npmrc` dan `.DS_Store` yang terbuka, lockfile dependensi yang tidak ter-commit, konfigurasi Dependabot, workflow GitHub dengan `pull_request_target`; dan untuk DevControl sendiri: 2FA yang belum diwajibkan, alarm Telegram, penjaga independen (dipasang dan melapor), patroli berjalan, peringatan yang belum dijawab, Mode Darurat aktif, admin tanpa IP allowlist, token member tanpa masa berlaku, API key tanpa masa berlaku/lama tidak dipakai, dan operator yang dapat membaca rahasia aplikasi.
 
-**Perlu dilakukan manual.** Lockfile: jalankan `npm install` di komputer Anda, commit `package-lock.json`, dan pastikan build memakai `npm ci` (tidak bisa dibuat dari sini). Belum dikerjakan: pembatasan operator per aplikasi (butuh pemetaan member→aplikasi dan UI tersendiri), tanda tangan HMAC per baris member (untuk sementara digantikan deteksi patroli "member muncul tanpa jejak"), dan CSP berbasis nonce.
+**Perlu dilakukan manual.** Lockfile: jalankan `npm install` di komputer Anda, commit `package-lock.json`, dan pastikan build memakai `npm ci` (tidak bisa dibuat dari sini). Pembatasan operator per aplikasi, tanda tangan HMAC per baris member, dan CSP berbasis nonce dikerjakan di v1.0.81.
 
 ### Keamanan, Audit Aplikasi & mode terang/gelap (v1.0.79)
 

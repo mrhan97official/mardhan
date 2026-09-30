@@ -46,7 +46,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         setCore(Array.isArray(setup.core) ? setup.core : []);
       } else setCore([]);
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
-      if (body.authenticated) setSession({ role: (body.role as Role) || "viewer", name: body.name || "" });
+      if (body.authenticated) setSession({ role: (body.role as Role) || "viewer", name: body.name || "", apps: Array.isArray(body.apps) ? body.apps : null });
       setState(body.authenticated ? "authenticated" : "login");
       if (!body.authenticated) void clearPrivateCaches();
       setError("");
@@ -81,7 +81,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       setPassword("");
       setCode("");
       setNeedsCode(false);
-      setSession({ role: (body.role as Role) || "viewer", name: body.name || "" });
+      setSession({ role: (body.role as Role) || "viewer", name: body.name || "", apps: Array.isArray(body.apps) ? body.apps : null });
       setState("authenticated");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Login gagal.");

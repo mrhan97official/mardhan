@@ -10,7 +10,7 @@ import ProjectImagesDialog from "@/components/ProjectImagesDialog";
 import { useTheme } from "@/components/ThemeProvider";
 import { cardThumbnail, imageURL, type ImageSlot, type ProjectImages } from "@/lib/projectImages";
 import { notifyDataChanged } from "@/lib/liveUpdates";
-import { canDeploy, isAdminRole, useSession } from "@/lib/session";
+import { canDeploy, canUseApp, isAdminRole, useSession } from "@/lib/session";
 import type { GithubRepo } from "@/lib/types";
 
 const LANGUAGE_COLORS: Record<string, string> = {
@@ -91,12 +91,14 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
   const [repairMessage, setRepairMessage] = useState("");
   const [repairError, setRepairError] = useState("");
   const [repairedURL, setRepairedURL] = useState<string | null>(null);
-  const { role } = useSession();
+  const session = useSession();
+  const { role } = session;
   const admin = isAdminRole(role);
   const openDeploy = useDeploymentOverlay();
   // Owner, admin and operator deploy apps; only apps already deployed by
   // DevControl (with a saved deployment record) can be updated.
-  const canUpdate = canDeploy(role) && linked && !!serviceName;
+  // Operators limited to chosen apps only see Update on those apps.
+  const canUpdate = canDeploy(role) && linked && !!serviceName && canUseApp(session, serviceName ?? "");
   const [failedVersion, setFailedVersion] = useState<string | null>(null);
   const name = repo.full_name.split("/")[1] ?? repo.full_name;
   const languageDot = repo.language ? LANGUAGE_COLORS[repo.language] ?? "bg-slate-400" : null;

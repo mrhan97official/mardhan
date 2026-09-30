@@ -331,7 +331,9 @@ CREATE TABLE IF NOT EXISTS members (
   last_login_at TEXT,
   last_ip TEXT,
   revoked_at TEXT,
-  expires_at TEXT
+  expires_at TEXT,
+  app_scope TEXT NOT NULL DEFAULT '*',
+  sig TEXT NOT NULL DEFAULT ''
 );
 
 -- Failed sign-in counter per client IP (lockout after 5 failures).

@@ -21,10 +21,13 @@ export default function NewDeploymentMenu() {
   const [open, setOpen] = useState(false);
   const openModal = useDeploymentOverlay();
   const containerRef = useRef<HTMLDivElement>(null);
-  const { role } = useSession();
+  const session = useSession();
+  const { role } = session;
   // Operators and admins deploy apps; only the owner may run Update Diri
   // (it replaces DevControl's own code).
-  const items = MENU_ITEMS.filter((item) => item.key !== "self_update" || role === "owner");
+  // An operator limited to chosen apps cannot create new ones.
+  const scoped = role === "operator" && !!session.apps;
+  const items = MENU_ITEMS.filter((item) => (item.key !== "self_update" || role === "owner") && (item.key !== "new_app" || !scoped));
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -36,7 +39,7 @@ export default function NewDeploymentMenu() {
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
-  if (!canDeploy(role)) return null;
+  if (!canDeploy(role) || items.length === 0) return null;
   return (
     <div ref={containerRef} className="relative">
       <button

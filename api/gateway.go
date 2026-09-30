@@ -1434,6 +1434,16 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
+	// An operator limited to chosen apps may only update those apps, and
+	// cannot create new ones.
+	if principal := auth.Current(r); principal != nil && principal.Role == auth.RoleOperator && principal.Apps != nil {
+		if deployType == "new_app" {
+			util.Error(w, http.StatusForbidden, fmt.Errorf("akun operator ini hanya boleh memperbarui aplikasi tertentu, tidak membuat aplikasi baru")); return
+		}
+		if !auth.CanUseApp(principal, name) {
+			util.Error(w, http.StatusForbidden, fmt.Errorf("aplikasi %q di luar cakupan akun operator ini", name)); return
+		}
+	}
 	displayName := strings.TrimSpace(r.FormValue("display_name"))
 	branchInput := strings.TrimSpace(r.FormValue("branch"))
 	environment := orDefault(r.FormValue("environment"), "Production")

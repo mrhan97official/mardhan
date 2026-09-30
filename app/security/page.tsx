@@ -29,6 +29,7 @@ const ACTION_LABEL: Record<string, string> = {
   member_ip: "IP allowlist diubah", member_unlock_ip: "Kunci IP dibuka", create_key: "API key dibuat", revoke_key: "API key dicabut", rotate_key: "API key dirotasi",
   vercel_env_set: "Env Vercel ditambah", vercel_env_update: "Env Vercel diubah", vercel_env_delete: "Env Vercel dihapus", vercel_env_redeploy: "Redeploy env",
   delete_vercel_project: "Project Vercel dihapus", prepare_storage: "Penyimpanan disiapkan",
+  member_apps: "Cakupan aplikasi diubah", member_resign_all: "Tanda tangan member diperbarui",
 };
 
 // Stored times are UTC "YYYY-MM-DD HH:MM:SS".

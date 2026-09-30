@@ -106,7 +106,7 @@ func HandleSession(w http.ResponseWriter, r *http.Request) {
   case http.MethodGet:
     p := Current(r)
     if p == nil { util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": false}); return }
-    util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": true, "role": p.Role, "name": p.Name, "subject": p.Subject})
+    util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": true, "role": p.Role, "name": p.Name, "subject": p.Subject, "apps": p.Apps})
   case http.MethodPost:
     login(w, r)
   case http.MethodDelete:

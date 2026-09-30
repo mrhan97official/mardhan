@@ -8,6 +8,7 @@ package auth
 // are enforced at login and on every request.
 
 import (
+  "crypto/hmac"
   "crypto/rand"
   "crypto/sha256"
   "crypto/subtle"
@@ -40,6 +41,7 @@ type Principal struct {
   Subject string // "owner" or member id
   Role    string
   Name    string
+  Apps    []string // operator app scope; nil = every app
 }
 
 type claims struct {
@@ -59,6 +61,7 @@ type memberRow struct {
   Role    string
   Epoch   int64
   IPs     []string
+  Apps    []string
   Revoked bool
   at      time.Time
 }
@@ -204,18 +207,16 @@ func rowToMember(row map[string]interface{}) memberRow {
   text := func(key string) string { value, _ := row[key].(string); return value }
   var ips []string
   _ = json.Unmarshal([]byte(text("ip_allowlist")), &ips)
-  return memberRow{ID: text("id"), Name: text("name"), Role: text("role"), Epoch: toInt(row["epoch"]), IPs: ips, Revoked: text("revoked_at") != ""}
+  return memberRow{ID: text("id"), Name: text("name"), Role: text("role"), Epoch: toInt(row["epoch"]), IPs: ips, Apps: parseScope(text("app_scope")), Revoked: text("revoked_at") != ""}
 }
 
 func member(id string) (memberRow, bool) {
   cache.Lock()
   if cached, ok := cache.members[id]; ok && time.Since(cached.at) < cacheTTL { cache.Unlock(); return cached, true }
   cache.Unlock()
-  rows, err := d1.Query(`SELECT id, name, role, epoch, ip_allowlist,
-    CASE WHEN expires_at IS NOT NULL AND expires_at < datetime('now') THEN 'expired' ELSE COALESCE(revoked_at, '') END AS revoked_at
-    FROM members WHERE id = ? LIMIT 1`, id)
+  rows, err := d1.Query(`SELECT `+memberColumns+` FROM members WHERE id = ? LIMIT 1`, id)
   if noColumn(err) { rows, err = d1.Query(`SELECT id, name, role, epoch, ip_allowlist, COALESCE(revoked_at, '') AS revoked_at FROM members WHERE id = ? LIMIT 1`, id) }
-  if err != nil || len(rows) == 0 { return memberRow{}, false }
+  if err != nil || len(rows) == 0 || !signatureOK(rows[0]) { return memberRow{}, false }
   found := rowToMember(rows[0])
   found.at = time.Now()
   cache.Lock()
@@ -290,7 +291,7 @@ func Current(r *http.Request) *Principal {
   found, exists := member(c.Sub)
   if !exists || found.Revoked || found.Epoch != c.Epoch || !validRole(found.Role) { return nil }
   if !ipAllowed(found.IPs, ClientIP(r)) { return nil }
-  return &Principal{Subject: found.ID, Role: found.Role, Name: found.Name}
+  return &Principal{Subject: found.ID, Role: found.Role, Name: found.Name, Apps: found.Apps}
 }
 
 // ---------- login with lockout ----------
@@ -450,11 +451,10 @@ func login(w http.ResponseWriter, r *http.Request) {
   now := time.Now().Unix()
 
   if strings.HasPrefix(credential, tokenPrefix) {
-    rows, err := d1.Query(`SELECT id, name, role, epoch, ip_allowlist,
-      CASE WHEN expires_at IS NOT NULL AND expires_at < datetime('now') THEN 'expired' ELSE COALESCE(revoked_at, '') END AS revoked_at
-      FROM members WHERE token_hash = ? LIMIT 1`, hashToken(credential))
+    rows, err := d1.Query(`SELECT `+memberColumns+` FROM members WHERE token_hash = ? LIMIT 1`, hashToken(credential))
     if noColumn(err) { rows, err = d1.Query(`SELECT id, name, role, epoch, ip_allowlist, COALESCE(revoked_at, '') AS revoked_at FROM members WHERE token_hash = ? LIMIT 1`, hashToken(credential)) }
     if err != nil || len(rows) == 0 { loginFailed(w, ip, "token"); return }
+    if !signatureOK(rows[0]) { loginFailed(w, ip, "token (baris member tidak sah)"); return }
     found := rowToMember(rows[0])
     if found.Revoked || !validRole(found.Role) { loginFailed(w, ip, "member:"+found.Name+" (dicabut)"); return }
     if !ipAllowed(found.IPs, ip) { loginFailed(w, ip, "member:"+found.Name+" (IP tidak diizinkan)"); return }
@@ -463,7 +463,7 @@ func login(w http.ResponseWriter, r *http.Request) {
     ClearFailures(ip)
     noteOrigin(r, found.ID, "Member "+found.Name)
     audit("login_member", found.Name+" @ "+ip)
-    util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": true, "role": found.Role, "name": found.Name})
+    util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": true, "role": found.Role, "name": found.Name, "apps": found.Apps})
     return
   }
 
@@ -548,17 +548,28 @@ func HandleMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 func listMembers(w http.ResponseWriter) {
-  rows, err := d1.Query(`SELECT id, name, role, token_prefix, ip_allowlist, created_at, COALESCE(last_login_at, '') AS last_login_at,
-    COALESCE(last_ip, '') AS last_ip, COALESCE(revoked_at, '') AS revoked_at FROM members ORDER BY created_at DESC LIMIT 200`)
+  rows, err := d1.Query(`SELECT `+memberColumns+`, token_prefix, created_at, COALESCE(last_login_at, '') AS last_login_at,
+    COALESCE(last_ip, '') AS last_ip FROM members ORDER BY created_at DESC LIMIT 200`)
+  if noColumn(err) {
+    rows, err = d1.Query(`SELECT id, name, role, token_prefix, ip_allowlist, created_at, COALESCE(last_login_at, '') AS last_login_at,
+      COALESCE(last_ip, '') AS last_ip, COALESCE(revoked_at, '') AS revoked_at FROM members ORDER BY created_at DESC LIMIT 200`)
+  }
   if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+  strict := signingMode() == "strict"
+  issues := 0
   members := make([]map[string]interface{}, 0, len(rows))
   for _, row := range rows {
     text := func(key string) string { value, _ := row[key].(string); return value }
     ips := []string{}
     _ = json.Unmarshal([]byte(text("ip_allowlist")), &ips)
+    _, hasSig := row["sig"]
+    valid := !hasSig || hmac.Equal([]byte(text("sig")), []byte(rowSignature(row))) || !strict
+    if !valid { issues++ }
     members = append(members, map[string]interface{}{
       "id": text("id"), "name": text("name"), "role": text("role"), "token_prefix": text("token_prefix"), "ip_allowlist": ips,
-      "created_at": text("created_at"), "last_login_at": text("last_login_at"), "last_ip": text("last_ip"), "revoked": text("revoked_at") != "",
+      "created_at": text("created_at"), "last_login_at": text("last_login_at"), "last_ip": text("last_ip"),
+      "revoked": text("revoked_at") != "", "expired": text("revoked_at") == "expired", "expires_at": text("expires_raw"),
+      "apps": parseScope(text("app_scope")), "signature_ok": valid,
     })
   }
   events, err := d1.Query(`SELECT action, target, created_at FROM admin_audit_log
@@ -567,7 +578,7 @@ func listMembers(w http.ResponseWriter) {
   if err != nil { events = []map[string]interface{}{} }
   locked, err := d1.Query(`SELECT ip, failures, locked_until FROM auth_attempts WHERE locked_until > datetime('now') ORDER BY locked_until DESC LIMIT 20`)
   if err != nil { locked = []map[string]interface{}{} }
-  util.JSON(w, http.StatusOK, map[string]interface{}{"members": members, "events": events, "locked_ips": locked})
+  util.JSON(w, http.StatusOK, map[string]interface{}{"members": members, "events": events, "locked_ips": locked, "signature_issues": issues})
 }
 
 func changeMember(w http.ResponseWriter, r *http.Request) {
@@ -579,6 +590,9 @@ func changeMember(w http.ResponseWriter, r *http.Request) {
     IPs    []string `json:"ip_allowlist"`
     SetIPs bool     `json:"set_ip_allowlist"`
     IP     string   `json:"ip"`
+    Apps    []string `json:"apps"`
+    SetApps bool     `json:"set_apps"`
+    AllApps bool     `json:"all_apps"`
   }
   if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&input); err != nil {
     util.Error(w, http.StatusBadRequest, fmt.Errorf("data member tidak valid")); return
@@ -592,6 +606,13 @@ func changeMember(w http.ResponseWriter, r *http.Request) {
     forget("")
     audit("sessions_revoke_all", "owner")
     clearSession(w, r)
+    util.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+    return
+  }
+
+  if input.Action == "resign_all" {
+    if err := SignAllMembers(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+    audit("member_resign_all", "owner")
     util.JSON(w, http.StatusOK, map[string]bool{"ok": true})
     return
   }
@@ -616,8 +637,11 @@ func changeMember(w http.ResponseWriter, r *http.Request) {
     token, err := newToken()
     if err != nil { util.Error(w, http.StatusInternalServerError, err); return }
     encodedIPs, _ := json.Marshal(ips)
-    if _, err := d1.Query(`INSERT INTO members (id, name, role, token_hash, token_prefix, ip_allowlist, expires_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+90 days'))`,
-      id, name, input.Role, hashToken(token), token[:10], string(encodedIPs)); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+    scope, err := cleanScope(!input.SetApps || input.AllApps, input.Apps)
+    if err != nil { util.Error(w, http.StatusBadRequest, err); return }
+    if _, err := d1.Query(`INSERT INTO members (id, name, role, token_hash, token_prefix, ip_allowlist, expires_at, app_scope) VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+90 days'), ?)`,
+      id, name, input.Role, hashToken(token), token[:10], string(encodedIPs), scope); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+    resignMember(id)
     audit("member_create", name+" ("+input.Role+")")
     raise("waspada", "member_change", "member-create:"+id, "Member baru: "+name+" ("+input.Role+")", "Owner menambahkan member baru. Kalau bukan Anda yang menambahkannya, pilih \"Bukan saya\".")
     util.JSON(w, http.StatusOK, map[string]interface{}{"id": id, "token": token})
@@ -626,8 +650,13 @@ func changeMember(w http.ResponseWriter, r *http.Request) {
 
   if !validMemberID(input.ID) { util.Error(w, http.StatusBadRequest, fmt.Errorf("ID member tidak valid")); return }
   existing, ok := member(input.ID)
-  if !ok { util.Error(w, http.StatusNotFound, fmt.Errorf("member tidak ditemukan")); return }
+  if !ok {
+    // A row whose signature fails is still shown to the owner and can be
+    // removed or re-signed, but not edited field by field.
+    util.Error(w, http.StatusNotFound, fmt.Errorf("member tidak ditemukan atau barisnya tidak sah (tandatangani ulang atau hapus)")); return
+  }
   defer forget(input.ID)
+  defer resignMember(input.ID)
 
   switch input.Action {
   case "rotate":
@@ -655,6 +684,12 @@ func changeMember(w http.ResponseWriter, r *http.Request) {
       name, err := cleanName(input.Name)
       if err != nil { util.Error(w, http.StatusBadRequest, err); return }
       if _, err := d1.Query(`UPDATE members SET name = ? WHERE id = ?`, name, input.ID); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+    }
+    if input.SetApps {
+      scope, err := cleanScope(input.AllApps, input.Apps)
+      if err != nil { util.Error(w, http.StatusBadRequest, err); return }
+      if _, err := d1.Query(`UPDATE members SET app_scope = ? WHERE id = ?`, scope, input.ID); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+      audit("member_apps", existing.Name+" → "+scope)
     }
     if input.SetIPs {
       ips, err := cleanIPList(input.IPs)

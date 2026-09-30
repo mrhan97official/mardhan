@@ -250,22 +250,30 @@ func checkWeb(ctx context.Context, c *collector, t Target) {
 		c.pass("HSTS aktif dengan masa berlaku cukup")
 	}
 
-	csp := headers.Get("Content-Security-Policy")
+	// Several CSP headers are all enforced: inline scripts run only if every
+	// policy allows them.
+	policies := headers.Values("Content-Security-Policy")
+	csp := strings.Join(policies, "; ")
 	if csp == "" {
 		c.add(Finding{ID: "hdr-csp", Stage: 1, Category: "Web", Severity: "medium", Title: "Content-Security-Policy belum ada", Location: where,
 			Detail: "CSP membatasi script yang boleh berjalan, sehingga celah XSS jauh lebih sulit dimanfaatkan.",
 			Advice: "Tambahkan header Content-Security-Policy, mulai dari default-src 'self' lalu izinkan hanya domain yang benar-benar dipakai."})
 	} else {
-		script, ok := directive(csp, "script-src")
-		if !ok { script, _ = directive(csp, "default-src") }
-		if strings.Contains(script, "'unsafe-inline'") && !strings.Contains(script, "'nonce-") && !strings.Contains(script, "'strict-dynamic'") {
+		inlineAllowed, evalAllowed := true, false
+		for _, policy := range policies {
+			script, ok := directive(policy, "script-src")
+			if !ok { script, _ = directive(policy, "default-src") }
+			if !strings.Contains(script, "'unsafe-inline'") || strings.Contains(script, "'nonce-") || strings.Contains(script, "'strict-dynamic'") || strings.Contains(script, "'sha256-") { inlineAllowed = false }
+			if strings.Contains(script, "'unsafe-eval'") { evalAllowed = true }
+		}
+		if inlineAllowed {
 			c.add(Finding{ID: "hdr-csp-inline", Stage: 1, Category: "Web", Severity: "low", Title: "CSP masih mengizinkan script inline", Location: where,
 				Detail: "'unsafe-inline' pada script-src melemahkan perlindungan terhadap XSS.",
 				Advice: "Gunakan CSP berbasis nonce (Next.js: nonce dibuat di middleware) lalu hapus 'unsafe-inline' dari script-src."})
 		} else {
 			c.pass("CSP membatasi script inline")
 		}
-		if strings.Contains(script, "'unsafe-eval'") {
+		if evalAllowed {
 			c.add(Finding{ID: "hdr-csp-eval", Stage: 1, Category: "Web", Severity: "low", Title: "CSP mengizinkan eval()", Location: where,
 				Detail: "'unsafe-eval' memungkinkan teks dijalankan sebagai kode.", Advice: "Hapus 'unsafe-eval' bila library yang dipakai tidak membutuhkannya."})
 		}
@@ -976,10 +984,10 @@ func checkSelfGuards(c *collector) {
 		c.add(Finding{ID: "self-api-keys", Stage: 0, Category: "DevControl", Severity: "low", Title: "API key tanpa masa berlaku atau lama tidak dipakai", Location: "DevControl → API Management: " + strings.Join(names(rows, "name"), ", "),
 			Detail: "Kunci yang tidak terpakai tetap bisa disalahgunakan bila bocor.", Advice: "Cabut kunci yang tidak dipakai; buat ulang kunci lama agar punya masa berlaku 1 tahun."})
 	}
-	if rows, err := d1.Query(`SELECT name FROM members WHERE role = 'operator' AND revoked_at IS NULL`); err == nil && len(rows) > 0 {
-		c.add(Finding{ID: "self-operators", Stage: 0, Category: "DevControl", Severity: "low", Title: "Operator dapat membaca rahasia aplikasi lewat kode", Location: "DevControl → Member & Akses: " + strings.Join(names(rows, "name"), ", "),
-			Detail: "Operator boleh men-deploy kode ke aplikasi mana pun; kode itu berjalan dengan Environment Variables aplikasi tersebut.",
-			Advice: "Berikan role operator hanya kepada orang yang Anda percayai setara admin."})
+	if rows, err := d1.Query(`SELECT name FROM members WHERE role = 'operator' AND revoked_at IS NULL AND COALESCE(app_scope, '*') = '*'`); err == nil && len(rows) > 0 {
+		c.add(Finding{ID: "self-operators", Stage: 0, Category: "DevControl", Severity: "low", Title: "Operator tanpa batas aplikasi", Location: "DevControl → Member & Akses: " + strings.Join(names(rows, "name"), ", "),
+			Detail: "Operator ini boleh men-deploy kode ke semua aplikasi; kode itu berjalan dengan Environment Variables aplikasi tersebut, jadi rahasianya bisa dibaca.",
+			Advice: "Batasi operator ke aplikasi yang memang ia kerjakan (Member & Akses → Aplikasi → ubah)."})
 	}
 }
 

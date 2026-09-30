@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import DeploymentOverlayProvider from "@/components/deployment/DeploymentOverlayProvider";
 import AuthGate from "@/components/AuthGate";
 import ConfirmationCenter from "@/components/ConfirmationCenter";
@@ -28,15 +29,20 @@ export const viewport: Viewport = {
   themeColor: "#080D17",
 };
 
+// Pages render per request so each one carries the CSP nonce set by
+// middleware.ts (static HTML could not include a fresh nonce).
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const nonce = headers().get("x-nonce") ?? undefined;
   return (
     <html lang="id" className="dark" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: `try{if(localStorage.getItem("devcontrol-theme")==="light"){document.documentElement.classList.remove("dark");document.documentElement.classList.add("light");document.querySelector('meta[name="theme-color"]')?.setAttribute("content","#F8FCFF");document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')?.setAttribute("content","default")}}catch(e){}` }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: `try{if(localStorage.getItem("devcontrol-theme")==="light"){document.documentElement.classList.remove("dark");document.documentElement.classList.add("light");document.querySelector('meta[name="theme-color"]')?.setAttribute("content","#F8FCFF");document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')?.setAttribute("content","default")}}catch(e){}` }} />
       </head>
       <body className="font-sans antialiased min-h-screen bg-base-950 text-slate-100">
         <ThemeProvider><AuthGate><BrandingProvider><DeploymentOverlayProvider>{children}<ConfirmationCenter /></DeploymentOverlayProvider></BrandingProvider></AuthGate></ThemeProvider>

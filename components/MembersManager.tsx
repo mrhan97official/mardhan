@@ -8,13 +8,14 @@ type MemberRole = Exclude<Role, "owner">;
 type Member = {
   id: string; name: string; role: MemberRole; token_prefix: string; ip_allowlist: string[];
   created_at: string; last_login_at: string; last_ip: string; revoked: boolean;
+  expired?: boolean; expires_at?: string; apps?: string[] | null; signature_ok?: boolean;
 };
 type AuditEvent = { action: string; target: string; created_at: string };
 type LockedIP = { ip: string; failures: number; locked_until: string };
 
 const ROLE_INFO: Record<MemberRole, string> = {
-  admin: "Semua fitur kecuali mengelola member: deploy, Update Diri, database, API, environment variable, pengaturan.",
-  operator: "Lihat dashboard + Aplikasi Baru / Update Aplikasi dan menutup proses gagal. Tanpa database, env, pengaturan, hapus aplikasi.",
+  admin: "Semua fitur kecuali mengelola member, 2FA, dan Update Diri: deploy, database, API, environment variable, pengaturan.",
+  operator: "Lihat dashboard + Aplikasi Baru / Update Aplikasi dan menutup proses gagal. Bisa dibatasi ke aplikasi tertentu. Tanpa database, env, pengaturan, hapus aplikasi.",
   viewer: "Hanya melihat dashboard, pipeline, environment status, log, dan riwayat. Tidak bisa mengubah apa pun.",
 };
 
@@ -22,6 +23,7 @@ const EVENT_LABEL: Record<string, string> = {
   login_owner: "Owner masuk", login_member: "Member masuk", login_failed: "Login gagal",
   member_create: "Member dibuat", member_delete: "Member dihapus", member_rotate: "Token diganti", member_revoke: "Akses dicabut",
   member_restore: "Akses dipulihkan", member_role: "Role diubah", member_ip: "IP diubah", member_unlock_ip: "IP dibuka blokirnya",
+  member_apps: "Cakupan aplikasi diubah", member_resign_all: "Tanda tangan member diperbarui",
   sessions_revoke_all: "Semua sesi dikeluarkan",
 };
 
@@ -29,6 +31,40 @@ function when(value: string): string {
   if (!value) return "belum pernah";
   const parsed = Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
   return Number.isFinite(parsed) ? new Date(parsed).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : value;
+}
+
+function expiryText(member: Member): string {
+  if (member.expired) return "Token kedaluwarsa — ganti token";
+  if (!member.expires_at) return "Token tanpa masa berlaku — ganti token untuk memberi masa berlaku 90 hari";
+  return `Token berlaku s.d. ${when(member.expires_at)}`;
+}
+
+// Picks the apps an operator may update ("all" = every app).
+function AppScopeEditor({ apps, value, onSave, onCancel, saving, live = false }: {
+  apps: string[]; value: string[] | null; saving: boolean; live?: boolean;
+  onSave: (all: boolean, chosen: string[]) => void; onCancel?: () => void;
+}) {
+  const [all, setAll] = useState(value === null);
+  const [chosen, setChosen] = useState<string[]>(value ?? []);
+  // In the create form the choice applies as it is made (no separate Save).
+  useEffect(() => { if (live) onSave(all, chosen); }, [live, all, chosen]); // eslint-disable-line react-hooks/exhaustive-deps
+  const toggle = (app: string) => setChosen((list) => list.includes(app) ? list.filter((item) => item !== app) : [...list, app]);
+  return (
+    <div className="space-y-1.5 rounded-lg border border-base-border bg-base-900 p-2 text-xs">
+      <label className="flex items-center gap-1.5 font-medium text-slate-200"><input type="checkbox" checked={all} onChange={(event) => setAll(event.target.checked)} /> Semua aplikasi (termasuk membuat Aplikasi Baru)</label>
+      {!all && (
+        <div className="grid max-h-40 gap-1 overflow-y-auto sm:grid-cols-2">
+          {apps.length === 0 && <p className="text-slate-500">Belum ada aplikasi terdaftar.</p>}
+          {apps.map((app) => <label key={app} className="flex items-center gap-1.5 text-slate-300"><input type="checkbox" checked={chosen.includes(app)} onChange={() => toggle(app)} /> <span className="truncate font-mono">{app}</span></label>)}
+        </div>
+      )}
+      {!all && <p className="text-slate-500">Operator dengan daftar ini hanya bisa menekan Update pada aplikasi terpilih dan tidak bisa membuat Aplikasi Baru.</p>}
+      {!live && <div className="flex gap-2">
+        <button type="button" disabled={saving} onClick={() => onSave(all, chosen)} className="rounded-lg bg-accent-blue px-2.5 py-1.5 font-semibold text-white disabled:opacity-50">Simpan</button>
+        {onCancel && <button type="button" onClick={onCancel} className="rounded-lg px-2 py-1.5 text-slate-400 hover:bg-base-800">Batal</button>}
+      </div>}
+    </div>
+  );
 }
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
@@ -73,12 +109,22 @@ export default function MembersManager() {
   const [confirm, setConfirm] = useState<{ id: string; action: "delete" | "revoke" | "rotate" } | null>(null);
   const [editIPs, setEditIPs] = useState<{ id: string; value: string } | null>(null);
   const [confirmLogoutAll, setConfirmLogoutAll] = useState(false);
+  const [signatureIssues, setSignatureIssues] = useState(0);
+  const [appNames, setAppNames] = useState<string[]>([]);
+  const [editApps, setEditApps] = useState<string | null>(null);
+  const [newScope, setNewScope] = useState<{ all: boolean; apps: string[] }>({ all: true, apps: [] });
+
+  useEffect(() => {
+    void api<{ name: string }[]>("/api/services").then((list) => {
+      setAppNames(Array.from(new Set((Array.isArray(list) ? list : []).map((item) => item.name).filter(Boolean))).sort());
+    }).catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const body = await api<{ members: Member[]; events: AuditEvent[]; locked_ips: LockedIP[] }>("/api/members");
-      setMembers(body.members); setEvents(body.events); setLocked(body.locked_ips); setError("");
+      const body = await api<{ members: Member[]; events: AuditEvent[]; locked_ips: LockedIP[]; signature_issues?: number }>("/api/members");
+      setMembers(body.members); setEvents(body.events); setLocked(body.locked_ips); setSignatureIssues(body.signature_issues ?? 0); setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Data member gagal dimuat.");
     } finally { setLoading(false); }
@@ -94,9 +140,10 @@ export default function MembersManager() {
   }
 
   const create = () => run("create", async () => {
-    const body = await send("POST", { name, role, ip_allowlist: [ips] });
+    const scope = role === "operator" && !newScope.all ? { set_apps: true, all_apps: false, apps: newScope.apps } : {};
+    const body = await send("POST", { name, role, ip_allowlist: [ips], ...scope });
     if (body.token) setIssued({ name, token: body.token });
-    setCreating(false); setName(""); setIps(""); setRole("viewer");
+    setCreating(false); setName(""); setIps(""); setRole("viewer"); setNewScope({ all: true, apps: [] });
   });
 
   const act = (member: Member, action: "delete" | "revoke" | "restore" | "rotate") => run(member.id + action, async () => {
@@ -129,6 +176,14 @@ export default function MembersManager() {
         </div>
 
         {error && <p role="alert" className="rounded-lg bg-red-500/10 p-2 text-xs text-red-300">{error}</p>}
+        {signatureIssues > 0 && (
+          <div role="alert" className="space-y-1.5 rounded-xl border border-red-500/50 bg-red-600/10 p-2 text-xs text-red-200">
+            <p className="font-semibold">{signatureIssues} baris member tidak cocok dengan tanda tangannya, sehingga login-nya ditolak.</p>
+            <p>Kalau Anda baru saja mengganti DEVCONTROL_SESSION_SECRET, tandatangani ulang. Kalau tidak, periksa dulu member yang ditandai — kemungkinan database diubah dari luar DevControl, dan member asing sebaiknya dihapus.</p>
+            <button type="button" disabled={busy !== null} onClick={() => void run("resign", async () => { await send("POST", { action: "resign_all" }); })}
+              className="rounded-lg bg-red-600 px-2.5 py-1.5 font-semibold text-white disabled:opacity-50">{busy === "resign" ? "Menandatangani…" : "Tandatangani ulang semua"}</button>
+          </div>
+        )}
         {issued && <TokenReveal name={issued.name} token={issued.token} onDone={() => setIssued(null)} />}
 
         {creating && (
@@ -143,6 +198,10 @@ export default function MembersManager() {
                 </label>
               ))}
             </div>
+            {role === "operator" && (
+              <AppScopeEditor live apps={appNames} value={newScope.all ? null : newScope.apps} saving={false}
+                onSave={(all, chosen) => setNewScope({ all, apps: chosen })} />
+            )}
             <textarea value={ips} onChange={(event) => setIps(event.target.value)} rows={2}
               placeholder="Opsional: kunci ke IP/perangkat, mis. 36.73.12.4 atau 103.10.0.0/24 (pisahkan koma/baris)"
               className="w-full rounded-lg border border-base-border bg-base-900 px-3 py-2 font-mono text-xs" />
@@ -163,7 +222,9 @@ export default function MembersManager() {
               <li key={member.id} className={`space-y-1.5 py-2 ${member.revoked ? "opacity-60" : ""}`}>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-sm font-semibold text-slate-100">{member.name}</span>
-                  {member.revoked && <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-300">Dicabut</span>}
+                  {member.revoked && !member.expired && <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-300">Dicabut</span>}
+                  {member.expired && <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-300">Kedaluwarsa</span>}
+                  {member.signature_ok === false && <span className="rounded-full bg-red-600/20 px-2 py-0.5 text-[10px] font-semibold text-red-300">Tanda tangan tidak sah</span>}
                   <select value={member.role} disabled={busy !== null || member.revoked} aria-label={`Role ${member.name}`}
                     onChange={(event) => void run(member.id + "role", async () => { await send("PATCH", { id: member.id, role: event.target.value }); })}
                     className="rounded-lg border border-base-border bg-base-900 px-2 py-1 text-xs">
@@ -172,6 +233,16 @@ export default function MembersManager() {
                   <span className="font-mono text-[11px] text-slate-500">{member.token_prefix}…</span>
                 </div>
                 <p className="text-xs text-slate-400">Login terakhir: {when(member.last_login_at)}{member.last_ip && <> dari <span className="font-mono">{member.last_ip}</span></>}</p>
+                <p className={`text-xs ${member.expired || !member.expires_at ? "text-amber-300" : "text-slate-400"}`}>{expiryText(member)}</p>
+                {member.role === "operator" && (editApps === member.id ? (
+                  <AppScopeEditor apps={appNames} value={member.apps ?? null} saving={busy !== null} onCancel={() => setEditApps(null)}
+                    onSave={(all, chosen) => void run(member.id + "apps", async () => { await send("PATCH", { id: member.id, set_apps: true, all_apps: all, apps: chosen }); setEditApps(null); })} />
+                ) : (
+                  <p className="text-xs text-slate-400">
+                    Aplikasi: {member.apps ? (member.apps.length ? <span className="font-mono text-slate-300">{member.apps.join(", ")}</span> : "tidak ada") : "semua"}
+                    <button type="button" onClick={() => setEditApps(member.id)} className="ml-2 text-accent-blue hover:underline">ubah</button>
+                  </p>
+                ))}
                 {editIPs?.id === member.id ? (
                   <div className="flex flex-wrap gap-2">
                     <input value={editIPs.value} onChange={(event) => setEditIPs({ id: member.id, value: event.target.value })} placeholder="Kosongkan = semua IP"
