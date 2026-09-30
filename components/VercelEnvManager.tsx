@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Check, Copy, Eye, EyeOff, KeyRound, Loader2, Pencil, Plus, RefreshCw, Rocket, Search, Trash2, X } from "lucide-react";
+import SecurityEnvPanel from "@/components/SecurityEnvPanel";
+import { useSession } from "@/lib/session";
 
 type Project = { id: string; name: string; framework?: string; is_self: boolean };
 type EnvVar = { id: string; key: string; type: string; target: string[]; git_branch?: string; comment?: string; updated_at?: number; value?: string };
@@ -89,6 +91,7 @@ function EnvForm({ initial, onCancel, onSubmit, busy }: {
 }
 
 export default function VercelEnvManager() {
+  const { role } = useSession();
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [projectID, setProjectID] = useState("");
   const [envs, setEnvs] = useState<EnvVar[] | null>(null);
@@ -227,6 +230,9 @@ export default function VercelEnvManager() {
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
           Ini project DevControl sendiri. Mengubah CF_API_TOKEN, DEVCONTROL_ADMIN_PASSWORD, GITHUB_TOKEN, atau VERCEL_TOKEN bisa memutus akses aplikasi ini setelah redeploy.
         </p>
+      )}
+      {project?.is_self && role === "owner" && envs && (
+        <SecurityEnvPanel envs={envs} busy={busy} onSave={(item, data) => save((envs ?? []).find((env) => env.id === item?.id), data)} />
       )}
       {needsRedeploy && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-accent-blue/40 bg-accent-blue/10 p-2 text-xs text-slate-200">

@@ -277,6 +277,12 @@ Setiap kartu memiliki area gambar 4:3 dengan ilustrasi bawaan. Menu tiga titik d
 
 **Navbar bersih, Live Logs terbaru di atas, tooltip logo (v1.0.78).** Navbar atas tidak lagi memakai garis atas/bawah; bayangan tipis baru muncul setelah isi halaman digulir (lebih dari 4 px) dan hilang lagi saat kembali ke atas. Kotak pencarian di navbar dihapus dari semua halaman karena tidak pernah terhubung ke fungsi pencarian. **Live Logs** (Overview dan halaman Logs) kini menampilkan log terbaru di paling atas; filter tetap sama dan backend tidak berubah. Tooltip logo sidebar tidak lagi memakai tooltip bawaan browser, melainkan tooltip yang sama dengan ikon menu: di kanan logo saat sidebar diciutkan, di bawah logo saat sidebar dilebarkan agar tidak menutupi tulisan DEV CONTROL. Logo di header ponsel tetap tanpa tooltip.
 
+### CI GitHub & variabel keamanan siap isi (v1.0.82)
+
+**Pemeriksaan otomatis (GitHub Actions).** `.github/workflows/ci.yml` berjalan di setiap push dan pull request: `go build ./...` dan `go test ./...` (wajib lolos), `go vet ./...` (laporan saja), serta `npm ci` (atau `npm install` bila `package-lock.json` belum ada, dengan peringatan) dan `npm run build`, yang sekaligus memeriksa TypeScript. Hasilnya tampil sebagai centang hijau/silang merah di GitHub → tab Actions, lengkap dengan pesan error, sebelum Anda mengandalkan build Vercel.
+
+**Variabel keamanan langsung tersedia di halaman Environment.** Saat owner membuka Environments → project DevControl sendiri, panel *Variabel keamanan DevControl* menampilkan `DEVCONTROL_TELEGRAM_BOT_TOKEN`, `DEVCONTROL_TELEGRAM_CHAT_ID`, `DEVCONTROL_HEARTBEAT_SECRET`, `DEVCONTROL_REQUIRE_2FA`, dan `DEVCONTROL_SESSION_SECRET` beserta statusnya (sudah/belum diisi), petunjuk singkat, dan tombol Simpan/Ganti — tinggal mengisi nilai. Chat ID Telegram bisa dideteksi otomatis: kirim pesan apa saja ke bot, ketik token bot, lalu tekan *Deteksi otomatis*. Rahasia heartbeat dan rahasia sesi bisa dibuat acak dengan satu tombol (salin dulu nilai heartbeat untuk Worker penjaga). Tipe dan target dipilih otomatis (Sensitive untuk token/rahasia). Setelah menyimpan, tekan *Redeploy production*, lalu *Uji alarm* di Pusat Keamanan.
+
 ### Operator per aplikasi, tanda tangan member, CSP nonce (v1.0.81)
 
 **Operator per aplikasi.** Di Member & Akses, setiap operator punya pilihan *Aplikasi*: "semua" (seperti sebelumnya) atau daftar aplikasi tertentu. Operator yang dibatasi hanya melihat tombol Update pada aplikasi terpilih, tidak bisa membuat Aplikasi Baru, dan server menolak deploy ke aplikasi lain.

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,6 +78,45 @@ func telegram(message string) error {
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	if resp.StatusCode != http.StatusOK { return fmt.Errorf("Telegram menjawab HTTP %d; periksa token bot dan chat ID", resp.StatusCode) }
 	return nil
+}
+
+var botTokenPattern = regexp.MustCompile(`^[0-9]{5,15}:[A-Za-z0-9_-]{30,60}$`)
+
+// telegramChats lists the chats that recently messaged the bot.
+func telegramChats(token string) ([]map[string]interface{}, error) {
+	if !botTokenPattern.MatchString(token) { return nil, fmt.Errorf("format token bot tidak valid (contoh: 123456789:AA…)") }
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Get("https://api.telegram.org/bot" + token + "/getUpdates?limit=50")
+	if err != nil { return nil, fmt.Errorf("Telegram tidak dapat dihubungi") }
+	defer resp.Body.Close()
+	var body struct {
+		OK     bool `json:"ok"`
+		Result []struct {
+			Message *struct {
+				Chat struct {
+					ID        int64  `json:"id"`
+					Type      string `json:"type"`
+					Title     string `json:"title"`
+					Username  string `json:"username"`
+					FirstName string `json:"first_name"`
+				} `json:"chat"`
+			} `json:"message"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&body); err != nil || !body.OK {
+		return nil, fmt.Errorf("token bot ditolak Telegram; salin ulang dari @BotFather")
+	}
+	seen := map[int64]bool{}
+	chats := []map[string]interface{}{}
+	for i := len(body.Result) - 1; i >= 0; i-- {
+		message := body.Result[i].Message
+		if message == nil || seen[message.Chat.ID] { continue }
+		seen[message.Chat.ID] = true
+		name := message.Chat.Title
+		if name == "" { name = strings.TrimSpace(message.Chat.FirstName + " @" + message.Chat.Username) }
+		chats = append(chats, map[string]interface{}{"id": strconv.FormatInt(message.Chat.ID, 10), "name": name, "type": message.Chat.Type})
+	}
+	if len(chats) == 0 { return nil, fmt.Errorf("belum ada pesan ke bot; buka bot Anda di Telegram, tekan Start atau kirim pesan apa saja, lalu coba lagi") }
+	return chats, nil
 }
 
 // ---------- baselines ----------
@@ -168,6 +208,7 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		Action string `json:"action"`
 		ID     string `json:"id"`
 		Answer string `json:"answer"`
+		Token  string `json:"token"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&input); err != nil {
 		util.Error(w, http.StatusBadRequest, fmt.Errorf("permintaan tidak valid")); return
@@ -204,6 +245,13 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		done, err := auth.RevokeSession(input.ID)
 		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
 		util.JSON(w, http.StatusOK, map[string]bool{"revoked": done})
+	case "telegram_chats":
+		// Finds the chat ID for the Environment page: the owner sends any
+		// message to the bot first, then DevControl reads the bot's updates.
+		if !owner { util.Error(w, http.StatusForbidden, fmt.Errorf("hanya owner")); return }
+		chats, err := telegramChats(strings.TrimSpace(input.Token))
+		if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		util.JSON(w, http.StatusOK, map[string]interface{}{"chats": chats})
 	case "test_alert":
 		if !owner { util.Error(w, http.StatusForbidden, fmt.Errorf("hanya owner")); return }
 		webpush.Notify(webpush.Message{Event: webpush.EventSecurity, URL: "/security", Tag: "security-test", Title: "🧪 Uji alarm keamanan", Body: "Notifikasi keamanan perangkat ini berfungsi."})
