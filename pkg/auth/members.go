@@ -112,8 +112,17 @@ func validRole(role string) bool { return role == RoleAdmin || role == RoleOpera
 
 // ClientIP uses the headers Vercel's edge sets (and overwrites), so a client
 // cannot spoof them on a Vercel deployment.
+// ClientIP trusts only headers the platform sets itself: on Vercel
+// X-Vercel-Forwarded-For/X-Real-Ip; elsewhere the connection address, unless
+// DEVCONTROL_TRUST_PROXY=1 says a proxy in front rewrites X-Forwarded-For.
 func ClientIP(r *http.Request) string {
-  for _, header := range []string{"X-Vercel-Forwarded-For", "X-Real-Ip", "X-Forwarded-For"} {
+  headers := []string{}
+  if strings.TrimSpace(os.Getenv("VERCEL")) != "" {
+    headers = []string{"X-Vercel-Forwarded-For", "X-Real-Ip"}
+  } else if strings.TrimSpace(os.Getenv("DEVCONTROL_TRUST_PROXY")) == "1" {
+    headers = []string{"X-Real-Ip", "X-Forwarded-For"}
+  }
+  for _, header := range headers {
     if value := strings.TrimSpace(strings.Split(r.Header.Get(header), ",")[0]); value != "" {
       if ip := net.ParseIP(value); ip != nil { return ip.String() }
     }
@@ -202,7 +211,10 @@ func member(id string) (memberRow, bool) {
   cache.Lock()
   if cached, ok := cache.members[id]; ok && time.Since(cached.at) < cacheTTL { cache.Unlock(); return cached, true }
   cache.Unlock()
-  rows, err := d1.Query(`SELECT id, name, role, epoch, ip_allowlist, COALESCE(revoked_at, '') AS revoked_at FROM members WHERE id = ? LIMIT 1`, id)
+  rows, err := d1.Query(`SELECT id, name, role, epoch, ip_allowlist,
+    CASE WHEN expires_at IS NOT NULL AND expires_at < datetime('now') THEN 'expired' ELSE COALESCE(revoked_at, '') END AS revoked_at
+    FROM members WHERE id = ? LIMIT 1`, id)
+  if noColumn(err) { rows, err = d1.Query(`SELECT id, name, role, epoch, ip_allowlist, COALESCE(revoked_at, '') AS revoked_at FROM members WHERE id = ? LIMIT 1`, id) }
   if err != nil || len(rows) == 0 { return memberRow{}, false }
   found := rowToMember(rows[0])
   found.at = time.Now()
@@ -239,6 +251,7 @@ func issue(w http.ResponseWriter, r *http.Request, c claims) error {
   payload := base64.RawURLEncoding.EncodeToString(raw)
   http.SetCookie(w, &http.Cookie{Name: cookieNameFor(r), Value: payload + "." + signature(payload), Path: "/",
     HttpOnly: true, Secure: secureCookie(r), SameSite: http.SameSiteStrictMode, MaxAge: int(sessionLifetime.Seconds())})
+  recordSession(r, c)
   return nil
 }
 
@@ -322,7 +335,7 @@ func recordFailure(key string) {
   if minutes > 60 { minutes = 60 }
   lockKey(key, minutes)
   if failures == 5 && !strings.Contains(key, ":") {
-    alert("login-lock:"+key+":"+time.Now().UTC().Format("2006-01-02T15"), "🛡️ Login gagal berulang",
+    raise("waspada", "login_failed", "login-lock:"+key+":"+time.Now().UTC().Format("2006-01-02T15"), "Login gagal berulang",
       "5 percobaan masuk gagal dari IP "+key+". IP itu dikunci sementara. Abaikan bila itu Anda sendiri.")
   }
 }
@@ -334,8 +347,8 @@ const globalOwnerKey = "global:owner"
 func recordGlobalOwnerFailure() {
   failures := failureCount(globalOwnerKey)
   if failures == 10 || failures == 20 {
-    alert("login-global:"+strconv.FormatInt(failures, 10)+":"+time.Now().UTC().Format("2006-01-02"), "🛡️ Banyak percobaan login owner",
-      strconv.FormatInt(failures, 10)+" kata sandi owner salah hari ini dari berbagai alamat. Pertimbangkan mengaktifkan 2FA dan mengganti kata sandi.")
+    raise("siaga", "login_failed", "login-global:"+strconv.FormatInt(failures, 10)+":"+time.Now().UTC().Format("2006-01-02"), "Banyak percobaan login owner",
+      strconv.FormatInt(failures, 10)+" kata sandi owner salah hari ini dari berbagai alamat. Aktifkan 2FA dan pertimbangkan mengganti kata sandi.")
   }
   if failures >= 20 { lockKey(globalOwnerKey, 15) }
 }
@@ -346,13 +359,7 @@ func Throttled(key string) (int64, error) { return lockedFor(key) }
 func RecordFailure(key string)            { recordFailure(key) }
 func ClearFailures(key string)            { _, _ = d1.Query(`DELETE FROM auth_attempts WHERE ip = ?`, key) }
 
-// SecurityAlert delivers a push notification to owner/admin devices. The API
-// entrypoint sets it (this package must not import webpush).
-var SecurityAlert func(key, title, body string)
 
-func alert(key, title, body string) {
-  if SecurityAlert != nil { SecurityAlert(key, title, body) }
-}
 
 func minInt(a, b int64) int64 { if a < b { return a }; return b }
 
@@ -400,8 +407,10 @@ func checkLockout(w http.ResponseWriter, key, message string) bool {
 // It writes the failure response itself and returns false on any failure.
 func ownerProof(w http.ResponseWriter, ip, credential, code string) bool {
   secret, err := ownerTOTPSecret()
-  if err != nil { util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("status 2FA tidak dapat diperiksa; coba lagi")); return false }
-  if secret == "" && !checkLockout(w, globalOwnerKey, "login owner dikunci sementara karena banyak percobaan gagal; coba lagi dalam %d menit") { return false }
+  if err != nil { util.Error(w, http.StatusServiceUnavailable, err); return false }
+  // Addresses the owner signed in from before are not held by the global
+  // lock, so strangers cannot keep the owner locked out.
+  if secret == "" && !knownOrigin(RoleOwner, ip) && !checkLockout(w, globalOwnerKey, "login owner dikunci sementara karena banyak percobaan gagal; coba lagi dalam %d menit") { return false }
   got, want := sha256.Sum256([]byte(credential)), sha256.Sum256([]byte(os.Getenv("DEVCONTROL_ADMIN_PASSWORD")))
   if subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
     recordGlobalOwnerFailure()
@@ -410,9 +419,20 @@ func ownerProof(w http.ResponseWriter, ip, credential, code string) bool {
   }
   if secret != "" {
     if strings.TrimSpace(code) == "" { totpRequired(w); return false }
+    if !checkLockout(w, "global:owner-2fa", "kode 2FA owner terlalu sering salah; coba lagi dalam %d menit") { return false }
     ok, verifyErr := verifyTOTP(secret, code, true)
     if verifyErr != nil { util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("kode 2FA tidak dapat diperiksa; coba lagi")); return false }
-    if !ok { loginFailed(w, ip, "owner-2fa"); return false }
+    if !ok {
+      // A right password with a wrong code means the password is known to
+      // someone: count it across all addresses and alert the owner.
+      failures := failureCount("global:owner-2fa")
+      if failures >= 10 { lockKey("global:owner-2fa", 30) }
+      raise("siaga", "totp_failed", "totp-failed:"+time.Now().UTC().Format("2006-01-02T15"), "Kata sandi owner benar, tetapi kode 2FA salah",
+        "Seseorang memasukkan kata sandi owner yang benar dari IP "+ip+", lalu gagal di kode 2FA. Kalau bukan Anda, ganti DEVCONTROL_ADMIN_PASSWORD sekarang.")
+      loginFailed(w, ip, "owner-2fa")
+      return false
+    }
+    ClearFailures("global:owner-2fa")
   }
   return true
 }
@@ -430,7 +450,10 @@ func login(w http.ResponseWriter, r *http.Request) {
   now := time.Now().Unix()
 
   if strings.HasPrefix(credential, tokenPrefix) {
-    rows, err := d1.Query(`SELECT id, name, role, epoch, ip_allowlist, COALESCE(revoked_at, '') AS revoked_at FROM members WHERE token_hash = ? LIMIT 1`, hashToken(credential))
+    rows, err := d1.Query(`SELECT id, name, role, epoch, ip_allowlist,
+      CASE WHEN expires_at IS NOT NULL AND expires_at < datetime('now') THEN 'expired' ELSE COALESCE(revoked_at, '') END AS revoked_at
+      FROM members WHERE token_hash = ? LIMIT 1`, hashToken(credential))
+    if noColumn(err) { rows, err = d1.Query(`SELECT id, name, role, epoch, ip_allowlist, COALESCE(revoked_at, '') AS revoked_at FROM members WHERE token_hash = ? LIMIT 1`, hashToken(credential)) }
     if err != nil || len(rows) == 0 { loginFailed(w, ip, "token"); return }
     found := rowToMember(rows[0])
     if found.Revoked || !validRole(found.Role) { loginFailed(w, ip, "member:"+found.Name+" (dicabut)"); return }
@@ -438,6 +461,7 @@ func login(w http.ResponseWriter, r *http.Request) {
     if err := issue(w, r, claims{Sub: found.ID, Role: found.Role, Epoch: found.Epoch, Auth: now}); err != nil { util.Error(w, http.StatusInternalServerError, err); return }
     _, _ = d1.Query(`UPDATE members SET last_login_at = CURRENT_TIMESTAMP, last_ip = ? WHERE id = ?`, ip, found.ID)
     ClearFailures(ip)
+    noteOrigin(r, found.ID, "Member "+found.Name)
     audit("login_member", found.Name+" @ "+ip)
     util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": true, "role": found.Role, "name": found.Name})
     return
@@ -449,6 +473,7 @@ func login(w http.ResponseWriter, r *http.Request) {
   if err := issue(w, r, claims{Sub: RoleOwner, Role: RoleOwner, Epoch: epoch, Auth: now}); err != nil { util.Error(w, http.StatusInternalServerError, err); return }
   ClearFailures(ip)
   ClearFailures(globalOwnerKey)
+  noteOrigin(r, RoleOwner, "Owner")
   audit("login_owner", ip)
   util.JSON(w, http.StatusOK, map[string]interface{}{"authenticated": true, "role": RoleOwner, "name": "Owner"})
 }
@@ -591,9 +616,10 @@ func changeMember(w http.ResponseWriter, r *http.Request) {
     token, err := newToken()
     if err != nil { util.Error(w, http.StatusInternalServerError, err); return }
     encodedIPs, _ := json.Marshal(ips)
-    if _, err := d1.Query(`INSERT INTO members (id, name, role, token_hash, token_prefix, ip_allowlist) VALUES (?, ?, ?, ?, ?, ?)`,
+    if _, err := d1.Query(`INSERT INTO members (id, name, role, token_hash, token_prefix, ip_allowlist, expires_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+90 days'))`,
       id, name, input.Role, hashToken(token), token[:10], string(encodedIPs)); err != nil { util.Error(w, http.StatusBadGateway, err); return }
     audit("member_create", name+" ("+input.Role+")")
+    raise("waspada", "member_change", "member-create:"+id, "Member baru: "+name+" ("+input.Role+")", "Owner menambahkan member baru. Kalau bukan Anda yang menambahkannya, pilih \"Bukan saya\".")
     util.JSON(w, http.StatusOK, map[string]interface{}{"id": id, "token": token})
     return
   }
@@ -607,7 +633,7 @@ func changeMember(w http.ResponseWriter, r *http.Request) {
   case "rotate":
     token, err := newToken()
     if err != nil { util.Error(w, http.StatusInternalServerError, err); return }
-    if _, err := d1.Query(`UPDATE members SET token_hash = ?, token_prefix = ?, epoch = epoch + 1 WHERE id = ?`, hashToken(token), token[:10], input.ID); err != nil {
+    if _, err := d1.Query(`UPDATE members SET token_hash = ?, token_prefix = ?, epoch = epoch + 1, expires_at = datetime('now', '+90 days') WHERE id = ?`, hashToken(token), token[:10], input.ID); err != nil {
       util.Error(w, http.StatusBadGateway, err); return
     }
     audit("member_rotate", existing.Name)

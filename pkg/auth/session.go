@@ -74,14 +74,23 @@ func ReadScopes() []string {
 }
 
 func Allowed(r *http.Request, resource string) bool {
-  if p := Current(r); p != nil { return Can(p.Role, resource, r.Method) }
+  lockdown := LockdownActive()
+  if p := Current(r); p != nil {
+    if lockdown && !lockdownAllows(p.Role, resource, r.Method) { return false }
+    return Can(p.Role, resource, r.Method)
+  }
+  if lockdown { return false }
   scope, ok := readScopes[resource]
   if !ok || r.Method != http.MethodGet { return false }
   bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
   if !strings.HasPrefix(bearer, "dc_") || len(bearer) != 46 { return false }
   digest := sha256.Sum256([]byte(bearer))
-  rows, err := d1.Query(`SELECT scopes FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL LIMIT 1`, hex.EncodeToString(digest[:]))
+  hash := hex.EncodeToString(digest[:])
+  rows, err := d1.Query(`SELECT scopes FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL
+    AND (expires_at IS NULL OR expires_at > datetime('now')) LIMIT 1`, hash)
+  if noColumn(err) { rows, err = d1.Query(`SELECT scopes FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL LIMIT 1`, hash) }
   if err != nil || len(rows) != 1 { return false }
+  _, _ = d1.Query(`UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE key_hash = ? AND (last_used_at IS NULL OR last_used_at < datetime('now', '-1 hour'))`, hash)
   raw, _ := rows[0]["scopes"].(string)
   for _, granted := range strings.Split(raw, ",") { if granted == scope { return true } }
   return false

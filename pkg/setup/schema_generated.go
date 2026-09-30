@@ -40,7 +40,7 @@ var schemaStatements = []string{
   "CREATE TABLE IF NOT EXISTS schema_migrations (\n  version TEXT PRIMARY KEY,\n  applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE TABLE IF NOT EXISTS managed_apis (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  project TEXT NOT NULL,\n  path TEXT NOT NULL,\n  method TEXT NOT NULL CHECK (method IN ('GET', 'HEAD')),\n  environment TEXT NOT NULL,\n  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE INDEX IF NOT EXISTS idx_managed_apis_project ON managed_apis (project)",
-  "CREATE TABLE IF NOT EXISTS api_keys (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  key_prefix TEXT NOT NULL,\n  key_hash TEXT NOT NULL UNIQUE,\n  scopes TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  revoked_at TEXT\n)",
+  "CREATE TABLE IF NOT EXISTS api_keys (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  key_prefix TEXT NOT NULL,\n  key_hash TEXT NOT NULL UNIQUE,\n  scopes TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  revoked_at TEXT,\n  expires_at TEXT,\n  last_used_at TEXT\n)",
   "CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys (key_hash, revoked_at)",
   "CREATE TABLE IF NOT EXISTS api_check_metrics (\n  id TEXT PRIMARY KEY,\n  api_id TEXT NOT NULL,\n  status_code INTEGER NOT NULL,\n  latency_ms INTEGER NOT NULL,\n  checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE INDEX IF NOT EXISTS idx_api_check_metrics_time ON api_check_metrics (checked_at DESC)",
@@ -48,13 +48,19 @@ var schemaStatements = []string{
   "CREATE INDEX IF NOT EXISTS idx_admin_audit_time ON admin_audit_log (created_at DESC)",
   "CREATE TABLE IF NOT EXISTS deployment_history (\n  id TEXT PRIMARY KEY,\n  repo TEXT NOT NULL,\n  kind TEXT NOT NULL,\n  target TEXT NOT NULL,\n  status TEXT NOT NULL,\n  file_name TEXT NOT NULL DEFAULT '',\n  size_bytes INTEGER NOT NULL DEFAULT 0,\n  sha256 TEXT NOT NULL DEFAULT '',\n  changes TEXT NOT NULL DEFAULT '',\n  message TEXT NOT NULL DEFAULT '',\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE INDEX IF NOT EXISTS idx_deployment_history_repo ON deployment_history (repo, created_at DESC)",
-  "CREATE TABLE IF NOT EXISTS members (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  role TEXT NOT NULL,\n  token_hash TEXT NOT NULL UNIQUE,\n  token_prefix TEXT NOT NULL DEFAULT '',\n  ip_allowlist TEXT NOT NULL DEFAULT '[]',\n  epoch INTEGER NOT NULL DEFAULT 0,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  last_login_at TEXT,\n  last_ip TEXT,\n  revoked_at TEXT\n)",
+  "CREATE TABLE IF NOT EXISTS members (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  role TEXT NOT NULL,\n  token_hash TEXT NOT NULL UNIQUE,\n  token_prefix TEXT NOT NULL DEFAULT '',\n  ip_allowlist TEXT NOT NULL DEFAULT '[]',\n  epoch INTEGER NOT NULL DEFAULT 0,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  last_login_at TEXT,\n  last_ip TEXT,\n  revoked_at TEXT,\n  expires_at TEXT\n)",
   "CREATE TABLE IF NOT EXISTS auth_attempts (\n  ip TEXT PRIMARY KEY,\n  failures INTEGER NOT NULL DEFAULT 0,\n  locked_until TEXT,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE TABLE IF NOT EXISTS auth_settings (\n  key TEXT PRIMARY KEY,\n  value TEXT NOT NULL\n)",
   "CREATE TABLE IF NOT EXISTS revoked_sessions (\n  nonce TEXT PRIMARY KEY,\n  expires_at TEXT NOT NULL\n)",
   "CREATE INDEX IF NOT EXISTS idx_revoked_sessions_expires ON revoked_sessions (expires_at)",
   "CREATE TABLE IF NOT EXISTS app_audits (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  app TEXT NOT NULL,\n  score INTEGER NOT NULL,\n  high INTEGER NOT NULL DEFAULT 0,\n  medium INTEGER NOT NULL DEFAULT 0,\n  low INTEGER NOT NULL DEFAULT 0,\n  report TEXT NOT NULL,\n  source TEXT NOT NULL DEFAULT 'manual',\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
   "CREATE INDEX IF NOT EXISTS idx_app_audits_app_time ON app_audits (app, created_at DESC)",
+  "CREATE TABLE IF NOT EXISTS user_sessions (\n  nonce TEXT PRIMARY KEY,\n  subject TEXT NOT NULL,\n  name TEXT NOT NULL DEFAULT '',\n  role TEXT NOT NULL,\n  ip TEXT NOT NULL DEFAULT '',\n  user_agent TEXT NOT NULL DEFAULT '',\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  expires_at TEXT NOT NULL\n)",
+  "CREATE INDEX IF NOT EXISTS idx_user_sessions_subject ON user_sessions (subject, created_at DESC)",
+  "CREATE TABLE IF NOT EXISTS login_origins (\n  subject TEXT NOT NULL,\n  ip TEXT NOT NULL,\n  first_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY KEY (subject, ip)\n)",
+  "CREATE TABLE IF NOT EXISTS security_alerts (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  alert_key TEXT NOT NULL UNIQUE,\n  level TEXT NOT NULL CHECK (level IN ('waspada', 'siaga', 'darurat')),\n  kind TEXT NOT NULL,\n  title TEXT NOT NULL,\n  detail TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  acknowledged_at TEXT,\n  answer TEXT NOT NULL DEFAULT ''\n)",
+  "CREATE INDEX IF NOT EXISTS idx_security_alerts_open ON security_alerts (acknowledged_at, created_at DESC)",
+  "CREATE TABLE IF NOT EXISTS security_state (\n  key TEXT PRIMARY KEY,\n  value TEXT NOT NULL,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
 }
 
 var migrationStatements = []migrationStatement{
@@ -71,6 +77,9 @@ var migrationStatements = []migrationStatement{
   {"008", "ALTER TABLE deployment_jobs ADD COLUMN sync_note TEXT NOT NULL DEFAULT ''"},
   {"009", "ALTER TABLE services ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"},
   {"009", "ALTER TABLE deployment_jobs ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"},
+  {"010", "ALTER TABLE members ADD COLUMN expires_at TEXT"},
+  {"010", "ALTER TABLE api_keys ADD COLUMN expires_at TEXT"},
+  {"010", "ALTER TABLE api_keys ADD COLUMN last_used_at TEXT"},
 }
 
 var expectedColumns = map[string][]string{
@@ -99,15 +108,19 @@ var expectedColumns = map[string][]string{
   "vercel_orphan_projects": {"project", "created_at"},
   "schema_migrations": {"version", "applied_at"},
   "managed_apis": {"id", "name", "project", "path", "method", "environment", "enabled", "created_at"},
-  "api_keys": {"id", "name", "key_prefix", "key_hash", "scopes", "created_at", "revoked_at"},
+  "api_keys": {"id", "name", "key_prefix", "key_hash", "scopes", "created_at", "revoked_at", "expires_at", "last_used_at"},
   "api_check_metrics": {"id", "api_id", "status_code", "latency_ms", "checked_at"},
   "admin_audit_log": {"id", "action", "target", "created_at"},
   "deployment_history": {"id", "repo", "kind", "target", "status", "file_name", "size_bytes", "sha256", "changes", "message", "created_at"},
-  "members": {"id", "name", "role", "token_hash", "token_prefix", "ip_allowlist", "epoch", "created_at", "last_login_at", "last_ip", "revoked_at"},
+  "members": {"id", "name", "role", "token_hash", "token_prefix", "ip_allowlist", "epoch", "created_at", "last_login_at", "last_ip", "revoked_at", "expires_at"},
   "auth_attempts": {"ip", "failures", "locked_until", "updated_at"},
   "auth_settings": {"key", "value"},
   "revoked_sessions": {"nonce", "expires_at"},
   "app_audits": {"id", "app", "score", "high", "medium", "low", "report", "source", "created_at"},
+  "user_sessions": {"nonce", "subject", "name", "role", "ip", "user_agent", "created_at", "expires_at"},
+  "login_origins": {"subject", "ip", "first_seen", "last_seen"},
+  "security_alerts": {"id", "alert_key", "level", "kind", "title", "detail", "created_at", "acknowledged_at", "answer"},
+  "security_state": {"key", "value", "updated_at"},
 }
 
 var expectedTypes = map[string]map[string]string{
@@ -136,15 +149,19 @@ var expectedTypes = map[string]map[string]string{
   "vercel_orphan_projects": {"project": "TEXT", "created_at": "TEXT"},
   "schema_migrations": {"version": "TEXT", "applied_at": "TEXT"},
   "managed_apis": {"id": "TEXT", "name": "TEXT", "project": "TEXT", "path": "TEXT", "method": "TEXT", "environment": "TEXT", "enabled": "INTEGER", "created_at": "TEXT"},
-  "api_keys": {"id": "TEXT", "name": "TEXT", "key_prefix": "TEXT", "key_hash": "TEXT", "scopes": "TEXT", "created_at": "TEXT", "revoked_at": "TEXT"},
+  "api_keys": {"id": "TEXT", "name": "TEXT", "key_prefix": "TEXT", "key_hash": "TEXT", "scopes": "TEXT", "created_at": "TEXT", "revoked_at": "TEXT", "expires_at": "TEXT", "last_used_at": "TEXT"},
   "api_check_metrics": {"id": "TEXT", "api_id": "TEXT", "status_code": "INTEGER", "latency_ms": "INTEGER", "checked_at": "TEXT"},
   "admin_audit_log": {"id": "INTEGER", "action": "TEXT", "target": "TEXT", "created_at": "TEXT"},
   "deployment_history": {"id": "TEXT", "repo": "TEXT", "kind": "TEXT", "target": "TEXT", "status": "TEXT", "file_name": "TEXT", "size_bytes": "INTEGER", "sha256": "TEXT", "changes": "TEXT", "message": "TEXT", "created_at": "TEXT"},
-  "members": {"id": "TEXT", "name": "TEXT", "role": "TEXT", "token_hash": "TEXT", "token_prefix": "TEXT", "ip_allowlist": "TEXT", "epoch": "INTEGER", "created_at": "TEXT", "last_login_at": "TEXT", "last_ip": "TEXT", "revoked_at": "TEXT"},
+  "members": {"id": "TEXT", "name": "TEXT", "role": "TEXT", "token_hash": "TEXT", "token_prefix": "TEXT", "ip_allowlist": "TEXT", "epoch": "INTEGER", "created_at": "TEXT", "last_login_at": "TEXT", "last_ip": "TEXT", "revoked_at": "TEXT", "expires_at": "TEXT"},
   "auth_attempts": {"ip": "TEXT", "failures": "INTEGER", "locked_until": "TEXT", "updated_at": "TEXT"},
   "auth_settings": {"key": "TEXT", "value": "TEXT"},
   "revoked_sessions": {"nonce": "TEXT", "expires_at": "TEXT"},
   "app_audits": {"id": "INTEGER", "app": "TEXT", "score": "INTEGER", "high": "INTEGER", "medium": "INTEGER", "low": "INTEGER", "report": "TEXT", "source": "TEXT", "created_at": "TEXT"},
+  "user_sessions": {"nonce": "TEXT", "subject": "TEXT", "name": "TEXT", "role": "TEXT", "ip": "TEXT", "user_agent": "TEXT", "created_at": "TEXT", "expires_at": "TEXT"},
+  "login_origins": {"subject": "TEXT", "ip": "TEXT", "first_seen": "TEXT", "last_seen": "TEXT"},
+  "security_alerts": {"id": "INTEGER", "alert_key": "TEXT", "level": "TEXT", "kind": "TEXT", "title": "TEXT", "detail": "TEXT", "created_at": "TEXT", "acknowledged_at": "TEXT", "answer": "TEXT"},
+  "security_state": {"key": "TEXT", "value": "TEXT", "updated_at": "TEXT"},
 }
 
-var expectedIndexes = []string{"idx_deployment_jobs_running_target", "idx_deployment_jobs_updated", "idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_project_thumbnail_uploads_repo", "idx_project_thumbnail_uploads_time", "idx_project_thumbnail_objects_repo", "idx_push_subscriptions_subject", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time", "idx_deployment_history_repo", "idx_revoked_sessions_expires", "idx_app_audits_app_time"}
+var expectedIndexes = []string{"idx_deployment_jobs_running_target", "idx_deployment_jobs_updated", "idx_infra_metrics_metric_time", "idx_live_logs_created_at", "idx_activity_created_at", "idx_zip_archives_target", "idx_project_thumbnail_uploads_repo", "idx_project_thumbnail_uploads_time", "idx_project_thumbnail_objects_repo", "idx_push_subscriptions_subject", "idx_managed_apis_project", "idx_api_keys_active", "idx_api_check_metrics_time", "idx_admin_audit_time", "idx_deployment_history_repo", "idx_revoked_sessions_expires", "idx_app_audits_app_time", "idx_user_sessions_subject", "idx_security_alerts_open"}

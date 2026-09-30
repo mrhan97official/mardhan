@@ -80,6 +80,7 @@ func isRevoked(nonce string) bool {
 func revokeClaims(c claims) {
   if c.Nonce == "" { return }
   expires := time.Unix(c.Exp, 0).UTC().Format("2006-01-02 15:04:05")
+  _, _ = d1.Query(`DELETE FROM user_sessions WHERE nonce = ?`, c.Nonce)
   _, _ = d1.Query(`INSERT INTO revoked_sessions (nonce, expires_at) VALUES (?, ?) ON CONFLICT(nonce) DO NOTHING`, c.Nonce, expires)
   _, _ = d1.Query(`DELETE FROM revoked_sessions WHERE expires_at < datetime('now')`)
   revocations.Lock()
@@ -124,9 +125,22 @@ func deleteAuthSetting(key string) error {
 // variable is removed; only someone with access to Vercel can do this.
 func totpResetActive() bool { return strings.TrimSpace(os.Getenv("DEVCONTROL_TOTP_RESET")) == "1" }
 
+// ownerTOTPSecret returns the opened 2FA secret ("" = 2FA off). With
+// DEVCONTROL_REQUIRE_2FA=1 a missing secret is an error, so deleting the row
+// straight from the database cannot switch 2FA off silently.
 func ownerTOTPSecret() (string, error) {
   if totpResetActive() { return "", nil }
-  return authSetting(totpKey)
+  stored, err := authSetting(totpKey)
+  if err != nil { return "", err }
+  if stored == "" {
+    if require2FA() {
+      raise("darurat", "totp_missing", "totp-missing:"+time.Now().UTC().Format("2006-01-02"), "Rahasia 2FA owner hilang dari database",
+        "DEVCONTROL_REQUIRE_2FA=1 aktif tetapi rahasia 2FA tidak ada. Kemungkinan database diubah dari luar DevControl.")
+      return "", fmt.Errorf("2FA diwajibkan (DEVCONTROL_REQUIRE_2FA=1) tetapi rahasia 2FA tidak ditemukan di database; login owner ditahan. Periksa database, atau isi DEVCONTROL_TOTP_RESET=1 di Vercel untuk memulihkan")
+    }
+    return "", nil
+  }
+  return openTOTP(stored)
 }
 
 // OwnerTwoFactorEnabled is used by the app audit.
@@ -199,24 +213,32 @@ func HandleTwoFactor(w http.ResponseWriter, r *http.Request) {
     raw := make([]byte, 20)
     if _, err := rand.Read(raw); err != nil { util.Error(w, http.StatusInternalServerError, err); return }
     secret := totpBase32.EncodeToString(raw)
-    if err := putAuthSetting(totpPendingKey, secret); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+    sealed, err := sealTOTP(secret)
+    if err != nil { util.Error(w, http.StatusInternalServerError, err); return }
+    if err := putAuthSetting(totpPendingKey, sealed); err != nil { util.Error(w, http.StatusBadGateway, err); return }
     params := url.Values{"secret": {secret}, "issuer": {"DevControl"}, "algorithm": {"SHA1"}, "digits": {"6"}, "period": {"30"}}
     util.JSON(w, http.StatusOK, map[string]string{"secret": secret, "uri": "otpauth://totp/" + url.PathEscape("DevControl:owner") + "?" + params.Encode()})
   case "enable":
-    pending, err := authSetting(totpPendingKey)
+    stored, err := authSetting(totpPendingKey)
     if err != nil { util.Error(w, http.StatusBadGateway, err); return }
-    if pending == "" { util.Error(w, http.StatusBadRequest, fmt.Errorf("mulai ulang pengaturan 2FA")); return }
+    pending, err := openTOTP(stored)
+    if err != nil || pending == "" { util.Error(w, http.StatusBadRequest, fmt.Errorf("mulai ulang pengaturan 2FA")); return }
     ok, verifyErr := verifyTOTP(pending, input.Code, false)
     if verifyErr != nil { util.Error(w, http.StatusBadGateway, verifyErr); return }
     if !ok { util.Error(w, http.StatusBadRequest, fmt.Errorf("kode tidak cocok; pastikan jam ponsel tepat lalu coba kode terbaru")); return }
-    if err := putAuthSetting(totpKey, pending); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+    sealed, err := sealTOTP(pending)
+    if err != nil { util.Error(w, http.StatusInternalServerError, err); return }
+    if err := putAuthSetting(totpKey, sealed); err != nil { util.Error(w, http.StatusBadGateway, err); return }
     _ = deleteAuthSetting(totpPendingKey)
     _ = deleteAuthSetting(totpLastKey)
     audit("totp_enabled", "owner")
+    raise("waspada", "totp_change", "totp-enabled:"+time.Now().UTC().Format("2006-01-02T15:04"), "2FA owner diaktifkan", "2FA owner baru saja diaktifkan. Kalau bukan Anda, segera periksa Riwayat Keamanan.")
     util.JSON(w, http.StatusOK, map[string]bool{"enabled": true})
   case "disable":
-    secret, err := authSetting(totpKey)
+    stored, err := authSetting(totpKey)
     if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+    secret, openErr := openTOTP(stored)
+    if openErr != nil { util.Error(w, http.StatusBadGateway, openErr); return }
     if secret != "" && !totpResetActive() {
       ok, verifyErr := verifyTOTP(secret, input.Code, true)
       if verifyErr != nil { util.Error(w, http.StatusBadGateway, verifyErr); return }
@@ -226,6 +248,7 @@ func HandleTwoFactor(w http.ResponseWriter, r *http.Request) {
     _ = deleteAuthSetting(totpLastKey)
     _ = deleteAuthSetting(totpPendingKey)
     audit("totp_disabled", "owner")
+    raise("siaga", "totp_change", "totp-disabled:"+time.Now().UTC().Format("2006-01-02T15:04"), "2FA owner dimatikan", "2FA owner baru saja dimatikan. Kalau bukan Anda, anggap akun owner sudah diambil alih.")
     util.JSON(w, http.StatusOK, map[string]bool{"enabled": false})
   default:
     util.Error(w, http.StatusBadRequest, fmt.Errorf("aksi 2FA tidak dikenal"))

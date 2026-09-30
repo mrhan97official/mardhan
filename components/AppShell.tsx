@@ -7,7 +7,7 @@ import Sidebar from "@/components/Sidebar";
 import { isAdminRole, useSession } from "@/lib/session";
 import Header from "@/components/Header";
 
-const ADMIN_PAGES = ["/settings", "/databases", "/api-management", "/audit"];
+const ADMIN_PAGES = ["/settings", "/databases", "/api-management", "/audit", "/security"];
 
 export default function AppShell({
   title,

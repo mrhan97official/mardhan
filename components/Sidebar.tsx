@@ -15,6 +15,7 @@ import {
   Layers,
   LayoutGrid,
   ScrollText,
+  Radar,
   Settings,
   ShieldCheck,
   UserCog,
@@ -33,12 +34,13 @@ const NAV_ITEMS = [
   { label: "Logs", icon: ScrollText, href: "/logs" },
   { label: "Monitoring", icon: Gauge, href: "/monitoring" },
   { label: "Audit Aplikasi", icon: ShieldCheck, href: "/audit" },
+  { label: "Pusat Keamanan", icon: Radar, href: "/security" },
   { label: "Member & Akses", icon: UserCog, href: "/team" },
   { label: "Settings", icon: Settings, href: "/settings" },
 ];
 
 // Pages a role cannot use are hidden; the API enforces the same rules.
-const ADMIN_ONLY = new Set(["/api-management", "/databases", "/settings", "/audit"]);
+const ADMIN_ONLY = new Set(["/api-management", "/databases", "/settings", "/audit", "/security"]);
 function visibleFor(role: Role, href: string): boolean {
   if (href === "/team") return role === "owner";
   if (ADMIN_ONLY.has(href)) return role === "owner" || role === "admin";

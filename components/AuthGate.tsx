@@ -5,6 +5,7 @@ import { CheckCircle2, AlertCircle, LockKeyhole, RefreshCw } from "lucide-react"
 import { cacheClear } from "@/lib/db";
 import { SessionContext, type Role, type Session } from "@/lib/session";
 import ReauthDialog from "@/components/ReauthDialog";
+import SecurityAlertCenter from "@/components/SecurityAlertCenter";
 
 type State = "checking" | "authenticated" | "login";
 type CoreVariable = { key: string; set: boolean; required: boolean };
@@ -87,7 +88,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     } finally { setBusy(false); }
   }
 
-  if (state === "authenticated") return <SessionContext.Provider value={session}>{children}<ReauthDialog /></SessionContext.Provider>;
+  if (state === "authenticated") return <SessionContext.Provider value={session}>{children}<ReauthDialog /><SecurityAlertCenter /></SessionContext.Provider>;
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
       <div className="card w-full max-w-md space-y-5 p-6 sm:p-8">

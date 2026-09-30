@@ -144,6 +144,14 @@
     {
       "source": "/api/app-audit",
       "destination": "/api/gateway?resource=app-audit"
+    },
+    {
+      "source": "/api/security",
+      "destination": "/api/gateway?resource=security"
+    },
+    {
+      "source": "/api/heartbeat",
+      "destination": "/api/gateway?resource=heartbeat"
     }
   ],
   "headers": [

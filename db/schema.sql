@@ -274,7 +274,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
   key_hash TEXT NOT NULL UNIQUE,
   scopes TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  revoked_at TEXT
+  revoked_at TEXT,
+  expires_at TEXT,
+  last_used_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys (key_hash, revoked_at);
 
@@ -328,7 +330,8 @@ CREATE TABLE IF NOT EXISTS members (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_login_at TEXT,
   last_ip TEXT,
-  revoked_at TEXT
+  revoked_at TEXT,
+  expires_at TEXT
 );
 
 -- Failed sign-in counter per client IP (lockout after 5 failures).
@@ -368,3 +371,48 @@ CREATE TABLE IF NOT EXISTS app_audits (
 );
 
 CREATE INDEX IF NOT EXISTS idx_app_audits_app_time ON app_audits (app, created_at DESC);
+
+-- Pusat Keamanan: signed-in devices (listed and revocable one by one).
+CREATE TABLE IF NOT EXISTS user_sessions (
+  nonce TEXT PRIMARY KEY,
+  subject TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL,
+  ip TEXT NOT NULL DEFAULT '',
+  user_agent TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_subject ON user_sessions (subject, created_at DESC);
+
+-- Addresses each person has signed in from (new ones raise an alert).
+CREATE TABLE IF NOT EXISTS login_origins (
+  subject TEXT NOT NULL,
+  ip TEXT NOT NULL,
+  first_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (subject, ip)
+);
+
+-- Alerts raised by the gate, the patrol and the owner's own answers.
+CREATE TABLE IF NOT EXISTS security_alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  alert_key TEXT NOT NULL UNIQUE,
+  level TEXT NOT NULL CHECK (level IN ('waspada', 'siaga', 'darurat')),
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  acknowledged_at TEXT,
+  answer TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_alerts_open ON security_alerts (acknowledged_at, created_at DESC);
+
+-- Patrol baselines (env hash, approved commit, 2FA seen, token fingerprints).
+CREATE TABLE IF NOT EXISTS security_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

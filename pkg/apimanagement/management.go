@@ -277,7 +277,7 @@ func createKey(name string, scopes []string) (interface{}, error) {
   digest := sha256.Sum256([]byte(secret))
   id, err := randomID(16)
   if err != nil { return nil, err }
-  if _, err := d1.Query(`INSERT INTO api_keys (id, name, key_prefix, key_hash, scopes) VALUES (?, ?, ?, ?, ?)`,
+  if _, err := d1.Query(`INSERT INTO api_keys (id, name, key_prefix, key_hash, scopes, expires_at) VALUES (?, ?, ?, ?, ?, datetime('now', '+365 days'))`,
     id, name, secret[:10], hex.EncodeToString(digest[:]), strings.Join(scopes, ",")); err != nil { return nil, err }
   audit("create_key", id)
   return map[string]string{"id": id, "key": secret}, nil

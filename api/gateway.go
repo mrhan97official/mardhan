@@ -57,6 +57,7 @@ import (
 	"devcontrol/pkg/environmentstatus"
 	"devcontrol/pkg/projectdelete"
 	"devcontrol/pkg/reposync"
+	"devcontrol/pkg/securitycenter"
 	"devcontrol/pkg/projectthumbnail"
 	"devcontrol/pkg/trafficmetrics"
 	"devcontrol/pkg/zonemanagement"
@@ -82,7 +83,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	// Fill in every setting derivable from the core variables before any
 	// handler (including the Cloudflare runner) reads os.Getenv.
 	autoconfig.Apply(r.Context())
-	auth.SecurityAlert = securityAlert
+	auth.SecurityEvent = securitycenter.Raise
 	resource := r.URL.Query().Get("resource")
 	if resource == "deployment-runner" {
 		if r.Method != http.MethodPost || !deploymentrunner.Authorized(r.Header.Get("Authorization")) {
@@ -113,12 +114,21 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && os.Getenv("CF_D1_DATABASE_ID") != "" { _ = setup.Prepare() }
 		auth.HandleSession(w, r); return
 	}
+	if resource == "heartbeat" { securitycenter.HandleHeartbeat(w, r); return }
 	if resource == "auto-setup" { autoconfig.Handle(w, r); return }
+	// A leaked token cannot flood the API (per server instance, per address).
+	if auth.RateLimited(auth.ClientIP(r)) {
+		w.Header().Set("Retry-After", "60")
+		util.Error(w, http.StatusTooManyRequests, fmt.Errorf("terlalu banyak permintaan; tunggu sebentar")); return
+	}
 	// ZIP downloads need both the archive key and an owner/admin session.
 	if resource == "zip-archives" && !auth.IsAdmin(r) { util.Error(w, http.StatusForbidden, fmt.Errorf("arsip ZIP hanya untuk owner/admin")); return }
 	if resource != "zip-archives" {
 		if !auth.Configured() { util.Error(w, http.StatusServiceUnavailable, fmt.Errorf("isi DEVCONTROL_ADMIN_PASSWORD (minimal 16 karakter) di Vercel untuk mengaktifkan panel admin; rahasia sesi dibuat otomatis")); return }
 		if !auth.Allowed(r, resource) {
+			if auth.Current(r) != nil && auth.LockdownActive() {
+				util.Error(w, http.StatusForbidden, fmt.Errorf("Mode Darurat aktif: hanya owner yang dapat membuka DevControl dan semua perubahan dikunci sampai Mode Darurat dimatikan di Pusat Keamanan")); return
+			}
 			if auth.Current(r) != nil { util.Error(w, http.StatusForbidden, fmt.Errorf("role Anda tidak memiliki akses ke fitur ini")); return }
 			util.Error(w, http.StatusUnauthorized, fmt.Errorf("login atau API key dengan hak baca diperlukan")); return
 		}
@@ -187,6 +197,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	case "two-factor":
 		if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 		auth.HandleTwoFactor(w, r)
+	case "security":
+		if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		securitycenter.Handle(w, r)
 	case "app-audit":
 		if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 		appaudit.Handle(w, r, selfAuditTarget(r))
@@ -215,11 +228,6 @@ func needsFreshConfirm(resource string, r *http.Request) bool {
 		return true
 	}
 	return false
-}
-
-// securityAlert sends login-abuse and audit alerts to owner/admin devices.
-func securityAlert(key, title, body string) {
-	webpush.Notify(webpush.Message{Event: webpush.EventSecurity, Key: key, URL: "/audit", Tag: "security", Title: title, Body: body})
 }
 
 // selfAuditTarget describes DevControl itself for the app audit.
@@ -509,6 +517,8 @@ func handlePushWatch(w http.ResponseWriter, r *http.Request) {
 				Title: "🔔 Konfirmasi menunggu", Body: "Aktifkan metrik trafik Cloudflare untuk zona " + zoneName + "? Buka DevControl untuk menjawab."})
 		}
 	}
+	// Pusat Keamanan patrol: compare the live state with its baseline.
+	securitycenter.Patrol(r.Context())
 	// Audit Aplikasi: audit one app whose last audit is older than a day
 	// (round robin), within the time left in this run.
 	audited := appaudit.RunScheduled(r.Context(), selfAuditTarget(r))
@@ -1699,6 +1709,16 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 
 	updateDeploymentStage(archiveID, 3, "Running")
 	createdRepo := false
+	// DevControl's own repo is never a deployment target (only Update Diri,
+	// owner-only, may change it).
+	if isDevControlRepo(owner, repoName) {
+		_ = store.Fail(archiveID)
+		msg := "[GitHub] Repo " + owner + "/" + repoName + " adalah repo DevControl sendiri dan tidak dapat dipakai sebagai aplikasi."
+		logLiveLog("ERROR", label+": "+msg)
+		updateDeploymentStage(archiveID, 3, "Failed")
+		util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg})
+		return
+	}
 	if !isUpdate {
 		var err error
 		if createdRepo, err = ensureGithubRepo(githubToken, repoName); err != nil {
@@ -1708,6 +1728,22 @@ func handleTriggerDeployment(w http.ResponseWriter, r *http.Request) {
 			updateDeploymentStage(archiveID, 3, "Failed")
 			util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg})
 			return
+		}
+		// "Aplikasi Baru" must never push into a repo that already has code
+		// (another app, another project of the account, or DevControl): an
+		// existing name is accepted only when the repo is still empty.
+		if !createdRepo {
+			if empty, checkErr := githubRepoEmpty(githubToken, owner, repoName); checkErr != nil || !empty {
+				_ = store.Fail(archiveID)
+				msg := "[GitHub] Repo " + owner + "/" + repoName + " sudah ada dan berisi kode. Aplikasi Baru tidak menimpa repo yang sudah ada; pakai nama lain, atau pakai Update di kartu aplikasi itu."
+				if checkErr != nil { msg = "[GitHub] Repo " + owner + "/" + repoName + " sudah ada dan isinya tidak dapat diperiksa (" + checkErr.Error() + "); deploy dihentikan agar repo itu tidak tertimpa." }
+				logLiveLog("ERROR", label+": "+msg)
+				updateDeploymentStage(archiveID, 3, "Failed")
+				securitycenter.Raise("siaga", "repo_overwrite", "repo-overwrite:"+strings.ToLower(owner+"/"+repoName)+":"+time.Now().UTC().Format("2006-01-02T15"), "Aplikasi Baru mencoba menimpa repo yang sudah ada",
+					"Deploy ke "+owner+"/"+repoName+" dihentikan karena repo itu sudah berisi kode. Kalau ini bukan kekeliruan nama, periksa siapa yang menjalankannya di Riwayat Keamanan.")
+				util.JSON(w, http.StatusOK, deployResult{Step: phase, OK: false, Message: msg})
+				return
+			}
 		}
 	}
 
@@ -2204,6 +2240,31 @@ func handleZipArchives(w http.ResponseWriter, r *http.Request) {
 	items, more, err := store.List(offset)
 	if err != nil { util.Error(w, http.StatusBadGateway, err); return }
 	util.JSON(w, http.StatusOK, map[string]interface{}{"items": items, "has_more": more})
+}
+
+// isDevControlRepo reports whether owner/repo is the repo DevControl runs from.
+func isDevControlRepo(owner, repo string) bool {
+	selfOwner, selfSlug := strings.TrimSpace(os.Getenv("VERCEL_GIT_REPO_OWNER")), strings.TrimSpace(os.Getenv("VERCEL_GIT_REPO_SLUG"))
+	return selfOwner != "" && selfSlug != "" && strings.EqualFold(owner, selfOwner) && strings.EqualFold(repo, selfSlug)
+}
+
+// githubRepoEmpty: GitHub answers 409 for the commits of a repo that has none.
+func githubRepoEmpty(token, owner, repo string) (bool, error) {
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(repo)+"/commits?per_page=1", nil)
+	if err != nil { return false, err }
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil { return false, err }
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	switch resp.StatusCode {
+	case http.StatusConflict:
+		return true, nil
+	case http.StatusOK:
+		return false, nil
+	}
+	return false, fmt.Errorf("HTTP %d", resp.StatusCode)
 }
 
 // safeDownloadName keeps an uploaded ZIP name safe inside a header value.

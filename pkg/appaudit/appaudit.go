@@ -31,9 +31,9 @@ import (
 
 	"devcontrol/pkg/auth"
 	"devcontrol/pkg/d1"
+	"devcontrol/pkg/securitycenter"
 	"devcontrol/pkg/util"
 	"devcontrol/pkg/vercelapp"
-	"devcontrol/pkg/webpush"
 )
 
 // SelfKey identifies DevControl itself in the audit list.
@@ -212,7 +212,7 @@ func checkWeb(ctx context.Context, c *collector, t Target) {
 			Advice: "Simpan dan bagikan alamat aplikasi dengan https://. Di Vercel HTTPS aktif otomatis untuk domain yang terhubung."})
 	}
 	home := "https://" + parsed.Host + "/"
-	resp, _, err := get(ctx, webClient(true), home, map[string]string{"Origin": probeOrigin})
+	resp, page, err := get(ctx, webClient(true), home, map[string]string{"Origin": probeOrigin})
 	if err != nil { c.skip("Halaman utama tidak dapat dibuka (" + shortError(err) + "); header keamanan belum diperiksa."); return }
 	headers := resp.Header
 	where := "Header respons " + home
@@ -296,6 +296,12 @@ func checkWeb(ctx context.Context, c *collector, t Target) {
 	} else {
 		c.pass("Permissions-Policy diatur")
 	}
+	if headers.Get("Cross-Origin-Opener-Policy") == "" {
+		c.add(Finding{ID: "hdr-coop", Stage: 1, Category: "Web", Severity: "low", Title: "Cross-Origin-Opener-Policy belum diatur", Location: where,
+			Detail: "Tanpa COOP, halaman lain yang membuka aplikasi di jendela baru masih bisa memegang referensi ke jendela itu.", Advice: "Tambahkan Cross-Origin-Opener-Policy: same-origin."})
+	} else {
+		c.pass("Cross-Origin-Opener-Policy diatur")
+	}
 	if powered := strings.TrimSpace(headers.Get("X-Powered-By")); powered != "" {
 		c.add(Finding{ID: "hdr-powered-by", Stage: 1, Category: "Web", Severity: "low", Title: "Teknologi server terlihat (X-Powered-By: " + powered + ")", Location: where,
 			Detail: "Informasi ini membantu penyerang memilih celah yang cocok.", Advice: "Next.js: tambahkan poweredByHeader: false di next.config.js. Express: app.disable(\"x-powered-by\")."})
@@ -334,6 +340,8 @@ func checkWeb(ctx context.Context, c *collector, t Target) {
 	}
 	if len(resp.Cookies()) > 0 && cookieIssues == 0 { c.pass("Cookie halaman utama memakai Secure, HttpOnly dan SameSite") }
 
+	checkSourceMap(ctx, c, parsed.Host, string(page))
+
 	plain := "http://" + parsed.Host + "/"
 	redirect, _, err := get(ctx, webClient(false), plain, nil)
 	switch {
@@ -349,6 +357,27 @@ func checkWeb(ctx context.Context, c *collector, t Target) {
 }
 
 func atoi(text string) int { value, _ := strconv.Atoi(text); return value }
+
+var scriptPattern = regexp.MustCompile(`<script[^>]+src="(/[^"?#]+\.js)"`)
+
+// checkSourceMap: a public .map file hands out the original source code.
+func checkSourceMap(ctx context.Context, c *collector, host, page string) {
+	matches := scriptPattern.FindAllStringSubmatch(page, 4)
+	if len(matches) == 0 { return }
+	client := webClient(false)
+	for _, match := range matches {
+		target := "https://" + host + match[1] + ".map"
+		resp, body, err := get(ctx, client, target, nil)
+		if err != nil { continue }
+		if resp.StatusCode == http.StatusOK && strings.Contains(string(body), "\"sources\"") {
+			c.add(Finding{ID: "web-source-map", Stage: 1, Category: "Web", Severity: "low", Title: "Source map JavaScript dapat diunduh", Location: target,
+				Detail: "File .map berisi kode sumber asli (nama variabel, komentar, struktur folder) yang memudahkan mencari celah.",
+				Advice: "Matikan source map produksi (Next.js: productionBrowserSourceMaps: false; Vite: build.sourcemap false) atau jangan unggah file .map."})
+			return
+		}
+	}
+	c.pass("Source map JavaScript tidak terbuka")
+}
 
 var envLine = regexp.MustCompile(`(?m)^[A-Z_][A-Z0-9_]*\s*=\s*\S`)
 
@@ -370,6 +399,7 @@ func checkExposedFiles(ctx context.Context, c *collector, t Target) {
 		{"/.env.production", looksLikeEnv},
 		{"/.git/config", func(body string) bool { return strings.Contains(body, "[core]") }},
 		{"/.git/HEAD", func(body string) bool { return strings.HasPrefix(strings.TrimSpace(body), "ref: refs/") }},
+		{"/.npmrc", func(body string) bool { return strings.Contains(body, "_authToken") || strings.Contains(body, "_auth=") }},
 	}
 	client := webClient(false)
 	exposed := []string{}
@@ -378,6 +408,10 @@ func checkExposedFiles(ctx context.Context, c *collector, t Target) {
 		resp, body, err := get(ctx, client, target, nil)
 		if err != nil { continue }
 		if resp.StatusCode == http.StatusOK && probe.looks(string(body)) { exposed = append(exposed, target) }
+	}
+	if resp, body, err := get(ctx, client, "https://"+parsed.Host+"/.DS_Store", nil); err == nil && resp.StatusCode == http.StatusOK && bytes.HasPrefix(body, []byte("\x00\x00\x00\x01Bud1")) {
+		c.add(Finding{ID: "exposed-ds-store", Stage: 1, Category: "Web", Severity: "low", Title: "File .DS_Store terbuka", Location: "https://" + parsed.Host + "/.DS_Store",
+			Detail: "File bawaan macOS ini membocorkan daftar nama file dan folder di server.", Advice: "Hapus .DS_Store dari output deploy dan tambahkan ke .gitignore."})
 	}
 	if len(exposed) > 0 {
 		c.add(Finding{ID: "exposed-files", Stage: 1, Category: "Web", Severity: "high", Title: "File rahasia dapat diunduh publik", Location: strings.Join(exposed, ", "),
@@ -563,6 +597,8 @@ func checkGitHub(ctx context.Context, c *collector, owner, repo, branch string) 
 	}
 	manifests := []string{}
 	middleware := false
+	files := map[string]bool{}
+	workflows := []string{}
 	if status, _, err := g.get(ctx, base+"/git/trees/"+url.PathEscape(branch)+"?recursive=1", false, &tree); err != nil || status != http.StatusOK {
 		c.skip(fmt.Sprintf("Daftar file repo tidak dapat dibaca (HTTP %d).", status))
 	} else {
@@ -572,6 +608,8 @@ func checkGitHub(ctx context.Context, c *collector, owner, repo, branch string) 
 			name := path.Base(entry.Path)
 			dir := path.Dir(entry.Path)
 			depth := strings.Count(entry.Path, "/")
+			files[entry.Path] = true
+			if strings.HasPrefix(entry.Path, ".github/workflows/") && (strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml")) && len(workflows) < 6 { workflows = append(workflows, entry.Path) }
 			if isEnvFile(name) { envFiles = append(envFiles, entry.Path) }
 			if name == "package.json" && depth <= 2 && len(manifests) < 3 { manifests = append(manifests, entry.Path) }
 			if (name == "middleware.ts" || name == "middleware.js") && depth <= 2 && (dir == "." || path.Base(dir) == "src" || depth == 1) { middleware = true }
@@ -583,6 +621,40 @@ func checkGitHub(ctx context.Context, c *collector, owner, repo, branch string) 
 				Advice: "Hapus file dari repo, tambahkan .env* ke .gitignore, lalu ganti (rotasi) semua rahasia di dalamnya."})
 		} else {
 			c.pass("Tidak ada file .env yang ter-commit")
+		}
+	}
+
+	if len(files) > 0 {
+		missingLock := []string{}
+		for _, manifest := range manifests {
+			dir := path.Dir(manifest)
+			prefix := ""
+			if dir != "." { prefix = dir + "/" }
+			if !files[prefix+"package-lock.json"] && !files[prefix+"yarn.lock"] && !files[prefix+"pnpm-lock.yaml"] && !files[prefix+"bun.lockb"] && !files[prefix+"bun.lock"] {
+				missingLock = append(missingLock, manifest)
+			}
+		}
+		if len(missingLock) > 0 {
+			c.add(Finding{ID: "code-no-lockfile", Stage: 2, Category: "Dependensi", Severity: "medium", Title: "Tidak ada lockfile dependensi", Location: repoLabel + ": " + strings.Join(missingLock, ", "),
+				Detail: "Tanpa package-lock.json (atau yarn.lock/pnpm-lock.yaml), setiap build bisa mengambil versi paket berbeda — termasuk versi yang dibajak di npm.",
+				Advice: "Jalankan npm install di komputer Anda, commit package-lock.json, lalu pastikan build memakai npm ci."})
+		} else if len(manifests) > 0 {
+			c.pass("Lockfile dependensi ter-commit")
+		}
+		if !files[".github/dependabot.yml"] && !files[".github/dependabot.yaml"] && len(manifests) > 0 {
+			c.add(Finding{ID: "code-no-dependabot", Stage: 2, Category: "Dependensi", Severity: "low", Title: "Pembaruan dependensi otomatis belum diatur", Location: repoLabel + ": .github/dependabot.yml",
+				Detail: "Tanpa Dependabot version updates, paket yang ketinggalan versi tidak diusulkan untuk diperbarui.",
+				Advice: "Tambahkan .github/dependabot.yml dengan package-ecosystem \"npm\" dan jadwal mingguan."})
+		}
+	}
+	for _, workflow := range workflows {
+		var content []byte
+		status, _, err := g.get(ctx, base+"/contents/"+escapePath(workflow)+"?ref="+url.QueryEscape(branch), true, &content)
+		if err != nil || status != http.StatusOK { continue }
+		if strings.Contains(string(content), "pull_request_target") {
+			c.add(Finding{ID: "code-workflow-prt-" + path.Base(workflow), Stage: 2, Category: "Kode", Severity: "medium", Title: "Workflow GitHub memakai pull_request_target", Location: repoLabel + ": " + workflow,
+				Detail: "pull_request_target menjalankan workflow dengan rahasia repo untuk pull request dari luar; kalau workflow ikut men-checkout kode PR, rahasia bisa dicuri.",
+				Advice: "Ganti ke pull_request, atau pastikan workflow tidak menjalankan kode dari PR dan tidak memakai rahasia."})
 		}
 	}
 
@@ -810,6 +882,8 @@ func checkSelf(ctx context.Context, c *collector) {
 			Detail: fmt.Sprintf("Panjangnya %d karakter.", len(password)), Advice: "Gunakan minimal 24 karakter acak dari password manager."})
 	}
 
+	checkSelfGuards(c)
+
 	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
 		g := githubClient{token: token, http: &http.Client{Timeout: 10 * time.Second}}
 		status, headers, err := g.get(ctx, "/user", false, nil)
@@ -826,6 +900,86 @@ func checkSelf(ctx context.Context, c *collector) {
 				Detail: "Hak token saat ini: " + scopes + ". Token klasik berlaku untuk semua repo di akun.",
 				Advice: "Ganti dengan fine-grained token yang dibatasi ke repo yang dikelola DevControl (Contents, Administration, Workflows sesuai kebutuhan) dan beri masa berlaku."})
 		}
+	}
+}
+
+func stateValue(key string) string {
+	rows, err := d1.Query(`SELECT value FROM security_state WHERE key = ? LIMIT 1`, key)
+	if err != nil || len(rows) == 0 { return "" }
+	value, _ := rows[0]["value"].(string)
+	return value
+}
+
+func olderThan(stamp string, limit time.Duration) bool {
+	parsed, err := time.Parse("2006-01-02 15:04:05", stamp)
+	return err != nil || time.Since(parsed) > limit
+}
+
+func names(rows []map[string]interface{}, key string) []string {
+	list := []string{}
+	for _, row := range rows { if value, _ := row[key].(string); value != "" { list = append(list, value) } }
+	return list
+}
+
+// checkSelfGuards covers the Pusat Keamanan: alarms outside DevControl, the
+// patrol, open alerts, Mode Darurat, and how members and API keys are held.
+func checkSelfGuards(c *collector) {
+	security := "DevControl → Pusat Keamanan"
+	vercel := "Vercel → Environment Variables"
+	if enabled, err := auth.OwnerTwoFactorEnabled(); err == nil && enabled && strings.TrimSpace(os.Getenv("DEVCONTROL_REQUIRE_2FA")) != "1" {
+		c.add(Finding{ID: "self-require-2fa", Stage: 0, Category: "DevControl", Severity: "medium", Title: "2FA aktif tetapi belum diwajibkan", Location: vercel + " → DEVCONTROL_REQUIRE_2FA",
+			Detail: "Siapa pun yang bisa mengubah database (misalnya dengan token Cloudflare) dapat menghapus rahasia 2FA sehingga 2FA mati diam-diam.",
+			Advice: "Isi DEVCONTROL_REQUIRE_2FA=1 lalu redeploy. Login owner akan ditahan bila rahasia 2FA hilang dari database."})
+	}
+	if strings.TrimSpace(os.Getenv("DEVCONTROL_TELEGRAM_BOT_TOKEN")) == "" || strings.TrimSpace(os.Getenv("DEVCONTROL_TELEGRAM_CHAT_ID")) == "" {
+		c.add(Finding{ID: "self-no-offsite-alarm", Stage: 0, Category: "DevControl", Severity: "medium", Title: "Belum ada alarm di luar DevControl", Location: vercel + " → DEVCONTROL_TELEGRAM_BOT_TOKEN & DEVCONTROL_TELEGRAM_CHAT_ID",
+			Detail: "Peringatan keamanan hanya tersimpan di database DevControl dan notifikasi push dari DevControl sendiri; penyusup yang menguasai aplikasi bisa menghapus atau membungkamnya.",
+			Advice: "Buat bot Telegram (@BotFather), isi token bot dan chat ID Anda di Vercel, redeploy, lalu tekan Uji alarm di Pusat Keamanan."})
+	} else {
+		c.pass("Peringatan keamanan disalin ke Telegram")
+	}
+	if len(os.Getenv("DEVCONTROL_HEARTBEAT_SECRET")) < 32 {
+		c.add(Finding{ID: "self-no-watchdog", Stage: 0, Category: "DevControl", Severity: "medium", Title: "Penjaga independen belum dipasang", Location: vercel + " → DEVCONTROL_HEARTBEAT_SECRET · watchdog/worker.js",
+			Detail: "Tanpa penjaga di luar, tidak ada yang tahu bila DevControl dimatikan, diganti, atau patrolinya dilumpuhkan.",
+			Advice: "Isi DEVCONTROL_HEARTBEAT_SECRET (64 karakter acak) lalu pasang watchdog/worker.js di Cloudflare sesuai README (bagian Penjaga independen)."})
+	} else if seen := stateValue("heartbeat_seen"); seen == "" || olderThan(seen, time.Hour) {
+		c.add(Finding{ID: "self-watchdog-silent", Stage: 0, Category: "DevControl", Severity: "high", Title: "Penjaga independen tidak melapor", Location: security,
+			Detail: "Penjaga di luar belum memanggil DevControl dalam 1 jam terakhir (terakhir: " + map[bool]string{true: "belum pernah", false: seen}[seen == ""] + ").",
+			Advice: "Periksa Worker penjaga di Cloudflare (cron aktif, URL dan rahasia sama dengan DEVCONTROL_HEARTBEAT_SECRET)."})
+	} else {
+		c.pass("Penjaga independen melapor dalam 1 jam terakhir")
+	}
+	if last := stateValue("last_patrol"); last == "" || olderThan(last, time.Hour) {
+		c.add(Finding{ID: "self-patrol-stale", Stage: 0, Category: "DevControl", Severity: "medium", Title: "Patroli keamanan tidak berjalan", Location: security,
+			Detail: "Patroli 15 menit dijalankan oleh Worker runner Cloudflare; dalam 1 jam terakhir patroli tidak tercatat.",
+			Advice: "Aktifkan notifikasi di Settings atau jalankan satu deploy agar Worker runner terpasang, lalu tunggu 15 menit."})
+	} else {
+		c.pass("Patroli keamanan berjalan")
+	}
+	if rows, err := d1.Query(`SELECT title FROM security_alerts WHERE acknowledged_at IS NULL AND level IN ('siaga', 'darurat') ORDER BY id DESC LIMIT 5`); err == nil && len(rows) > 0 {
+		c.add(Finding{ID: "self-open-alerts", Stage: 0, Category: "DevControl", Severity: "high", Title: fmt.Sprintf("%d peringatan keamanan belum dijawab", len(rows)), Location: security,
+			Detail: "Terbaru: " + strings.Join(names(rows, "title"), "; ") + ".", Advice: "Buka Pusat Keamanan dan jawab setiap peringatan (Ini saya / Bukan saya)."})
+	}
+	if rows, err := d1.Query(`SELECT value FROM auth_settings WHERE key = 'lockdown_since' LIMIT 1`); err == nil && len(rows) > 0 {
+		c.add(Finding{ID: "self-lockdown", Stage: 0, Category: "DevControl", Severity: "high", Title: "Mode Darurat sedang aktif", Location: security,
+			Detail: "Perubahan dikunci dan hanya owner yang dapat masuk.", Advice: "Selesaikan checklist kunci dari luar, lalu matikan Mode Darurat di Pusat Keamanan."})
+	}
+	if rows, err := d1.Query(`SELECT name FROM members WHERE role = 'admin' AND revoked_at IS NULL AND (ip_allowlist = '[]' OR ip_allowlist = '')`); err == nil && len(rows) > 0 {
+		c.add(Finding{ID: "self-admin-no-ip", Stage: 0, Category: "DevControl", Severity: "medium", Title: "Member admin tanpa IP allowlist", Location: "DevControl → Member & Akses: " + strings.Join(names(rows, "name"), ", "),
+			Detail: "Token admin yang bocor bisa dipakai dari mana saja.", Advice: "Isi IP allowlist untuk setiap admin (alamat kantor/rumah), atau turunkan role bila tidak perlu admin."})
+	}
+	if rows, err := d1.Query(`SELECT name FROM members WHERE revoked_at IS NULL AND expires_at IS NULL`); err == nil && len(rows) > 0 {
+		c.add(Finding{ID: "self-member-no-expiry", Stage: 0, Category: "DevControl", Severity: "low", Title: "Token member tanpa masa berlaku", Location: "DevControl → Member & Akses: " + strings.Join(names(rows, "name"), ", "),
+			Detail: "Token lama berlaku selamanya sampai dicabut.", Advice: "Tekan Rotasi token pada member itu; token baru berlaku 90 hari."})
+	}
+	if rows, err := d1.Query(`SELECT name FROM api_keys WHERE revoked_at IS NULL AND (expires_at IS NULL OR COALESCE(last_used_at, created_at) < datetime('now', '-90 days'))`); err == nil && len(rows) > 0 {
+		c.add(Finding{ID: "self-api-keys", Stage: 0, Category: "DevControl", Severity: "low", Title: "API key tanpa masa berlaku atau lama tidak dipakai", Location: "DevControl → API Management: " + strings.Join(names(rows, "name"), ", "),
+			Detail: "Kunci yang tidak terpakai tetap bisa disalahgunakan bila bocor.", Advice: "Cabut kunci yang tidak dipakai; buat ulang kunci lama agar punya masa berlaku 1 tahun."})
+	}
+	if rows, err := d1.Query(`SELECT name FROM members WHERE role = 'operator' AND revoked_at IS NULL`); err == nil && len(rows) > 0 {
+		c.add(Finding{ID: "self-operators", Stage: 0, Category: "DevControl", Severity: "low", Title: "Operator dapat membaca rahasia aplikasi lewat kode", Location: "DevControl → Member & Akses: " + strings.Join(names(rows, "name"), ", "),
+			Detail: "Operator boleh men-deploy kode ke aplikasi mana pun; kode itu berjalan dengan Environment Variables aplikasi tersebut.",
+			Advice: "Berikan role operator hanya kepada orang yang Anda percayai setara admin."})
 	}
 }
 
@@ -1025,8 +1179,7 @@ func notifyNewHigh(previous *Report, current Report) {
 		sent++
 		day := current.CreatedAt
 		if len(day) >= 10 { day = day[:10] }
-		webpush.Notify(webpush.Message{Event: webpush.EventSecurity, Key: "audit:" + current.App + ":" + finding.ID + ":" + day,
-			URL: "/audit?app=" + url.QueryEscape(current.App), Tag: "audit-" + current.App,
-			Title: "🛡️ Risiko tinggi: " + current.Name, Body: finding.Title + " — buka Audit Aplikasi untuk saran perbaikannya."})
+		securitycenter.Raise("siaga", "audit_high", "audit:"+current.App+":"+finding.ID+":"+day, "Audit: risiko tinggi baru di "+current.Name,
+			finding.Title+" — lokasi: "+finding.Location+". Buka Audit Aplikasi untuk saran perbaikannya.")
 	}
 }
