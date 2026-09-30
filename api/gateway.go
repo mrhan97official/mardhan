@@ -50,6 +50,7 @@ import (
 	"unicode/utf8"
 
 	"devcontrol/pkg/apimanagement"
+	"devcontrol/pkg/activescan"
 	"devcontrol/pkg/appaudit"
 	"devcontrol/pkg/autoconfig"
 	"devcontrol/pkg/archive"
@@ -203,6 +204,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	case "app-audit":
 		if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 		appaudit.Handle(w, r, selfAuditTarget(r))
+	case "active-scan":
+		if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		activescan.Handle(w, r, selfAuditTarget(r))
 	case "databases":
 		handleDatabases(w, r)
 	case "api-management":
@@ -225,6 +229,8 @@ func needsFreshConfirm(resource string, r *http.Request) bool {
 	case "project":
 		return r.Method == http.MethodDelete
 	case "zip-archives":
+		return true
+	case "active-scan":
 		return true
 	}
 	return false

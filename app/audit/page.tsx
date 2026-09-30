@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, ChevronDown, Clipboard, ExternalLink, Loader2, MinusCircle, Play, ShieldAlert, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Clipboard, ExternalLink, Info, Loader2, MinusCircle, Play, Radar, ShieldAlert, ShieldCheck } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import Sparkline from "@/components/Sparkline";
+import { useSession } from "@/lib/session";
 
 type Severity = "high" | "medium" | "low";
 
@@ -57,6 +58,7 @@ const STAGE: Record<number, string> = {
   0: "DevControl",
   1: "Tahap 1 · Web & konfigurasi",
   2: "Tahap 2 · Kode & dependensi",
+  3: "Uji aktif · pemeriksaan langsung",
 };
 
 function scoreTone(score: number | null) {
@@ -131,12 +133,16 @@ function FindingCard({ finding, onCopy }: { finding: Finding; onCopy: (text: str
 }
 
 export default function AuditPage() {
+  const { role } = useSession();
+  const owner = role === "owner";
   const [targets, setTargets] = useState<TargetSummary[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [history, setHistory] = useState<{ score: number; created_at: string }[]>([]);
   const [running, setRunning] = useState<string | null>(null);
   const [runningAll, setRunningAll] = useState(false);
+  const [scanning, setScanning] = useState<string | null>(null);
+  const [showActiveInfo, setShowActiveInfo] = useState(false);
   const [filter, setFilter] = useState<"all" | Severity>("all");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -212,6 +218,25 @@ export default function AuditPage() {
     if (selected) void loadReport(selected);
   }
 
+  // Uji Aktif Aman: deeper, non-destructive probing (owner only). The result
+  // is stored like an audit, so it appears as the latest report and history.
+  async function activeScan(app: string) {
+    setScanning(app);
+    setError("");
+    setNotice("");
+    try {
+      await api<{ report: Report }>("/api/active-scan", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ app }),
+      });
+      setNotice("Uji aktif selesai. Hasilnya ditampilkan sebagai laporan terbaru.");
+      await loadTargets();
+      setSelected(app);
+      await loadReport(app);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Uji aktif gagal dijalankan.");
+    } finally { setScanning(null); }
+  }
+
   function copy(text: string) {
     void navigator.clipboard?.writeText(text).then(() => setNotice("Disalin. Tempel ke AI untuk langkah perbaikan terperinci.")).catch(() => setError("Clipboard tidak tersedia di perangkat ini."));
   }
@@ -221,14 +246,14 @@ export default function AuditPage() {
   const grouped = useMemo(() => {
     const groups = new Map<number, Finding[]>();
     for (const finding of visible) groups.set(finding.stage, [...(groups.get(finding.stage) ?? []), finding]);
-    return [0, 1, 2].filter((stage) => groups.has(stage)).map((stage) => ({ stage, items: groups.get(stage)! }));
+    return [3, 0, 1, 2].filter((stage) => groups.has(stage)).map((stage) => ({ stage, items: groups.get(stage)! }));
   }, [visible]);
   const totals = useMemo(() => {
     const count = { high: 0, medium: 0, low: 0 };
     for (const f of report?.findings ?? []) count[f.severity] += 1;
     return count;
   }, [report]);
-  const busy = running !== null || runningAll;
+  const busy = running !== null || runningAll || scanning !== null;
 
   return (
     <AppShell title="Audit Aplikasi" subtitle="Pemeriksaan keamanan pasif untuk aplikasi yang dikelola DevControl">
@@ -290,9 +315,16 @@ export default function AuditPage() {
             <div className="flex flex-col items-center gap-2 p-6 text-center">
               <ShieldCheck size={28} className="text-slate-500" />
               <p className="text-sm text-slate-300">{current.name} belum pernah diaudit.</p>
-              <button type="button" disabled={busy} onClick={() => void audit(current.app)} className="inline-flex items-center gap-2 rounded-xl bg-accent-blue px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50">
-                {running === current.app ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} Audit sekarang
-              </button>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button type="button" disabled={busy} onClick={() => void audit(current.app)} className="inline-flex items-center gap-2 rounded-xl bg-accent-blue px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50">
+                  {running === current.app ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} Audit sekarang
+                </button>
+                {owner && (
+                  <button type="button" disabled={busy} onClick={() => void activeScan(current.app)} className="inline-flex items-center gap-2 rounded-xl border border-accent-blue/50 px-3 py-2 text-sm font-semibold text-accent-blue hover:bg-accent-blue/10 disabled:opacity-50">
+                    {scanning === current.app ? <Loader2 size={15} className="animate-spin" /> : <Radar size={15} />} Uji Aktif
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <div className="space-y-2">
@@ -324,6 +356,22 @@ export default function AuditPage() {
                   </button>
                 )}
               </div>
+              {owner && (
+                <div className="rounded-xl border border-accent-blue/30 bg-accent-blue/5 p-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" disabled={busy} onClick={() => void activeScan(current.app)} className="inline-flex items-center gap-2 rounded-lg bg-accent-blue px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50">
+                      {scanning === current.app ? <Loader2 size={14} className="animate-spin" /> : <Radar size={14} />} Jalankan Uji Aktif
+                    </button>
+                    <button type="button" onClick={() => setShowActiveInfo((value) => !value)} className="inline-flex items-center gap-1 text-xs text-accent-blue hover:underline"><Info size={13} /> Apa itu Uji Aktif?</button>
+                    {report.source === "active" && <span className="rounded-full bg-accent-blue/15 px-2 py-0.5 text-[11px] font-medium text-accent-blue">Laporan ini dari uji aktif</span>}
+                  </div>
+                  {showActiveInfo && (
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
+                      Uji aktif menembus lebih dalam dari audit biasa: mengirim permintaan uji yang aman ke aplikasi untuk memeriksa endpoint sensitif yang terbuka tanpa login, input yang dipantulkan mentah (indikasi XSS), path traversal, file cadangan yang terbuka, CORS, metode HTTP berisiko, dan penguncian login. Semua bersifat pasif-aman: tanpa brute force, tanpa payload berbahaya, tanpa mengubah data. Uji ini tetap tidak menggantikan uji penetrasi manual oleh ahli. Hanya owner, hanya aplikasi terdaftar, dan perlu konfirmasi ulang.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {report.findings.length === 0 && (
                 <p className="flex items-center gap-2 rounded-xl bg-emerald-400/10 p-2 text-sm text-emerald-300"><CheckCircle2 size={16} /> Tidak ada temuan. Semua pemeriksaan yang bisa dijalankan lolos.</p>

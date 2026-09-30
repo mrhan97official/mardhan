@@ -90,6 +90,18 @@ func (c *collector) skip(text string) { c.mu.Lock(); c.report.Skipped = append(c
 
 var severityRank = map[string]int{"high": 0, "medium": 1, "low": 2}
 
+// Exported helpers so pkg/activescan can build and store reports in the same
+// shape, scoring, ordering and history table as the passive audit.
+func ScoreOf(findings []Finding) int { return score(findings) }
+func SaveReport(report Report) error { return save(report) }
+func FindTarget(targets []Target, key string) (Target, bool) { return findTarget(targets, key) }
+
+// SortFindings orders by severity then category, like Run does.
+func SortFindings(findings []Finding) []Finding {
+	sortFindings(findings)
+	return findings
+}
+
 // Score starts at 100: each Tinggi costs 20, Sedang 8, Rendah 3.
 func score(findings []Finding) int {
 	value := 100
@@ -113,6 +125,14 @@ func counts(findings []Finding) (high, medium, low int) {
 		}
 	}
 	return
+}
+
+func sortFindings(findings []Finding) {
+	sort.SliceStable(findings, func(i, j int) bool {
+		a, b := findings[i], findings[j]
+		if severityRank[a.Severity] != severityRank[b.Severity] { return severityRank[a.Severity] < severityRank[b.Severity] }
+		return a.Category < b.Category
+	})
 }
 
 // Run audits one target. Checks run in parallel; a check that cannot run
@@ -144,11 +164,7 @@ func Run(ctx context.Context, target Target, source string) Report {
 	wait.Wait()
 
 	report := *c.report
-	sort.SliceStable(report.Findings, func(i, j int) bool {
-		a, b := report.Findings[i], report.Findings[j]
-		if severityRank[a.Severity] != severityRank[b.Severity] { return severityRank[a.Severity] < severityRank[b.Severity] }
-		return a.Category < b.Category
-	})
+	sortFindings(report.Findings)
 	sort.Strings(report.Passed)
 	report.Score = score(report.Findings)
 	report.CreatedAt = time.Now().UTC().Format("2006-01-02 15:04:05")

@@ -146,6 +146,10 @@
       "destination": "/api/gateway?resource=app-audit"
     },
     {
+      "source": "/api/active-scan",
+      "destination": "/api/gateway?resource=active-scan"
+    },
+    {
       "source": "/api/security",
       "destination": "/api/gateway?resource=security"
     },
