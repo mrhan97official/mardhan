@@ -277,6 +277,10 @@ Setiap kartu memiliki area gambar 4:3 dengan ilustrasi bawaan. Menu tiga titik d
 
 **Navbar bersih, Live Logs terbaru di atas, tooltip logo (v1.0.78).** Navbar atas tidak lagi memakai garis atas/bawah; bayangan tipis baru muncul setelah isi halaman digulir (lebih dari 4 px) dan hilang lagi saat kembali ke atas. Kotak pencarian di navbar dihapus dari semua halaman karena tidak pernah terhubung ke fungsi pencarian. **Live Logs** (Overview dan halaman Logs) kini menampilkan log terbaru di paling atas; filter tetap sama dan backend tidak berubah. Tooltip logo sidebar tidak lagi memakai tooltip bawaan browser, melainkan tooltip yang sama dengan ikon menu: di kanan logo saat sidebar diciutkan, di bawah logo saat sidebar dilebarkan agar tidak menutupi tulisan DEV CONTROL. Logo di header ponsel tetap tanpa tooltip.
 
+### Perbaikan dari hasil audit pertama (v1.0.83)
+
+`next.config.js` kini memakai `poweredByHeader: false` (header `X-Powered-By: Next.js` hilang). `.github/dependabot.yml` ditambahkan: pull request mingguan untuk paket npm (dikelompokkan, tanpa lompatan versi mayor) dan GitHub Actions. `wrangler` dihapus dari devDependencies karena hanya dipakai untuk CLI manual (`npm install -g wrangler` bila perlu), dan `postcss` kini `^8.4.39` agar mengambil rilis 8.x terbaru. Audit Aplikasi membaca versi yang benar-benar terpasang dari `package-lock.json` (termasuk paket turunan) bila file itu sudah ter-commit, sehingga temuan OSV tidak lagi dihitung dari versi minimum di `package.json`.
+
 ### CI GitHub & variabel keamanan siap isi (v1.0.82)
 
 **Pemeriksaan otomatis (GitHub Actions).** `.github/workflows/ci.yml` berjalan di setiap push dan pull request: `go build ./...` dan `go test ./...` (wajib lolos), `go vet ./...` (laporan saja), serta `npm ci` (atau `npm install` bila `package-lock.json` belum ada, dengan peringatan) dan `npm run build`, yang sekaligus memeriksa TypeScript. Hasilnya tampil sebagai centang hijau/silang merah di GitHub → tab Actions, lengkap dengan pesan error, sebelum Anda mengandalkan build Vercel.

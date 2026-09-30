@@ -1,0 +1,24 @@
+# Weekly pull requests for outdated npm packages and GitHub Actions.
+# Security updates are grouped so one PR fixes related advisories.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      timezone: "Asia/Makassar"
+    open-pull-requests-limit: 5
+    groups:
+      next-and-react:
+        patterns: ["next", "react", "react-dom", "@types/react", "@types/react-dom"]
+      build-tools:
+        patterns: ["tailwindcss", "postcss", "autoprefixer", "typescript", "@types/node"]
+    ignore:
+      # Stay on the current major versions; majors are upgraded deliberately.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

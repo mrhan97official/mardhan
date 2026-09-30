@@ -668,7 +668,37 @@ func checkGitHub(ctx context.Context, c *collector, owner, repo, branch string) 
 
 	deps := map[string]string{}
 	depSource := map[string]string{}
+	exact := false
+	// With a committed package-lock.json the installed versions are known
+	// exactly; otherwise the lowest version each package.json range allows.
 	for _, manifest := range manifests {
+		lockPath := path.Join(path.Dir(manifest), "package-lock.json")
+		if !files[lockPath] { continue }
+		var content []byte
+		status, _, err := g.get(ctx, base+"/contents/"+escapePath(lockPath)+"?ref="+url.QueryEscape(branch), true, &content)
+		if err != nil || status != http.StatusOK { continue }
+		var lock struct {
+			Packages map[string]struct {
+				Version string `json:"version"`
+				Dev     bool   `json:"dev"`
+			} `json:"packages"`
+			Dependencies map[string]struct {
+				Version string `json:"version"`
+			} `json:"dependencies"`
+		}
+		if json.Unmarshal(content, &lock) != nil { continue }
+		for key, item := range lock.Packages {
+			if !strings.HasPrefix(key, "node_modules/") || strings.Contains(strings.TrimPrefix(key, "node_modules/"), "/node_modules/") { continue }
+			name := strings.TrimPrefix(key, "node_modules/")
+			if _, known := deps[name]; !known && semverPattern.MatchString(item.Version) { deps[name] = item.Version; depSource[name] = lockPath }
+		}
+		for name, item := range lock.Dependencies {
+			if _, known := deps[name]; !known && semverPattern.MatchString(item.Version) { deps[name] = item.Version; depSource[name] = lockPath }
+		}
+		if len(deps) > 0 { exact = true }
+	}
+	for _, manifest := range manifests {
+		if exact { break }
 		var content []byte
 		status, _, err := g.get(ctx, base+"/contents/"+escapePath(manifest)+"?ref="+url.QueryEscape(branch), true, &content)
 		if err != nil || status != http.StatusOK { continue }
@@ -687,7 +717,7 @@ func checkGitHub(ctx context.Context, c *collector, owner, repo, branch string) 
 	if version, ok := deps["next"]; ok { checkNextVersion(c, version, middleware, repoLabel+": "+depSource["next"]) }
 
 	dependabotOK := checkDependabot(ctx, c, g, base, repoLabel)
-	if !dependabotOK && len(deps) > 0 { checkOSV(ctx, c, deps, repoLabel) }
+	if !dependabotOK && len(deps) > 0 { checkOSV(ctx, c, deps, repoLabel, exact) }
 
 	var secrets []struct {
 		SecretType string `json:"secret_type_display_name"`
@@ -805,11 +835,11 @@ func limitList(items []string, limit int) string {
 // checkOSV asks the public OSV database about the versions in package.json.
 // It uses the lowest version each range allows, so results can include
 // issues already fixed by a newer installed patch release.
-func checkOSV(ctx context.Context, c *collector, deps map[string]string, repoLabel string) {
+func checkOSV(ctx context.Context, c *collector, deps map[string]string, repoLabel string, exact bool) {
 	names := make([]string, 0, len(deps))
 	for name := range deps { names = append(names, name) }
 	sort.Strings(names)
-	if len(names) > 150 { names = names[:150] }
+	if len(names) > 1000 { names = names[:1000] }
 	type query struct {
 		Package struct {
 			Name      string `json:"name"`
@@ -845,9 +875,11 @@ func checkOSV(ctx context.Context, c *collector, deps map[string]string, repoLab
 		affected = append(affected, fmt.Sprintf("%s@%s (%d)", names[i], deps[names[i]], len(item.Vulns)))
 	}
 	if len(affected) == 0 { c.pass("Database OSV tidak mencatat celah untuk versi di package.json"); return }
+	source, note := "package.json", "Angka dalam kurung adalah jumlah advisory. Versi yang diperiksa adalah versi minimum di package.json; versi terpasang bisa lebih baru — commit package-lock.json agar hasilnya tepat."
+	if exact { source, note = "package-lock.json", "Angka dalam kurung adalah jumlah advisory untuk versi yang benar-benar terpasang (package-lock.json), termasuk paket turunan." }
 	c.add(Finding{ID: "dep-osv", Stage: 2, Category: "Dependensi", Severity: "medium", Title: fmt.Sprintf("%d paket punya celah yang diketahui (OSV)", len(affected)),
-		Location: repoLabel + " → package.json: " + limitList(affected, 8),
-		Detail: "Angka dalam kurung adalah jumlah advisory. Versi yang diperiksa adalah versi minimum di package.json; versi terpasang bisa lebih baru.",
+		Location: repoLabel + " → " + source + ": " + limitList(affected, 8),
+		Detail: note,
 		Advice: "Jalankan npm audit / npm outdated di proyek, perbarui paket yang terdampak, lalu build dan uji ulang."})
 }
 

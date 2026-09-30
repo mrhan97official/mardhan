@@ -33,6 +33,8 @@ const withPWA = require("next-pwa")({
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Do not advertise the framework in an X-Powered-By header.
+  poweredByHeader: false,
   eslint: { ignoreDuringBuilds: true },
 };
 
