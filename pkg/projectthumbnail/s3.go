@@ -116,12 +116,12 @@ func (s *signedStorage) ensureUploadCORS(origin string) error {
 		var rule struct { Allowed struct { Origins, Methods, Headers []string } `json:"allowed"` }
 		if json.Unmarshal(raw, &rule) != nil { continue }
 		if (containsString(rule.Allowed.Origins, origin) || containsString(rule.Allowed.Origins, "*")) &&
-			containsString(rule.Allowed.Methods, "PUT") &&
+			containsString(rule.Allowed.Methods, "PUT") && containsString(rule.Allowed.Methods, "GET") &&
 			(containsStringFold(rule.Allowed.Headers, "Content-Type") || containsString(rule.Allowed.Headers, "*")) { return nil }
 	}
 	newRule, err := json.Marshal(map[string]interface{}{
 		"allowed": map[string]interface{}{
-			"origins": []string{origin}, "methods": []string{"PUT"}, "headers": []string{"Content-Type"},
+			"origins": []string{origin}, "methods": []string{"PUT", "GET"}, "headers": []string{"Content-Type"},
 		}, "maxAgeSeconds": 3600,
 	})
 	if err != nil { return err }
@@ -135,7 +135,7 @@ func (s *signedStorage) ensureUploadCORS(origin string) error {
 	resp, err = s.client.Do(req)
 	if err != nil { return fmt.Errorf("gagal menyiapkan CORS R2: %w", err) }
 	defer resp.Body.Close()
-	if resp.StatusCode >= 300 { return fmt.Errorf("CORS R2 tidak dapat dibuat otomatis (HTTP %d); tambahkan izin PUT dan Content-Type untuk %s pada bucket %s", resp.StatusCode, origin, s.bucket) }
+	if resp.StatusCode >= 300 { return fmt.Errorf("CORS R2 tidak dapat dibuat otomatis (HTTP %d); tambahkan izin PUT, GET, dan Content-Type untuk %s pada bucket %s", resp.StatusCode, origin, s.bucket) }
 	var updated struct { Success bool `json:"success"` }
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&updated); err != nil || !updated.Success {
 		return fmt.Errorf("Cloudflare tidak mengonfirmasi aturan CORS R2 untuk %s", origin)

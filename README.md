@@ -344,13 +344,13 @@ Tab/aksi baru **Uji Aktif** di halaman Audit Aplikasi (owner, dengan konfirmasi 
 
 Unggahan gambar besar kini dapat memakai `CF_API_TOKEN` yang sudah terpasang, bila token itu memiliki izin R2 Object Read & Write untuk bucket ini. Server memeriksa ID token dan menurunkan kredensial S3 di memori; nilai rahasianya tidak dikirim ke browser. Jika token tersebut tidak memiliki izin R2 yang sesuai, buat **R2 S3 API token** khusus bucket dengan hak baca/tulis, isi `R2_ACCESS_KEY_ID` dan `R2_SECRET_ACCESS_KEY` di Environment Variables Vercel, lalu deploy ulang. Kedua variabel ini opsional jika token awal dapat dipakai.
 
-Saat unggah dimulai, aplikasi mencoba menambahkan aturan CORS `PUT` untuk domain DevControl pada bucket R2 tanpa menghapus aturan yang sudah ada. Jika token Cloudflare tidak boleh mengatur CORS bucket, atur manual melalui Cloudflare R2 → bucket → Settings → CORS Policy (ganti domain sesuai situs Anda):
+Saat unggah dimulai, aplikasi mencoba menambahkan aturan CORS `PUT` dan `GET` untuk domain DevControl (`GET` dipakai unduhan ZIP + gambar; diterapkan juga saat tombol unduh ditekan) pada bucket R2 tanpa menghapus aturan yang sudah ada. Jika token Cloudflare tidak boleh mengatur CORS bucket, atur manual melalui Cloudflare R2 → bucket → Settings → CORS Policy (ganti domain sesuai situs Anda):
 
 ```json
 [
   {
     "AllowedOrigins": ["https://devcontrol-anda.vercel.app"],
-    "AllowedMethods": ["PUT"],
+    "AllowedMethods": ["PUT", "GET"],
     "AllowedHeaders": ["Content-Type"],
     "MaxAgeSeconds": 3600
   }

@@ -112,8 +112,13 @@ export function ZipArchiveDialog({ repo, images = {}, onClose }: { repo: string;
         // One download: the application's ZIP plus every uploaded image,
         // images stored byte-for-byte (original resolution, no re-encode).
         const entries = [{ name: item.filename, data: new Uint8Array(await zipBlob.arrayBuffer()) }];
+        // Stored images are served through a redirect to R2, so the bucket
+        // needs a GET CORS rule for this site before the browser may read them.
+        await fetch("/api/project-thumbnails", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "ensure_cors" }) }).catch(() => null);
         for (const entry of slots) {
-          const imageResponse = await fetch(imageURL(repo, entry.slot, images[entry.slot] as string), { credentials: "same-origin" });
+          let imageResponse: Response;
+          try { imageResponse = await fetch(imageURL(repo, entry.slot, images[entry.slot] as string), { credentials: "same-origin" }); }
+          catch { throw new Error(`Gambar "${entry.label}" diblokir browser (CORS R2). Tambahkan metode GET pada aturan CORS bucket R2 untuk domain DevControl, lalu coba lagi.`); }
           if (!imageResponse.ok) throw new Error(`Gambar "${entry.label}" gagal diambil (HTTP ${imageResponse.status}). ZIP tidak diunduh agar paketnya tidak kurang.`);
           const imageBlob = await imageResponse.blob();
           const type = (imageBlob.type || imageResponse.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();

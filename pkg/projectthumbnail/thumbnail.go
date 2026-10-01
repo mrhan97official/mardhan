@@ -274,6 +274,17 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&input); err != nil {
 			util.Error(w, http.StatusBadRequest, fmt.Errorf("permintaan thumbnail tidak valid")); return
 		}
+		if input.Action == "ensure_cors" {
+			// Lets the browser read stored images (for the ZIP + images
+			// download): adds a GET rule for this site's origin to the R2 bucket.
+			storage, err := newSignedStorage()
+			if err != nil { util.Error(w, http.StatusPreconditionFailed, err); return }
+			if err := storage.ensureUploadCORS(r.Header.Get("Origin")); err != nil {
+				util.Error(w, http.StatusPreconditionFailed, err); return
+			}
+			util.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+			return
+		}
 		if input.Action == "begin" {
 			if !validImageRepo(input.Repo) || !allowedType(input.ContentType) ||
 				input.SizeBytes <= 0 || input.SizeBytes > maxSingleUpload {
