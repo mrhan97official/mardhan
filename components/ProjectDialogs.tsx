@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { CheckCircle2, ChevronDown, Download, FileArchive, History, KeyRound, Loader2, RefreshCw, X, XCircle } from "lucide-react";
+import { IMAGE_SLOTS, imageURL, type ProjectImages } from "@/lib/projectImages";
+import { buildZip } from "@/lib/zipBundle";
 
 const archiveKeyStorage = "devcontrol-zip-archive-key";
 
@@ -59,7 +61,9 @@ interface ZipRecord {
   created_at: string;
 }
 
-export function ZipArchiveDialog({ repo, onClose }: { repo: string; onClose: () => void }) {
+const IMAGE_EXTENSIONS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/svg+xml": "svg", "image/avif": "avif" };
+
+export function ZipArchiveDialog({ repo, images = {}, onClose }: { repo: string; images?: ProjectImages; onClose: () => void }) {
   const [key, setKey] = useState("");
   const [items, setItems] = useState<ZipRecord[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -100,10 +104,28 @@ export function ZipArchiveDialog({ repo, onClose }: { repo: string; onClose: () 
         const body = await response.json().catch(() => null);
         throw new Error(body?.error || `HTTP ${response.status}`);
       }
-      const url = URL.createObjectURL(await response.blob());
+      const zipBlob = await response.blob();
+      const slots = IMAGE_SLOTS.filter((entry) => images[entry.slot]);
+      let fileBlob = zipBlob;
+      let fileName = item.filename;
+      if (slots.length > 0) {
+        // One download: the application's ZIP plus every uploaded image,
+        // images stored byte-for-byte (original resolution, no re-encode).
+        const entries = [{ name: item.filename, data: new Uint8Array(await zipBlob.arrayBuffer()) }];
+        for (const entry of slots) {
+          const imageResponse = await fetch(imageURL(repo, entry.slot, images[entry.slot] as string), { credentials: "same-origin" });
+          if (!imageResponse.ok) throw new Error(`Gambar "${entry.label}" gagal diambil (HTTP ${imageResponse.status}). ZIP tidak diunduh agar paketnya tidak kurang.`);
+          const imageBlob = await imageResponse.blob();
+          const type = (imageBlob.type || imageResponse.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+          entries.push({ name: `gambar/${entry.slot}.${IMAGE_EXTENSIONS[type] ?? "bin"}`, data: new Uint8Array(await imageBlob.arrayBuffer()) });
+        }
+        fileBlob = buildZip(entries);
+        fileName = `${item.filename.replace(/\.zip$/i, "")}-dengan-gambar.zip`;
+      }
+      const url = URL.createObjectURL(fileBlob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = item.filename;
+      link.download = fileName;
       document.body.append(link);
       link.click();
       link.remove();
@@ -149,7 +171,7 @@ export function ZipArchiveDialog({ repo, onClose }: { repo: string; onClose: () 
             </div>
             <button type="button" disabled={downloading !== null} onClick={() => void download(item)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-accent-blue px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
-              {downloading === item.id ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} Unduh ZIP
+              {downloading === item.id ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} {Object.keys(images).length > 0 ? "Unduh ZIP + gambar" : "Unduh ZIP"}
             </button>
           </div>
         ))}

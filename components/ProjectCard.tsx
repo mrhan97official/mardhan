@@ -290,7 +290,7 @@ export default function ProjectCard({ repo, displayName, appUrl, linked = false,
           )}
         </div>
       </div>
-      {dialog === "zip" && <ZipArchiveDialog repo={repo.full_name} onClose={() => setDialog(null)} />}
+      {dialog === "zip" && <ZipArchiveDialog repo={repo.full_name} images={images} onClose={() => setDialog(null)} />}
       {dialog === "history" && <UpdateHistoryDialog repo={repo.full_name} onClose={() => setDialog(null)} />}
       {dialog === "images" && <ProjectImagesDialog repo={repo.full_name} images={images} admin={admin}
         uploadingSlot={uploading ? uploadingSlot : null} uploadProgress={uploadProgress} error={imageError}
