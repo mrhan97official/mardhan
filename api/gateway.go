@@ -3668,12 +3668,15 @@ func pushFilesToGitHub(token, owner, repo, branch string, files []selfUpdateFile
 			return "", plan, fmt.Errorf("gagal menyiapkan branch %s: %w", branch, err)
 		}
 		if len(publish) == 1 {
-			sha, found, headErr := githubBranchHead(client, token, baseURL, branch)
+			sha, found, headErr := waitGithubBranchHead(client, token, baseURL, branch)
 			if headErr != nil { return "", plan, headErr }
 			if !found { return "", plan, fmt.Errorf("GitHub belum membuat branch %s setelah inisialisasi", branch) }
 			return sha, plan, nil
 		}
-		parentSHA, exists, err = githubBranchHead(client, token, baseURL, branch)
+		// The Contents API commit is accepted before the new ref is readable
+		// through the Git Database API (replication lag on a brand-new repo),
+		// so poll instead of reading once.
+		parentSHA, exists, err = waitGithubBranchHead(client, token, baseURL, branch)
 		if err != nil {
 			return "", plan, err
 		}
@@ -3813,6 +3816,21 @@ func githubBranchHead(client *http.Client, token, baseURL, branch string) (strin
 		return "", false, fmt.Errorf("GitHub tidak mengembalikan SHA branch %s", branch)
 	}
 	return ref.Object.SHA, true, nil
+}
+
+// waitGithubBranchHead polls the branch head for a short while. Right after
+// the first Contents API commit in a new repository, GET /git/ref/heads/<branch>
+// can still answer 404/409 for a few seconds even though the commit succeeded.
+// Total wait stays under ~14s so the 60s function limit is never at risk.
+func waitGithubBranchHead(client *http.Client, token, baseURL, branch string) (string, bool, error) {
+	delays := []time.Duration{0, time.Second, 2 * time.Second, 3 * time.Second, 3 * time.Second, 5 * time.Second}
+	for _, delay := range delays {
+		if delay > 0 { time.Sleep(delay) }
+		sha, found, err := githubBranchHead(client, token, baseURL, branch)
+		if err != nil { return "", false, err }
+		if found { return sha, true, nil }
+	}
+	return "", false, nil
 }
 
 func currentGithubBranchSHA(token, owner, repo, branch string) (string, error) {
