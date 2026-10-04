@@ -439,11 +439,31 @@ func prepareDeploymentRunner(r *http.Request) error {
 
 // ensurePushRunner installs the current scheduled Worker once after an
 // update, so 404 and confirmation checks run without a new deployment.
-func ensurePushRunner(r *http.Request) {
-	if os.Getenv("VERCEL_ENV") == "preview" || webpush.RunnerVersion() == deploymentrunner.Version() { return }
+// With force (admin pressed "Pasang ulang penjadwal") it reinstalls even when
+// the stored version matches, and returns the Cloudflare error if it fails.
+func ensurePushRunner(r *http.Request, force bool) error {
+	if os.Getenv("VERCEL_ENV") == "preview" { return nil }
+	if !force && webpush.RunnerVersion() == deploymentrunner.Version() { return nil }
 	host := os.Getenv("VERCEL_PROJECT_PRODUCTION_URL")
 	if host == "" { host = r.Host }
-	if deploymentrunner.Ensure(host) == nil { webpush.SetRunnerVersion(deploymentrunner.Version()) }
+	if err := deploymentrunner.Ensure(host); err != nil { return err }
+	webpush.SetRunnerVersion(deploymentrunner.Version())
+	return nil
+}
+
+func init() {
+	projectdelete.OnJobsInterrupted = func(ids []string) { for _, id := range ids { notifyJobResult(id) } }
+}
+
+// renotifyRecentJobs retries the notification of pipelines that finished in
+// the last 30 minutes. webpush.Notify skips every job whose message a device
+// already accepted (its de-duplication key is kept), so only a notification
+// that could not be delivered is sent again.
+func renotifyRecentJobs() {
+	rows, err := d1.Query(`SELECT id FROM deployment_jobs WHERE status IN ('Success', 'Failed', 'Interrupted')
+		AND updated_at >= datetime('now', '-30 minutes') ORDER BY updated_at DESC LIMIT 20`)
+	if err != nil { return }
+	for _, row := range rows { notifyJobResult(rowText(row, "id")) }
 }
 
 // notifyJobResult sends one push per finished pipeline (Success, Failed or
@@ -486,7 +506,9 @@ func notifyJobResult(id string) {
 // test projects — all independent of whether push notifications are set up.
 func handlePushWatch(w http.ResponseWriter, r *http.Request) {
 	if err := setup.Prepare(); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+	webpush.MarkWatch()
 	webpush.Prune()
+	renotifyRecentJobs()
 	sweepOrphanTestProjects()
 	checked := 0
 	if webpush.Wants(webpush.EventApp404) {

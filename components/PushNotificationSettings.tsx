@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { BellOff, BellRing, Send, X } from "lucide-react";
 import {
-  PUSH_EVENTS, disablePush, enablePush, pushInfo, pushStatus, pushSupport, sendTestPush, warmPush,
-  type PushEvent, type PushSupport,
+  PUSH_EVENTS, disablePush, enablePush, pushInfo, pushStatus, pushSupport, repairRunner, sendTestPush, warmPush,
+  type PushEvent, type PushSupport, type RunnerStatus,
 } from "@/lib/push";
 
 // Per-device switch for notifications that arrive even when DevControl is
@@ -20,6 +20,7 @@ export default function PushNotificationSettings({ compact = false }: { compact?
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [lastError, setLastError] = useState("");
+  const [runner, setRunner] = useState<RunnerStatus | null>(null);
 
   const load = useCallback(async () => {
     const mode = pushSupport();
@@ -43,6 +44,7 @@ export default function PushNotificationSettings({ compact = false }: { compact?
       setSubscribed(status.subscribed);
       if (status.subscribed && "events" in status && status.events) setEvents(status.events);
       setLastError(("last_error" in status && status.last_error) || "");
+      setRunner(("runner" in status && status.runner) || null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Status perangkat belum dapat dibaca.");
     }
@@ -84,6 +86,14 @@ export default function PushNotificationSettings({ compact = false }: { compact?
 
   const test = () => run(async () => { await sendTestPush(); }, "Notifikasi uji dikirim. Coba juga dengan DevControl ditutup.");
 
+  const repair = () => run(async () => {
+    await repairRunner();
+    setRunner(null);
+  }, "Penjadwal Cloudflare dipasang ulang. Cron baru bisa butuh hingga 15 menit sebelum mulai berjalan; buka panel ini lagi nanti untuk memeriksa.");
+
+  const ageText = (seconds: number) => seconds < 60 ? "kurang dari 1 menit" : seconds < 3600 ? `${Math.round(seconds / 60)} menit` : `${Math.round(seconds / 3600)} jam`;
+  const runnerOk = !!runner && runner.watch_age >= 0 && runner.watch_age <= 1500;
+
   return (
     <section className={compact ? "space-y-2" : "card max-w-3xl space-y-2 p-2"} aria-labelledby="push-title">
       <div>
@@ -120,6 +130,18 @@ export default function PushNotificationSettings({ compact = false }: { compact?
           </div>
           <p className="text-xs text-slate-500">{subscribed ? "Status: aktif di perangkat ini." : "Status: belum aktif di perangkat ini."} Di laptop/PC, browser perlu tetap berjalan di latar belakang; tab DevControl boleh ditutup.</p>
           {lastError && <p className="rounded-lg bg-amber-500/10 p-2 text-xs text-amber-200">Pengiriman terakhir gagal: {lastError}</p>}
+          {subscribed && runner && (runnerOk
+            ? <p className="text-xs text-slate-500">Penjadwal Cloudflare aktif (terakhir berjalan {ageText(runner.watch_age)} lalu).</p>
+            : (
+              <div className="space-y-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-200">
+                <p>
+                  {runner.watch_age < 0 ? "Penjadwal Cloudflare belum pernah terlihat berjalan." : `Penjadwal Cloudflare terakhir berjalan ${ageText(runner.watch_age)} lalu.`}
+                  {runner.current ? "" : " Versi penjadwal terpasang bukan yang terbaru."}
+                  {" "}Tanpa penjadwal, proses deploy yang ditinggal tidak dilanjutkan, dan notifikasi 404, konfirmasi, serta keamanan tidak datang.
+                </p>
+                <button type="button" disabled={busy} onClick={() => void repair()} className="rounded-lg border border-amber-300/40 px-3 py-1.5 font-semibold text-amber-100 hover:bg-amber-500/20 disabled:opacity-50">Pasang ulang penjadwal</button>
+              </div>
+            ))}
         </>
       )}
       {error && <p role="alert" className="rounded-lg bg-red-500/10 p-2 text-sm text-red-300">{error}</p>}

@@ -13,6 +13,11 @@ export const PUSH_EVENTS: { id: PushEvent; label: string; hint: string }[] = [
 
 export type PushSupport = "ok" | "unsupported" | "ios-install";
 
+// Health of the scheduled Cloudflare Worker (owner/admin only): whether the
+// installed source is current and how many seconds ago it last called the
+// server (-1 = never).
+export type RunnerStatus = { current: boolean; watch_age: number };
+
 const eventsKey = "devcontrol-push-events";
 const syncedKey = "devcontrol-push-synced";
 
@@ -161,7 +166,14 @@ export async function disablePush() {
 export async function pushStatus() {
   const subscription = await currentSubscription();
   if (!subscription) return { subscribed: false as const };
-  return api<{ subscribed: boolean; events?: PushEvent[]; last_error?: string }>({ action: "status", endpoint: subscription.endpoint });
+  return api<{ subscribed: boolean; events?: PushEvent[]; last_error?: string; runner?: RunnerStatus }>({ action: "status", endpoint: subscription.endpoint });
+}
+
+// Owner/admin: reinstall the scheduled Worker and surface the Cloudflare error.
+export async function repairRunner() {
+  const subscription = await currentSubscription();
+  if (!subscription) throw new Error("Perangkat ini belum mengaktifkan notifikasi.");
+  await api({ action: "runner", endpoint: subscription.endpoint });
 }
 
 export async function sendTestPush() {

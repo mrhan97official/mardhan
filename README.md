@@ -359,6 +359,14 @@ Saat unggah dimulai, aplikasi mencoba menambahkan aturan CORS `PUT` dan `GET` un
 
 Izin memulai unggahan berlaku untuk satu objek selama 15 menit. Setelah browser mengirim byte asli ke R2, backend memeriksa ukuran, tipe, dan tanda awal berkas sebelum mengaktifkannya di kartu; objek yang tidak selesai disiapkan untuk dibersihkan. Gambar v1.0.17 tetap bisa dibuka tanpa konfigurasi baru. Di tablet (lebar 768–1279 px) susunan kolom mengikuti desktop dengan ukuran huruf dan jarak yang lebih ringkas.
 
+### Notifikasi lebih andal (v1.0.85)
+
+Tiga perbaikan pada jalur notifikasi deploy:
+
+1. **Notifikasi tidak hilang bila pengiriman gagal sesaat.** Sebelumnya kunci anti-dobel (`push_log`) ditulis sebelum mengirim, sehingga bila layanan push sedang error, kunci VAPID tidak terbaca, atau D1 terganggu, kuncinya sudah terpakai dan notifikasi hilang selamanya. Kini kegagalan jaringan atau HTTP 5xx/429 dicoba ulang sekali (jeda 1,5 detik), dan bila ada perangkat tujuan tetapi tidak satu pun menerima, kunci dilepas. Tiap 15 menit `/api/push-watch` mengirim ulang notifikasi pipeline yang selesai dalam 30 menit terakhir; kunci tetap mencegah notifikasi ganda untuk yang sudah terkirim. Akibatnya notifikasi yang gagal terkirim bisa terlambat hingga ±15 menit, tetapi tidak hilang. Notifikasi yang hilang sebelum v1.0.85 tidak ikut dikirim ulang.
+2. **Status penjadwal terlihat.** Di **Settings → Notifikasi perangkat ini** (owner/admin) tampil "Penjadwal Cloudflare aktif (terakhir berjalan N menit lalu)". Bila belum pernah berjalan atau lebih dari 25 menit, muncul peringatan dan tombol **Pasang ulang penjadwal** yang memasang ulang Worker dan menampilkan galat Cloudflare (misalnya `CF_API_TOKEN` belum punya izin Workers Scripts Edit). Waktu jalan terakhir dicatat di `push_log` (baris `watch:last`), tanpa perubahan skema.
+3. **Pipeline yang kedaluwarsa saat menghapus project kini ikut dinotifikasi.** Hapus Aplikasi menandai pipeline yang lease-nya habis sebagai Terhenti tanpa mengirim notifikasi; sekarang `notifyJobResult` dipanggil juga dari jalur itu.
+
 ### Notifikasi push (v1.0.61)
 
 Notifikasi tetap masuk walaupun DevControl ditutup, memakai standar **Web Push** browser (tanpa Firebase atau layanan berbayar). Tidak ada variabel Vercel baru: pasangan kunci VAPID dibuat otomatis saat pertama dipakai dan disimpan di D1 (tabel `push_config`, `push_subscriptions`, `push_log` ditambahkan otomatis). Bila ingin memakai kunci sendiri, isi `VAPID_PUBLIC_KEY` dan `VAPID_PRIVATE_KEY` (base64url, P-256) di Vercel.

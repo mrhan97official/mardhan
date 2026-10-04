@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -27,10 +28,12 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"devcontrol/pkg/auth"
 	"devcontrol/pkg/d1"
+	"devcontrol/pkg/deploymentrunner"
 	"devcontrol/pkg/setup"
 	"devcontrol/pkg/util"
 )
@@ -271,6 +274,12 @@ func trim(value string, limit int) string {
 	return string([]rune(value)[:limit-1]) + "…"
 }
 
+// transientError marks a delivery failure that is worth one more try: a
+// network problem or a push service that answered 5xx/429.
+type transientError struct{ error }
+
+func (e transientError) Unwrap() error { return e.error }
+
 func deliver(ctx context.Context, keys *vapid, target subscription, message Message) error {
 	parsed, err := url.Parse(target.endpoint)
 	if err != nil || !validEndpoint(target.endpoint) { return fmt.Errorf("alamat push tidak valid") }
@@ -294,7 +303,7 @@ func deliver(ctx context.Context, keys *vapid, target subscription, message Mess
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("Authorization", "vapid t="+token+", k="+keys.publicText)
 	resp, err := httpClient.Do(req)
-	if err != nil { return err }
+	if err != nil { return transientError{err} }
 	defer resp.Body.Close()
 	detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	switch {
@@ -303,48 +312,71 @@ func deliver(ctx context.Context, keys *vapid, target subscription, message Mess
 		_, _ = d1.Query(`DELETE FROM push_subscriptions WHERE endpoint = ?`, target.endpoint)
 		return fmt.Errorf("langganan perangkat sudah tidak berlaku (HTTP %d)", resp.StatusCode)
 	case resp.StatusCode >= 300:
-		return fmt.Errorf("layanan push menolak (HTTP %d) %s", resp.StatusCode, strings.TrimSpace(string(detail)))
+		failure := fmt.Errorf("layanan push menolak (HTTP %d) %s", resp.StatusCode, strings.TrimSpace(string(detail)))
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests { return transientError{failure} }
+		return failure
 	}
 	return nil
 }
 
 var httpClient = &http.Client{Timeout: 8 * time.Second}
 
-func sendAll(targets []subscription, message Message) {
-	if len(targets) == 0 { return }
+// sendAll delivers to every target and returns how many accepted the message.
+// A transient failure (network error, push service 5xx/429) is retried once.
+func sendAll(targets []subscription, message Message) int {
+	if len(targets) == 0 { return 0 }
 	keys, err := loadKeys()
-	if err != nil { return }
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err != nil { return 0 }
+	ctx, cancel := context.WithTimeout(context.Background(), 18*time.Second)
 	defer cancel()
+	var delivered int32
 	var wait sync.WaitGroup
 	for _, target := range targets {
 		wait.Add(1)
 		go func(target subscription) {
 			defer wait.Done()
+			err := deliver(ctx, keys, target, message)
+			var transient transientError
+			if err != nil && errors.As(err, &transient) {
+				select {
+				case <-time.After(1500 * time.Millisecond):
+					err = deliver(ctx, keys, target, message)
+				case <-ctx.Done():
+				}
+			}
 			errText := ""
-			if err := deliver(ctx, keys, target, message); err != nil { errText = trim(err.Error(), 300) }
+			if err != nil { errText = trim(err.Error(), 300) } else { atomic.AddInt32(&delivered, 1) }
 			_, _ = d1.Query(`UPDATE push_subscriptions SET last_error = ? WHERE endpoint = ?`, errText, target.endpoint)
 		}(target)
 	}
 	wait.Wait()
+	return int(atomic.LoadInt32(&delivered))
 }
 
 // Notify sends a message to every device that enabled its event. It never
 // fails the caller: notifications are best effort.
+//
+// The de-duplication key is kept once a device accepted the message, or when
+// no device wants it. If devices exist but none accepted it (push service
+// down, VAPID keys unreadable, D1 hiccup) the key is released, so the retry
+// in /api/push-watch can deliver it later instead of losing it for good.
 func Notify(message Message) {
 	if !validEvent(message.Event) { return }
+	key := trim(message.Key, 400)
 	if message.Key != "" {
-		rows, err := d1.Query(`INSERT INTO push_log (event_key) VALUES (?) ON CONFLICT(event_key) DO NOTHING RETURNING event_key`, trim(message.Key, 400))
+		rows, err := d1.Query(`INSERT INTO push_log (event_key) VALUES (?) ON CONFLICT(event_key) DO NOTHING RETURNING event_key`, key)
 		if err != nil || len(rows) == 0 { return }
 	}
+	release := func() { if message.Key != "" { Forget(key) } }
 	subs, err := loadSubscriptions(`WHERE (',' || s.events || ',') LIKE ?`, "%,"+message.Event+",%")
-	if err != nil { return }
+	if err != nil { release(); return }
 	targets := make([]subscription, 0, len(subs))
 	for _, item := range subs {
 		if !item.events[message.Event] || (adminOnly[message.Event] && !isAdmin(item.role)) { continue }
 		targets = append(targets, item)
 	}
-	sendAll(targets, message)
+	if len(targets) == 0 { return }
+	if sendAll(targets, message) == 0 { release() }
 }
 
 // Forget clears a de-duplication key, e.g. once a 404 application is healthy
@@ -359,6 +391,31 @@ func Wants(event string) bool {
 
 // Prune keeps the de-duplication log small.
 func Prune() { _, _ = d1.Query(`DELETE FROM push_log WHERE created_at < datetime('now', '-30 days')`) }
+
+// watchKey is a push_log row whose created_at records when the scheduled
+// Worker last called /api/push-watch (no schema change needed).
+const watchKey = "watch:last"
+
+// MarkWatch records that the scheduled Worker just ran its periodic upkeep.
+func MarkWatch() {
+	_, _ = d1.Query(`INSERT INTO push_log (event_key, created_at) VALUES (?, CURRENT_TIMESTAMP)
+		ON CONFLICT(event_key) DO UPDATE SET created_at = CURRENT_TIMESTAMP`, watchKey)
+}
+
+// WatchAge returns the seconds since MarkWatch, or -1 when it never ran.
+func WatchAge() int64 {
+	rows, err := d1.Query(`SELECT CAST(strftime('%s', 'now') AS INTEGER) - CAST(strftime('%s', created_at) AS INTEGER) AS age
+		FROM push_log WHERE event_key = ? LIMIT 1`, watchKey)
+	if err != nil || len(rows) == 0 { return -1 }
+	switch age := rows[0]["age"].(type) {
+	case float64:
+		if age < 0 { return 0 }
+		return int64(age)
+	case int64:
+		return age
+	}
+	return -1
+}
 
 // RunnerVersion and SetRunnerVersion remember which scheduled Worker source
 // is installed, so a new version is installed once after an update.
@@ -377,7 +434,7 @@ func SetRunnerVersion(version string) {
 
 // Handle serves every signed-in role. ensureRunner installs the current
 // scheduled Worker (used for 404 and confirmation checks) when needed.
-func Handle(w http.ResponseWriter, r *http.Request, ensureRunner func(*http.Request)) {
+func Handle(w http.ResponseWriter, r *http.Request, ensureRunner func(*http.Request, bool) error) {
 	w.Header().Set("Cache-Control", "no-store")
 	principal := auth.Current(r)
 	if principal == nil { util.Error(w, http.StatusUnauthorized, fmt.Errorf("login diperlukan")); return }
@@ -430,7 +487,7 @@ func Handle(w http.ResponseWriter, r *http.Request, ensureRunner func(*http.Requ
 		if origin := r.Header.Get("Origin"); strings.HasPrefix(origin, "https://") && !strings.ContainsAny(strings.TrimPrefix(origin, "https://"), "/@?# ") {
 			_, _ = d1.Query(`UPDATE push_config SET subject = ? WHERE id = 1 AND subject = ''`, origin)
 		}
-		if ensureRunner != nil { ensureRunner(r) }
+		if ensureRunner != nil { _ = ensureRunner(r, false) }
 		chosen := []string{}
 		if events != "" { chosen = strings.Split(events, ",") }
 		util.JSON(w, http.StatusOK, map[string]interface{}{"subscribed": true, "events": chosen})
@@ -443,7 +500,17 @@ func Handle(w http.ResponseWriter, r *http.Request, ensureRunner func(*http.Requ
 		rows, _ := d1.Query(`SELECT last_error FROM push_subscriptions WHERE endpoint = ? LIMIT 1`, input.Endpoint)
 		lastError := ""
 		if len(rows) == 1 { lastError, _ = rows[0]["last_error"].(string) }
-		util.JSON(w, http.StatusOK, map[string]interface{}{"subscribed": true, "events": events, "last_error": lastError})
+		reply := map[string]interface{}{"subscribed": true, "events": events, "last_error": lastError}
+		if admin {
+			// Scheduler health: is the installed Worker current, and did it call us recently?
+			reply["runner"] = map[string]interface{}{"current": RunnerVersion() == deploymentrunner.Version(), "watch_age": WatchAge()}
+		}
+		util.JSON(w, http.StatusOK, reply)
+	case "runner":
+		if !admin { util.Error(w, http.StatusForbidden, fmt.Errorf("hanya owner/admin yang dapat memasang ulang penjadwal")); return }
+		if ensureRunner == nil { util.Error(w, http.StatusInternalServerError, fmt.Errorf("pemasang penjadwal tidak tersedia")); return }
+		if err := ensureRunner(r, true); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+		util.JSON(w, http.StatusOK, map[string]bool{"installed": true})
 	case "unsubscribe":
 		if _, err := d1.Query(`DELETE FROM push_subscriptions WHERE endpoint = ?`, input.Endpoint); err != nil { util.Error(w, http.StatusBadGateway, err); return }
 		util.JSON(w, http.StatusOK, map[string]bool{"subscribed": false})

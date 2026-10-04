@@ -20,6 +20,10 @@ import (
     "devcontrol/pkg/util"
 )
 
+// OnJobsInterrupted is set by the gateway: pipelines expired here still send
+// their "terhenti" push notification (this package cannot import the gateway).
+var OnJobsInterrupted func(ids []string)
+
 type vercelProject struct {
     ID string `json:"id"`
     Name string `json:"name"`
@@ -197,7 +201,13 @@ func Handle(w http.ResponseWriter, r *http.Request, stableProjectName func(strin
     thumbnailBusy, err := projectthumbnail.HasActiveUploads(input.Repo)
     if err != nil { util.Error(w, http.StatusBadGateway, err); return }
     if thumbnailBusy { util.Error(w, http.StatusConflict, fmt.Errorf("thumbnail sedang diunggah; tunggu sampai selesai sebelum menghapus project")); return }
-    if _, err := d1.Query(`UPDATE deployment_jobs SET status = 'Interrupted', updated_at = CURRENT_TIMESTAMP WHERE status = 'Running' AND lease_until <= CURRENT_TIMESTAMP`); err != nil { util.Error(w, http.StatusBadGateway, err); return }
+    expired, err := d1.Query(`UPDATE deployment_jobs SET status = 'Interrupted', updated_at = CURRENT_TIMESTAMP WHERE status = 'Running' AND lease_until <= CURRENT_TIMESTAMP RETURNING id`)
+    if err != nil { util.Error(w, http.StatusBadGateway, err); return }
+    if OnJobsInterrupted != nil && len(expired) > 0 {
+        ids := make([]string, 0, len(expired))
+        for _, row := range expired { if id, _ := row["id"].(string); id != "" { ids = append(ids, id) } }
+        OnJobsInterrupted(ids)
+    }
     if rows, err := d1.Query(`SELECT id FROM deployment_jobs WHERE lower(lock_key) = lower(?) AND status = 'Running' LIMIT 1`, input.Repo); err != nil {
         util.Error(w, http.StatusBadGateway, err); return
     } else if len(rows) > 0 {
